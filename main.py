@@ -207,6 +207,7 @@ async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for job in current_jobs:
             job.schedule_removal()
         await update.message.reply_text(f"🗑️ Event {event_id} has been deleted.")
+
 # --- FEATURE 3: COMMENDATIONS ---
 async def give_thanks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Give a point to a teammate by replying to their message."""
@@ -464,21 +465,48 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Manager Bot is online with Database support!")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends a complete list of commands to the user via Direct Message."""
     help_text = (
-        "🛠️ *Manager Bot Commands*\n\n"
-        "*/away [reason]* - Set away status\n"
-        "*/back* - Remove away status\n"
-        "*/thanks* - Reply to someone's message to give them a point\n"
-        "*/leaderboard* - See the top helpers this month\n"
+        "🛠️ *Manager Bot Master Guide*\n\n"
+        "*🏖️ Status & Away*\n"
+        "• `/away [reason]` - Set your status to away (e.g., /away Sick leave)\n"
+        "• `/back` - Remove your away status\n\n"
+        "*🌟 Commendations*\n"
+        "• `/thanks` - Reply to a teammate's message to give them a point\n"
+        "• `/leaderboard` - See the top helpers this month\n\n"
+        "*📚 Mini Library*\n"
+        "• `/addlib Name | Content` - Save a link or text asset\n"
+        "• `/getlib [name]` - Retrieve an asset\n"
+        "• `/library` - View all saved assets\n"
+        "• `/dellib [name]` - Delete an asset\n\n"
+        "*📅 Events & Meetings*\n"
+        "• `/newevent Title | DD-MM-YYYY HH:MM` - Schedule an event\n"
+        "• `/events` - See all upcoming events\n"
+        "• `/rsvp [id] [yes/no]` - RSVP to an event\n"
+        "• `/delevent [id]` - Cancel an event\n\n"
+        "*📋 Quick Tasks*\n"
+        "• `/assign @username [task]` - Give someone a task\n"
+        "• `/complete [id]` - Mark a task as done\n"
+        "• `/tasks` - View all pending tasks\n\n"
+        "*📊 Polling*\n"
+        "• `/poll Question | Opt1 | Opt2` - Create and pin a native poll\n"
     )
+    
     try:
-        await context.bot.send_message(chat_id=update.effective_user.id, text=help_text, parse_mode="Markdown")
+        await context.bot.send_message(
+            chat_id=update.effective_user.id, 
+            text=help_text, 
+            parse_mode="Markdown"
+        )
         if update.effective_chat.type != "private":
-            await update.message.reply_text("I've sent you a DM with the list of commands! 📬")
+            await update.message.reply_text("I've sent you a DM with the complete list of commands! 📬")
+            
     except Exception:
         if update.effective_chat.type != "private":
-            await update.message.reply_text("I can't send you a DM yet! Please start a private chat with me first.")
-
+            await update.message.reply_text(
+                "I can't send you a DM yet! Please click on my profile, start a private chat with me, and try again."
+            )
+            
 async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username
     reason = " ".join(context.args) if context.args else "Away on leave"
