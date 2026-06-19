@@ -27,7 +27,7 @@ async def init_db(app: Application):
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
     
     async with app.bot_data['db_pool'].acquire() as conn:
-        # Create table for points
+        # 1. Kudos Table
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS kudos (
                 user_id BIGINT PRIMARY KEY,
@@ -37,7 +37,7 @@ async def init_db(app: Application):
             );
         ''')
         
-        # Create table for the Mini Library
+        # 2. Library Table
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS library (
                 name TEXT PRIMARY KEY,
@@ -45,8 +45,176 @@ async def init_db(app: Application):
                 added_by TEXT
             );
         ''')
-    logger.info("✅ Database connected and tables verified!")
+        
+        # 3. Events Table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS events (
+                id SERIAL PRIMARY KEY,
+                title TEXT NOT NULL,
+                event_time TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_by TEXT
+            );
+        ''')
+        
+        # 4. RSVPs Table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS rsvps (
+                event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
+                username TEXT NOT NULL,
+                status TEXT NOT NULL,
+                PRIMARY KEY (event_id, username)
+            );
+        ''')
+    logger.info("✅ Database connected and all tables verified!")
+    
+# --- FEATURE 1: EVENT MANAGEMENT ---
 
+async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Creates an event. Format: /newevent Title | DD-MM-YYYY HH:MM"""
+    text = " ".join(context.args)
+    if "|" not in text:
+        await update.message.reply_text(
+            "❌ **Format:** `/newevent Title | DD-MM-YYYY HH:MM`\n"
+            "Example: `/newevent Friday Sync | 25-06-2026 14:00`", 
+            parse_mode="Markdown"
+        )
+        return
+        
+    title, time_str = text.split("|", 1)
+    title = title.strip()
+    time_str = time_str.strip()
+    username = update.effective_user.username or update.effective_user.first_name
+    
+    try:
+        # Parse time and attach WIB timezone
+        event_time = datetime.datetime.strptime(time_str, "%d-%m-%Y %H:%M")
+        event_time = WIB.localize(event_time)
+        
+        # Ensure it's in the future
+        if event_time < datetime.datetime.now(WIB):
+            await update.message.reply_text("❌ That time is in the past!")
+            return
+            
+    except ValueError:
+        await update.message.reply_text("❌ Invalid time format! Use `DD-MM-YYYY HH:MM`", parse_mode="Markdown")
+        return
+
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        # Save to DB and get the generated ID
+        event_id = await conn.fetchval('''
+            INSERT INTO events (title, event_time, created_by)
+            VALUES ($1, $2, $3) RETURNING id;
+        ''', title, event_time, username)
+        
+    # Schedule reminder (15 mins before)
+    reminder_time = event_time - datetime.timedelta(minutes=15)
+    if reminder_time > datetime.datetime.now(WIB):
+        context.job_queue.run_once(
+            event_reminder, 
+            when=reminder_time, 
+            chat_id=update.effective_chat.id, 
+            data={"event_id": event_id, "title": title},
+            name=f"event_{event_id}"
+        )
+        
+    await update.message.reply_text(
+        f"📅 **Event Created!** (ID: `{event_id}`)\n"
+        f"**{title}**\n"
+        f"🕒 {event_time.strftime('%d %b %Y, %H:%M')} WIB\n\n"
+        f"Type `/rsvp {event_id} yes` to join!", 
+        parse_mode="Markdown"
+    )
+
+async def event_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Background job triggered 15 mins before event."""
+    job = context.job
+    data = job.data
+    pool = context.bot_data.get('db_pool')
+    
+    async with pool.acquire() as conn:
+        rsvps = await conn.fetch('SELECT username FROM rsvps WHERE event_id = $1 AND status = $2', data['event_id'], 'yes')
+        
+    mentions = " ".join([f"@{r['username']}" for r in rsvps]) if rsvps else "No one RSVP'd 'yes', but"
+    
+    await context.bot.send_message(
+        job.chat_id,
+        f"⏰ **REMINDER:** Event **'{data['title']}'** is starting in 15 minutes!\n{mentions}",
+        parse_mode="Markdown"
+    )
+
+async def list_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lists upcoming events."""
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        events = await conn.fetch('SELECT id, title, event_time FROM events WHERE event_time > NOW() ORDER BY event_time ASC LIMIT 5')
+        
+    if not events:
+        await update.message.reply_text("There are no upcoming events!")
+        return
+        
+    msg = "📅 **Upcoming Events**\n\n"
+    for e in events:
+        # Render time in WIB natively
+        local_time = e['event_time'].astimezone(WIB)
+        msg += f"🔹 **{e['title']}** (ID: `{e['id']}`)\n🕒 {local_time.strftime('%d %b %Y, %H:%M')} WIB\n\n"
+        
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def rsvp_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """RSVP to an event. Format: /rsvp [id] [yes/no]"""
+    try:
+        event_id = int(context.args[0])
+        status = context.args[1].lower()
+        if status not in ['yes', 'no']:
+            raise ValueError
+    except (IndexError, ValueError):
+        await update.message.reply_text("❌ Format: `/rsvp [Event ID] [yes/no]` (e.g., `/rsvp 1 yes`)", parse_mode="Markdown")
+        return
+        
+    username = update.effective_user.username
+    if not username:
+        await update.message.reply_text("You need a Telegram username to RSVP!")
+        return
+
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        # Check if event exists
+        event = await conn.fetchrow('SELECT title FROM events WHERE id = $1', event_id)
+        if not event:
+            await update.message.reply_text("❌ Event not found!")
+            return
+            
+        await conn.execute('''
+            INSERT INTO rsvps (event_id, username, status)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (event_id, username) DO UPDATE 
+            SET status = EXCLUDED.status;
+        ''', event_id, username, status)
+        
+    emoji = "✅" if status == "yes" else "❌"
+    await update.message.reply_text(f"{emoji} @{username} RSVP'd **{status}** for '{event['title']}'", parse_mode="Markdown")
+
+async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Deletes an event. Format: /delevent [id]"""
+    try:
+        event_id = int(context.args[0])
+    except (IndexError, ValueError):
+        await update.message.reply_text("❌ Format: `/delevent [Event ID]`")
+        return
+        
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        result = await conn.execute('DELETE FROM events WHERE id = $1', event_id)
+        
+    if result == "DELETE 0":
+        await update.message.reply_text("❌ Event not found!")
+    else:
+        # Remove background scheduled job if it exists
+        current_jobs = context.job_queue.get_jobs_by_name(f"event_{event_id}")
+        for job in current_jobs:
+            job.schedule_removal()
+        await update.message.reply_text(f"🗑️ Event {event_id} has been deleted.")
 # --- FEATURE 3: COMMENDATIONS ---
 async def give_thanks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Give a point to a teammate by replying to their message."""
@@ -230,6 +398,122 @@ async def check_mentions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for username, reason in away_users.items():
         if f"@{username}" in text:
             await update.message.reply_text(f"⚠️ @{username} is currently away.\nStatus: {reason}")
+# --- FEATURE 1: EVENT MANAGEMENT ---
+
+async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Creates an event. Format: /newevent Title | DD-MM-YYYY HH:MM"""
+    text = " ".join(context.args)
+    if "|" not in text:
+        await update.message.reply_text(
+            "❌ **Format:** `/newevent Title | DD-MM-YYYY HH:MM`\n"
+            "Example: `/newevent Friday Sync | 25-06-2026 14:00`", 
+            parse_mode="Markdown"
+        )
+        return
+        
+    title, time_str = text.split("|", 1)
+    title = title.strip()
+    time_str = time_str.strip()
+    username = update.effective_user.username or update.effective_user.first_name
+    
+    try:
+        # Parse time and attach WIB timezone
+        event_time = datetime.datetime.strptime(time_str, "%d-%m-%Y %H:%M")
+        event_time = WIB.localize(event_time)
+        
+        # Ensure it's in the future
+        if event_time < datetime.datetime.now(WIB):
+            await update.message.reply_text("❌ That time is in the past!")
+            return
+            
+    except ValueError:
+        await update.message.reply_text("❌ Invalid time format! Use `DD-MM-YYYY HH:MM`", parse_mode="Markdown")
+        return
+
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        # Save to DB and get the generated ID
+        event_id = await conn.fetchval('''
+            INSERT INTO events (title, event_time, created_by)
+            VALUES ($1, $2, $3) RETURNING id;
+        ''', title, event_time, username)
+        
+    # Schedule reminder (15 mins before)
+    reminder_time = event_time - datetime.timedelta(minutes=15)
+    if reminder_time > datetime.datetime.now(WIB):
+        context.job_queue.run_once(
+            event_reminder, 
+            when=reminder_time, 
+            chat_id=update.effective_chat.id, 
+            data={"event_id": event_id, "title": title},
+            name=f"event_{event_id}"
+        )
+        
+    await update.message.reply_text(
+        f"📅 **Event Created!** (ID: `{event_id}`)\n"
+        f"**{title}**\n"
+        f"🕒 {event_time.strftime('%d %b %Y, %H:%M')} WIB\n\n"
+        f"Type `/rsvp {event_id} yes` to join!", 
+        parse_mode="Markdown"
+    )
+
+async def event_reminder(context: ContextTypes.DEFAULT_TYPE):
+    """Background job triggered 15 mins before event."""
+    job = context.job
+    data = job.data
+    pool = context.bot_data.get('db_pool')
+    
+    async with pool.acquire() as conn:
+        rsvps = await conn.fetch('SELECT username FROM rsvps WHERE event_id = $1 AND status = $2', data['event_id'], 'yes')
+        
+    mentions = " ".join([f"@{r['username']}" for r in rsvps]) if rsvps else "No one RSVP'd 'yes', but"
+    
+    await context.bot.send_message(
+        job.chat_id,
+        f"⏰ **REMINDER:** Event **'{data['title']}'** is starting in 15 minutes!\n{mentions}",
+        parse_mode="Markdown"
+    )
+
+async def list_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lists upcoming events."""
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        events = await conn.fetch('SELECT id, title, event_time FROM events WHERE event_time > NOW() ORDER BY event_time ASC LIMIT 5')
+        
+    if not events:
+        await update.message.reply_text("There are no upcoming events!")
+        return
+        
+    msg = "📅 **Upcoming Events**\n\n"
+    for e in events:
+        # Render time in WIB natively
+        local_time = e['event_time'].astimezone(WIB)
+        msg += f"🔹 **{e['title']}** (ID: `{e['id']}`)\n🕒 {local_time.strftime('%d %b %Y, %H:%M')} WIB\n\n"
+        
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def rsvp_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """RSVP to an event. Format: /rsvp [id] [yes/no]"""
+    try:
+        event_id = int(context.args[0])
+        status = context.args[1].lower()
+        if status not in ['yes', 'no']:
+            raise ValueError
+    except (IndexError, ValueError):
+        await update.message.reply_text("❌ Format: `/rsvp [Event ID] [yes/no]` (e.g., `/rsvp 1 yes`)", parse_mode="Markdown")
+        return
+        
+    username = update.effective_user.username
+    if not username:
+        await update.message.reply_text("You need a Telegram username to RSVP!")
+        return
+
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        # Check if event exists
+        event = await conn.fetchrow('SELECT title FROM events WHERE id = $1', event_id)
+        if not event:
+            await update.message.reply_text("❌ Event not found!")
 
 # --- MAIN APPLICATION ---
 def main():
@@ -246,6 +530,10 @@ def main():
     app.add_handler(CommandHandler("getlib", get_lib))
     app.add_handler(CommandHandler("dellib", del_lib))
     app.add_handler(CommandHandler("library", list_lib))
+    app.add_handler(CommandHandler("newevent", create_event))
+    app.add_handler(CommandHandler("events", list_events))
+    app.add_handler(CommandHandler("rsvp", rsvp_event))
+    app.add_handler(CommandHandler("delevent", delete_event))
 
     # Register Interceptors
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_mentions))
