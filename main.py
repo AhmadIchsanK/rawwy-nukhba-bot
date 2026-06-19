@@ -2,6 +2,27 @@ import logging, datetime, pytz, os, asyncpg
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 
+async def security_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Triggers when the bot is added to a new group. Leaves if unauthorized."""
+    for member in update.message.new_chat_members:
+        if member.id == context.bot.id: # If the bot itself was added
+            inviter = update.message.from_user.username
+            pool = context.bot_data.get('db_pool')
+            
+            # Check if the person who invited the bot is an admin
+            if not await is_bot_admin(inviter, pool):
+                await context.bot.send_message(
+                    update.effective_chat.id, 
+                    "❌ **Access Denied.** This is a private internal company bot. I am leaving this group."
+                )
+                await context.bot.leave_chat(update.effective_chat.id)
+                return
+            else:
+                await context.bot.send_message(
+                    update.effective_chat.id, 
+                    "✅ **Authorization confirmed.** Nukhba Manager is online."
+                )
+
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 DATABASE_URL = os.getenv("DATABASE_URL")
