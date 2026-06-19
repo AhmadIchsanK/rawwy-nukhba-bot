@@ -27,42 +27,34 @@ async def init_db(app: Application):
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
     
     async with app.bot_data['db_pool'].acquire() as conn:
-        # 1. Kudos Table
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS kudos (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                monthly_points INT DEFAULT 0,
-                all_time_points INT DEFAULT 0
+                user_id BIGINT PRIMARY KEY, username TEXT, monthly_points INT DEFAULT 0, all_time_points INT DEFAULT 0
             );
         ''')
-        
-        # 2. Library Table
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS library (
-                name TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                added_by TEXT
+                name TEXT PRIMARY KEY, content TEXT NOT NULL, added_by TEXT
             );
         ''')
-        
-        # 3. Events Table
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS events (
-                id SERIAL PRIMARY KEY,
-                title TEXT NOT NULL,
-                event_time TIMESTAMP WITH TIME ZONE NOT NULL,
-                created_by TEXT
+                id SERIAL PRIMARY KEY, title TEXT NOT NULL, event_time TIMESTAMP WITH TIME ZONE NOT NULL, created_by TEXT
             );
         ''')
-        
-        # 4. RSVPs Table
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS rsvps (
-                event_id INTEGER REFERENCES events(id) ON DELETE CASCADE,
-                username TEXT NOT NULL,
-                status TEXT NOT NULL,
-                PRIMARY KEY (event_id, username)
+                event_id INTEGER REFERENCES events(id) ON DELETE CASCADE, username TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY (event_id, username)
+            );
+        ''')
+        # 5. NEW: Tasks Table
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS tasks (
+                id SERIAL PRIMARY KEY,
+                assignee TEXT NOT NULL,
+                task_desc TEXT NOT NULL,
+                status TEXT DEFAULT 'Pending',
+                assigned_by TEXT
             );
         ''')
     logger.info("✅ Database connected and all tables verified!")
@@ -360,6 +352,113 @@ async def del_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"🗑️ Resource '{name}' has been deleted.")
 
+# --- FEATURE 7: QUICK TASK ASSIGNMENT ---
+
+async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Assign a task. Format: /assign @username Task description"""
+    if len(context.args) < 2:
+        await update.message.reply_text("❌ Format: `/assign @username Task description`", parse_mode="Markdown")
+        return
+
+    assignee = context.args[0].replace("@", "")
+    task_desc = " ".join(context.args[1:])
+    assigned_by = update.effective_user.username or update.effective_user.first_name
+
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        task_id = await conn.fetchval('''
+            INSERT INTO tasks (assignee, task_desc, assigned_by)
+            VALUES ($1, $2, $3) RETURNING id;
+        ''', assignee, task_desc, assigned_by)
+
+    await update.message.reply_text(
+        f"📋 **Task Assigned!** (ID: `{task_id}`)\n"
+        f"👤 To: @{assignee}\n"
+        f"📝 Task: {task_desc}\n\n"
+        f"When done, type `/complete {task_id}`", 
+        parse_mode="Markdown"
+    )
+
+async def complete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mark task as complete. Format: /complete [id]"""
+    try:
+        task_id = int(context.args[0])
+    except (IndexError, ValueError):
+        await update.message.reply_text("❌ Format: `/complete [Task ID]`")
+        return
+
+    username = update.effective_user.username
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        task = await conn.fetchrow('SELECT * FROM tasks WHERE id = $1', task_id)
+        if not task:
+            await update.message.reply_text("❌ Task not found!")
+            return
+        if task['status'] == 'Completed':
+            await update.message.reply_text("✅ That task is already completed!")
+            return
+        
+        await conn.execute("UPDATE tasks SET status = 'Completed' WHERE id = $1", task_id)
+
+    await update.message.reply_text(
+        f"🎉 **Task Completed!**\nAwesome job, @{username}! Task `{task_id}` ('{task['task_desc']}') is now closed.", 
+        parse_mode="Markdown"
+    )
+
+async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List pending tasks."""
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        tasks = await conn.fetch("SELECT id, assignee, task_desc FROM tasks WHERE status = 'Pending' ORDER BY id ASC")
+
+    if not tasks:
+        await update.message.reply_text("🎉 No pending tasks! Everyone is caught up.")
+        return
+
+    msg = "📋 **Pending Tasks**\n\n"
+    for t in tasks:
+        msg += f"🔹 **ID `{t['id']}`** | @{t['assignee']} | {t['task_desc']}\n"
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+# --- FEATURE 2: POLLING SYSTEM ---
+
+async def create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Create a poll. Format: /poll Question | Option 1 | Option 2 ..."""
+    text = " ".join(context.args)
+    parts = [p.strip() for p in text.split("|") if p.strip()]
+    
+    if len(parts) < 3:
+        await update.message.reply_text(
+            "❌ **Format:** `/poll Question | Option 1 | Option 2`\n"
+            "(You need at least a question and two options separated by '|')", 
+            parse_mode="Markdown"
+        )
+        return
+        
+    question = parts[0]
+    options = parts[1:11] # Telegram restricts polls to 10 options max
+    
+    # Send the native Telegram poll
+    message = await context.bot.send_poll(
+        chat_id=update.effective_chat.id,
+        question=question,
+        options=options,
+        is_anonymous=True,
+        allows_multiple_answers=True
+    )
+    
+    # Pin the poll to push a notification sound to EVERYONE
+    if update.effective_chat.type != "private":
+        try:
+            await context.bot.pin_chat_message(
+                chat_id=update.effective_chat.id,
+                message_id=message.message_id,
+                disable_notification=False 
+            )
+        except Exception as e:
+            logger.warning(f"Could not pin poll. Bot needs 'Pin Messages' admin rights. Error: {e}")
+
 # --- ORIGINAL FEATURES (Start, Away, Help, Trivia) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Manager Bot is online with Database support!")
@@ -398,6 +497,7 @@ async def check_mentions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for username, reason in away_users.items():
         if f"@{username}" in text:
             await update.message.reply_text(f"⚠️ @{username} is currently away.\nStatus: {reason}")
+
 # --- FEATURE 1: EVENT MANAGEMENT ---
 
 async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -534,6 +634,13 @@ def main():
     app.add_handler(CommandHandler("events", list_events))
     app.add_handler(CommandHandler("rsvp", rsvp_event))
     app.add_handler(CommandHandler("delevent", delete_event))
+    # Tasks
+    app.add_handler(CommandHandler("assign", assign_task))
+    app.add_handler(CommandHandler("complete", complete_task))
+    app.add_handler(CommandHandler("tasks", list_tasks))
+    
+    # Polls
+    app.add_handler(CommandHandler("poll", create_poll))
 
     # Register Interceptors
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_mentions))
