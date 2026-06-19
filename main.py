@@ -3,7 +3,7 @@ import datetime
 import pytz
 import os
 import asyncpg
-from telegram import Update
+from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 # --- CONFIGURATION ---
@@ -17,47 +17,45 @@ logger = logging.getLogger(__name__)
 away_users = {}
 birthdays = {}
 
-# --- DATABASE SETUP ---
+# --- DATABASE & MENU SETUP ---
 async def init_db(app: Application):
-    """Connects to Postgres and creates the tables if they don't exist."""
+    """Connects to Postgres, creates tables, and sets up the Telegram UI menu."""
     if not DATABASE_URL:
         logger.error("DATABASE_URL is missing!")
         return
     
+    # 1. Setup Database Tables
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
-    
     async with app.bot_data['db_pool'].acquire() as conn:
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS kudos (
-                user_id BIGINT PRIMARY KEY, username TEXT, monthly_points INT DEFAULT 0, all_time_points INT DEFAULT 0
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS library (
-                name TEXT PRIMARY KEY, content TEXT NOT NULL, added_by TEXT
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS events (
-                id SERIAL PRIMARY KEY, title TEXT NOT NULL, event_time TIMESTAMP WITH TIME ZONE NOT NULL, created_by TEXT
-            );
-        ''')
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS rsvps (
-                event_id INTEGER REFERENCES events(id) ON DELETE CASCADE, username TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY (event_id, username)
-            );
-        ''')
-        # 5. NEW: Tasks Table
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS tasks (
-                id SERIAL PRIMARY KEY,
-                assignee TEXT NOT NULL,
-                task_desc TEXT NOT NULL,
-                status TEXT DEFAULT 'Pending',
-                assigned_by TEXT
-            );
-        ''')
-    logger.info("✅ Database connected and all tables verified!")
+        await conn.execute('''CREATE TABLE IF NOT EXISTS kudos (user_id BIGINT PRIMARY KEY, username TEXT, monthly_points INT DEFAULT 0, all_time_points INT DEFAULT 0);''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS library (name TEXT PRIMARY KEY, content TEXT NOT NULL, added_by TEXT);''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS events (id SERIAL PRIMARY KEY, title TEXT NOT NULL, event_time TIMESTAMP WITH TIME ZONE NOT NULL, created_by TEXT);''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS rsvps (event_id INTEGER REFERENCES events(id) ON DELETE CASCADE, username TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY (event_id, username));''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, assignee TEXT NOT NULL, task_desc TEXT NOT NULL, status TEXT DEFAULT 'Pending', assigned_by TEXT);''')
+    
+    # 2. Setup the Telegram UI Command Menu
+    commands = [
+        BotCommand("help", "Show the master guide"),
+        BotCommand("away", "[reason] - Set your status to away"),
+        BotCommand("back", "Remove your away status"),
+        BotCommand("thanks", "(Reply to msg) Give a teammate a point"),
+        BotCommand("leaderboard", "See the top helpers this month"),
+        BotCommand("addlib", "Name | Content - Save an asset"),
+        BotCommand("getlib", "[name] - Retrieve an asset"),
+        BotCommand("library", "View all saved assets"),
+        BotCommand("dellib", "[name] - Delete an asset"),
+        BotCommand("newevent", "Title | DD-MM-YYYY HH:MM - Create event"),
+        BotCommand("events", "See all upcoming events"),
+        BotCommand("rsvp", "[id] [yes/no] - RSVP to an event"),
+        BotCommand("delevent", "[id] - Cancel an event"),
+        BotCommand("assign", "@user [task] - Give someone a task"),
+        BotCommand("complete", "[id] - Mark a task as done"),
+        BotCommand("tasks", "View all pending tasks"),
+        BotCommand("poll", "Question | Opt1 | Opt2 - Create a poll")
+    ]
+    await app.bot.set_my_commands(commands)
+    
+    logger.info("✅ Database connected and UI Menu configured!")
     
 # --- FEATURE 1: EVENT MANAGEMENT ---
 
