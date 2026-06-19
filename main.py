@@ -24,7 +24,6 @@ async def init_db(app: Application):
         logger.error("DATABASE_URL is missing!")
         return
     
-    # Create connection pool attached to the bot's data
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
     
     async with app.bot_data['db_pool'].acquire() as conn:
@@ -35,6 +34,15 @@ async def init_db(app: Application):
                 username TEXT,
                 monthly_points INT DEFAULT 0,
                 all_time_points INT DEFAULT 0
+            );
+        ''')
+        
+        # Create table for the Mini Library
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS library (
+                name TEXT PRIMARY KEY,
+                content TEXT NOT NULL,
+                added_by TEXT
             );
         ''')
     logger.info("✅ Database connected and tables verified!")
@@ -97,6 +105,93 @@ async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     await update.message.reply_text(board, parse_mode="Markdown")
 
+    # --- FEATURE 5: MINI RESOURCE LIBRARY ---
+
+async def add_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Adds a new resource to the library. Format: /addlib name | link"""
+    # Combine all arguments into one string
+    text = " ".join(context.args)
+    
+    # Check if they used the "|" separator
+    if "|" not in text:
+        await update.message.reply_text(
+            "❌ **Incorrect format!**\n"
+            "Please use a `|` to separate the name and the content.\n"
+            "Example: `/addlib logo | https://drive.google.com/...`",
+            parse_mode="Markdown"
+        )
+        return
+        
+    # Split the text into the name and the content
+    name, content = text.split("|", 1)
+    name = name.strip().lower() # Lowercase makes it easier to search later
+    content = content.strip()
+    username = update.effective_user.username or update.effective_user.first_name
+
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        # Insert or replace the resource
+        await conn.execute('''
+            INSERT INTO library (name, content, added_by)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (name) DO UPDATE 
+            SET content = EXCLUDED.content, added_by = EXCLUDED.added_by;
+        ''', name, content, username)
+
+    await update.message.reply_text(f"✅ Resource **'{name}'** has been saved to the library!", parse_mode="Markdown")
+
+async def get_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Retrieves a resource. Format: /getlib name"""
+    if not context.args:
+        await update.message.reply_text("❌ What are you looking for? (e.g., `/getlib logo`)", parse_mode="Markdown")
+        return
+        
+    name = " ".join(context.args).strip().lower()
+    
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        record = await conn.fetchrow('SELECT content, added_by FROM library WHERE name = $1', name)
+        
+    if record:
+        await update.message.reply_text(
+            f"📂 **{name.title()}** (Added by @{record['added_by']}):\n{record['content']}",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(f"❌ I couldn't find anything named '{name}' in the library.")
+
+async def list_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lists all available resources in the library."""
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        records = await conn.fetch('SELECT name FROM library ORDER BY name ASC')
+        
+    if not records:
+        await update.message.reply_text("The library is currently empty!")
+        return
+        
+    # Create a bulleted list of all names
+    item_list = "\n".join([f"• `{record['name']}`" for record in records])
+    await update.message.reply_text(f"📚 **Mini Resource Library**\n\n{item_list}\n\nType `/getlib [name]` to retrieve one.", parse_mode="Markdown")
+
+async def del_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Deletes a resource. Format: /dellib name"""
+    if not context.args:
+        await update.message.reply_text("❌ What do you want to delete? (e.g., `/dellib logo`)", parse_mode="Markdown")
+        return
+        
+    name = " ".join(context.args).strip().lower()
+    
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        result = await conn.execute('DELETE FROM library WHERE name = $1', name)
+        
+    # result will be something like "DELETE 1" or "DELETE 0"
+    if result == "DELETE 0":
+        await update.message.reply_text(f"❌ '{name}' wasn't in the library to begin with.")
+    else:
+        await update.message.reply_text(f"🗑️ Resource '{name}' has been deleted.")
+
 # --- ORIGINAL FEATURES (Start, Away, Help, Trivia) ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤖 Manager Bot is online with Database support!")
@@ -147,6 +242,10 @@ def main():
     app.add_handler(CommandHandler("back", set_back))
     app.add_handler(CommandHandler("thanks", give_thanks))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
+    app.add_handler(CommandHandler("addlib", add_lib))
+    app.add_handler(CommandHandler("getlib", get_lib))
+    app.add_handler(CommandHandler("dellib", del_lib))
+    app.add_handler(CommandHandler("library", list_lib))
 
     # Register Interceptors
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, check_mentions))
