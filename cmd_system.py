@@ -26,9 +26,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📅 *2/ Events*\n`/newevent Title , MM/DD/YYYY HH.MM , RemMins` - Schedules a pinned event.\n`/events` - View upcoming events.\n\n"
         "📊 *3/ Polls*\n`/poll Question , Opt1 , Opt2` - Launches interactive poll builder.\n\n"
         "🌟 *4/ RAWWY Stars*\n`/thanks` (Reply) - Give 1 Star.\n`/myquota` - Check remaining sends.\n`/mystar` - Stars earned this month.\n`/totalstar` - Stars earned all-time.\n`/leaderboard` - Stars earned leaderboard.\n\n"
-        "📚 *5/ Library*\n`/addlib Name , Content` - Save an asset.\n`/editlib Name , Content` - Edit your asset.\n`/dellib Name` - Delete your asset.\n`/getlib Name` - Pull an asset.\n`/library` - Browse everything.\n\n"
-        "⚡ *6/ Tasks*\n`/assign @user , 60 , Task description` - Deadline in 60-480m.\n`/complete ID` - Close task.\n`/mytasks` - View your active tasks.\n\n"
-        "🏖️ *7/ Away Mode*\n`/away Reason , MM/DD/YYYY HH.MM` - Set away status.\n`/back` - Return early and receive missed mentions.\n\n"
+        "🧠 *5/ Trivia*\n`/mypoint` - Securely checks your active Knowledge Point balances via DM.\n\n"
+        "📚 *6/ Library*\n`/addlib Name , Content` - Save an asset.\n`/editlib Name , Content` - Edit your asset.\n`/dellib Name` - Delete your asset.\n`/getlib Name` - Pull an asset.\n`/library` - Browse everything.\n\n"
+        "⚡ *7/ Tasks*\n`/assign @user , 60 , Task description` - Deadline in 60-480m.\n`/complete ID` - Close task.\n`/mytasks` - View your active tasks.\n\n"
+        "🏖️ *8/ Away Mode*\n`/away Reason , MM/DD/YYYY HH.MM` - Set away status.\n`/back` - Return early and receive missed mentions.\n\n"
         "💡 *Extras*\n`/feedback Your feedback or request here`"
     )
 
@@ -36,12 +37,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_adm:
         help_text += (
             "\n\n🔐 *[RW] NUKHBA ADMIN SUITE*\n\n"
-            "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/delbday @user`\n`/setbdaychannel` (Run in target group)\n`/setbdaytime HH:MM`\n`/bdayconfig` | `/listbdays`\n`/addbday_batch` | `/delbday_batch`\n\n"
+            "🧠 *Trivia Management*\n`/settriviachannel` - Set current group for trivia.\n`/settriviatheme [theme]` - Set theme topic.\n`/settriviatime [HH:MM]` - Change release timer.\n`/settriviadays [all/weekday/weekend]` - Change scheduling patterns.\n`/settriviaopts [4-6]` - Change choice count.\n`/settriviatimeout [secs]` | `/setsupertimeout [secs]`\n`/pausetrivia` | `/resumetrivia` - Pause or resume cycles.\n`/forcetrivia` | `/forcesupertrivia` - Trigger rounds immediately.\n`/canceltrivia` - Force drop live trivia round.\n`/admin_kp @user , [set/add/sub] , [amount]` - Edit scores.\n\n"
+            "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/delbday @user`\n`/setbdaychannel` (Run in target group)\n`/setbdaytime HH:MM`\n`/bdayconfig` | `/listbdays`\n\n"
             "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n`/setweeklyquota 3`\n\n"
-            "🤖 *AI Usage Limit*\n`/checklimit all` or `@user`\n`/admin_limit @user , [set/add/sub] , Amount`\n`/setweeklylimit 30`\n\n"
-            "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n`/addlib_batch` | `/dellib_batch`\n\n"
+            "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n\n"
             "📢 *System & Broadcasts*\n`/schedule [ChatID/all] , [once/daily/weekly] , [Time] , [yes/no] , [Message]`\n`/listschedules` | `/delschedule ID`\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now.\n\n"
-            "🤖 *AI Insight*\n`/feedbacklist` - View last 7 days of feedback.\n`/analyze_feedback` - Standard (7 days) or custom parameters.\n`/alltimefeedback` - Review historical database archives."
+            "🤖 *AI Insight*\n`/feedbacklist` - View last 7 days of feedback.\n`/analyze_feedback` - Standard or custom parameters."
         )
         if await is_super(username):
             help_text += (
@@ -219,7 +220,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /ask <query>: Queries you (this bot) about your features, settings, and commands. (Consumes weekly AI limit).\n"
                 "- /newevent <Title> , <MM/DD/YYYY HH.MM> , <RemMins>: Schedules a team event with interactive RSVP (Going/Not Going) buttons, pins it in group chats, and alerts members at RemMins before start.\n"
                 "- /events: Lists the next 5 upcoming scheduled events.\n"
-                "- /poll <Question> , <Opt1> , <Opt2> , ...: Launches an interactive group poll with custom options (supports regular or quiz format, anon settings, single/multi answers, and closing periods).\n"
+                "- /poll <Question> , <Opt1> , <Opt2> , ...: Launches an interactive group poll with custom options.\n"
                 "- /thanks: Award 1 RAWWY Star by REPLYING directly to another user's message. (Consumes 1 Star Quota from you).\n"
                 "- /myquota: Checks your remaining Star Quotas left before Monday reset.\n"
                 "- /mystar: Shows cumulative RAWWY Stars earned this current month.\n"
@@ -235,8 +236,8 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /mytasks: Lists your active pending tasks.\n"
                 "- /away <Reason> , <MM/DD/YYYY HH.MM>: Sets away status. Auto-notifies other users when mentioned and collects missed mentions.\n"
                 "- /back: Manually returns you to Available and triggers a direct message containing missed mentions.\n"
-                "- /feedback <Description>: Files team feedback or bug reports securely.\n"
-                "- /mypoint: Displays user current trivia point stats.\n\n"
+                "- /feedback <Description>: Files team feedback securely.\n"
+                "- /mypoint: Displays user current trivia point stats via DM.\n\n"
                 "🔐 ADMIN COMMANDS (Admins & Super Owners Only):\n"
                 "- /addbday <@username> , <MM/DD>: Registers a member's birthday.\n"
                 "- /editbday <@username> , <MM/DD>: Modifies a birthday entry.\n"
@@ -245,8 +246,6 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /setbdaytime <HH:MM>: Configures daily time (WIB timezone) for birthday alerts.\n"
                 "- /bdayconfig: Shows birthday alert group channel ID and alert time configurations.\n"
                 "- /listbdays: Lists all registered birthdays.\n"
-                "- /addbday_batch: Batch inputs multiple birthdays from a new-line separated list.\n"
-                "- /delbday_batch: Batch deletes multiple birthdays.\n"
                 "- /checkquota [all | @username]: Audits remaining Star Quotas.\n"
                 "- /admin_stars <@username> , [quota/monthly/total] , [set/add/sub] , <Amount>: Modifies user star records or quota.\n"
                 "- /setweeklyquota <Amount>: Sets the global default weekly Star Quota.\n"
@@ -259,8 +258,6 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /cancelevent <ID>: Cancels and deletes scheduled events.\n"
                 "- /canceltask <ID>: Deletes assigned tasks.\n"
                 "- /cancelpoll: Stops and closes a live poll (Run as REPLY to the poll).\n"
-                "- /addlib_batch: Bulk loads library assets.\n"
-                "- /dellib_batch: Bulk deletes library assets.\n"
                 "- /schedule <ChatID/all> , <once/daily/weekly> , <Time> , <yes/no> , <Message>:\n"
                 "  Schedules automatic announcements. Time Formats: 'once' (MM/DD/YYYY HH.MM), 'daily' (HH.MM), 'weekly' (<0-6> HH.MM, where 0=Monday). Toggle mention to 'yes' (or 'no') to tag all active users.\n"
                 "- /listschedules: View all automated schedules.\n"
@@ -271,13 +268,14 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /groupid: Retrieves current Group ID or lists tracked groups.\n"
                 "- /auditlog: Outputs a diagnostics audit report.\n"
                 "- /feedbacklist: Displays team feedback from the last 7 days.\n"
-                "- /analyze_feedback [MM/DD/YYYY | MM/DD/YYYY , MM/DD/YYYY]: Uses AI to summarize recent feedback backlog into brief Problem, Suggestion, Next steps.\n"
-                "- /alltimefeedback: Reviews archived historical feedback archives.\n"
+                "- /analyze_feedback [MM/DD/YYYY | MM/DD/YYYY , MM/DD/YYYY]: Uses AI to summarize recent feedback backlog.\n"
                 "- /settriviachannel: Locks current group to receive daily trivia.\n"
                 "- /settriviatheme <theme>: Customizes topic rules.\n"
                 "- /settriviatime <HH:MM>: Set daily execution clock.\n"
                 "- /settriviadays [all|weekday|weekend]: Set calendar recurrence occurrences.\n"
                 "- /settriviaopts [4|5|6]: Set option complexities.\n"
+                "- /settriviatimeout <secs>: Set expiration for daily round.\n"
+                "- /setsupertimeout <secs>: Set expiration for super quiz.\n"
                 "- /forcetrivia: Triggers regular trivia execution immediately.\n"
                 "- /forcesupertrivia: Triggers weekly high-stakes super trivia execution immediately.\n"
                 "- /canceltrivia: Wipes ongoing active running trivia parameters.\n"
@@ -345,8 +343,8 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         
         config_msg = ""
         if is_bot_query:
-            # Safe regex extraction utilizing compiled search parameters to survive single line wrapping checks
-            match = re.search(r'```json\s*\n(.*?)\n\s*```', reply, re.DOTALL)
+            match = re.search(r'```json\s*\n(.*?)\n\s*
+```', reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
@@ -411,10 +409,8 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                     async with pool.acquire() as conn: 
                         await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
         else: 
-            try:
-                await temp.delete()
-            except:
-                pass
+            try: await temp.delete()
+            except: pass
             await send_md_chunks(context.bot, update.effective_chat.id, final_reply, inline_prefix, f"\n\n{limit_msg}")
                 
     except Exception as e:
@@ -442,10 +438,8 @@ async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
     full = f"{prefix}{text}{suffix}"
     
     if len(full) <= limit:
-        try:
-            await bot.send_message(chat_id, full, parse_mode="Markdown")
-        except:
-            await bot.send_message(chat_id, full)
+        try: await bot.send_message(chat_id, full, parse_mode="Markdown")
+        except: await bot.send_message(chat_id, full)
         return
 
     chunks = []
@@ -455,8 +449,7 @@ async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
         if len(current_chunk) + len(line) + 1 > limit:
             chunks.append(current_chunk)
             current_chunk = line + "\n"
-        else:
-            current_chunk += line + "\n"
+        else: current_chunk += line + "\n"
             
     if len(current_chunk) + len(suffix) > limit:
         chunks.append(current_chunk)
@@ -467,10 +460,8 @@ async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
 
     for chunk in chunks:
         if chunk.strip():
-            try:
-                await bot.send_message(chat_id, chunk, parse_mode="Markdown")
-            except:
-                await bot.send_message(chat_id, chunk)
+            try: await bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            except: await bot.send_message(chat_id, chunk)
 
 async def ask_gemini(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_gemini_request(update, context, " ".join(context.args), False)
