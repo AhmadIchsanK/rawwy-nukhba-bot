@@ -37,7 +37,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text += (
             "\n\n🔐 *[RW] NUKHBA ADMIN SUITE*\n\n"
             "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/delbday @user`\n`/setbdaychannel` (Run in target group)\n`/setbdaytime HH:MM`\n`/bdayconfig` | `/listbdays`\n`/addbday_batch` | `/delbday_batch`\n\n"
-            "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n`/checklimit all` or `@user`\n`/admin_limit @user , [set/add/sub] , Amount`\n`/setweeklylimit 30`\n\n"
+            "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n`/setweeklyquota 3`\n\n"
+            "🤖 *AI Usage Limit*\n`/checklimit all` or `@user`\n`/admin_limit @user , [set/add/sub] , Amount`\n`/setweeklylimit 30`\n\n"
             "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n`/addlib_batch` | `/dellib_batch`\n\n"
             "📢 *System & Broadcasts*\n`/schedule [ChatID/all] , [once/daily/weekly] , [Time] , [yes/no] , [Message]`\n`/listschedules` | `/delschedule ID`\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now.\n\n"
             "🤖 *AI Insight*\n`/feedbacklist` - View last 7 days of feedback.\n`/analyze_feedback` - Standard (7 days) or custom parameters.\n`/alltimefeedback` - Review historical database archives."
