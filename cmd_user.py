@@ -537,3 +537,24 @@ async def set_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
     except Exception as e:
         logger.error(f"Set back error: {e}")
+        async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    try:
+        async with pool.acquire() as conn:
+            monthly = await conn.fetch("SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 5")
+            all_time = await conn.fetch("SELECT username, all_time_points FROM kudos WHERE all_time_points > 0 ORDER BY all_time_points DESC LIMIT 5")
+            
+        msg = "🏆 **RAWWY Stars Leaderboard** 🏆\n\n📅 **This Month's Top Stars:**\n"
+        if monthly:
+            for i, r in enumerate(monthly): msg += f"{i+1}. @{r['username']} - {r['monthly_points']} Stars\n"
+        else: msg += "No stars given this month yet.\n"
+        
+        msg += "\n🌟 **All-Time Top Stars:**\n"
+        if all_time:
+            for i, r in enumerate(all_time): msg += f"{i+1}. @{r['username']} - {r['all_time_points']} Stars\n"
+        else: msg += "No stars given all time yet.\n"
+        
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
