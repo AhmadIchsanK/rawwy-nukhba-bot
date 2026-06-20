@@ -1,5 +1,6 @@
 import logging, datetime
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters, ContextTypes
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters, ContextTypes, TypeHandler, ApplicationHandlerStop
 from core import BOT_TOKEN, WIB, init_db, log_action
 from crons import daily_morning_log, monthly_leaderboard, weekly_quota_reset, poll_cleanup, schedule_bday_job
 
@@ -23,6 +24,29 @@ async def post_init_wrapper(app: Application):
     await init_db(app)
     await schedule_bday_job(app)
 
+# --- CIRCUIT BREAKER MIDDLEWARE ---
+async def maintenance_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user: return
+    pool = context.bot_data.get('db_pool')
+    if not pool: return
+    
+    async with pool.acquire() as conn:
+        maint = await conn.fetchval("SELECT value FROM config WHERE key='maintenance_mode'")
+        
+    if maint == 'true':
+        from core import is_super
+        username = update.effective_user.username or str(update.effective_user.id)
+        if await is_super(username): return # Super admin completely bypasses the pause lock
+        
+        if update.message and update.message.text and update.message.text.startswith('/'):
+            try: await update.message.reply_text("⚠️ **[RW] Nukhba Manager is currently paused.**\nThe system is undergoing maintenance to fix bugs. Please try again later.", parse_mode="Markdown")
+            except: pass
+        elif update.callback_query:
+            try: await update.callback_query.answer("⚠️ Bot is paused for maintenance.", show_alert=True)
+            except: pass
+            
+        raise ApplicationHandlerStop # Instantly blocks the command from proceeding to other handlers
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.post_init = post_init_wrapper
@@ -33,6 +57,10 @@ def main():
     app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=7, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
+
+    # --- 0. MIDDLEWARE ---
+    # Group -1 runs before any standard command
+    app.add_handler(TypeHandler(Update, maintenance_middleware), group=-1)
 
     # --- SYSTEM BRANCH ---
     app.add_handler(CommandHandler("start", cmd_system.start))
@@ -46,6 +74,7 @@ def main():
     app.add_handler(CommandHandler("myquota", cmd_user.my_quota))
     app.add_handler(CommandHandler("mystar", cmd_user.my_star))
     app.add_handler(CommandHandler("totalstar", cmd_user.total_star))
+    app.add_handler(CommandHandler("leaderboard", cmd_user.leaderboard))
     app.add_handler(CommandHandler("newevent", cmd_user.create_event))
     app.add_handler(CommandHandler("editevent", cmd_user.edit_event))
     app.add_handler(CommandHandler("events", cmd_user.list_events))
@@ -59,9 +88,9 @@ def main():
     app.add_handler(CommandHandler("library", cmd_user.list_lib))
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
-    app.add_handler(CommandHandler("leaderboard", cmd_user.leaderboard))
 
     # --- ADMIN BRANCH ---
+    app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
     app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
     app.add_handler(CommandHandler("alltimefeedback", cmd_admin.all_time_feedback))
     app.add_handler(CommandHandler("setgeminiquota", cmd_admin.set_gemini_quota))
@@ -95,7 +124,6 @@ def main():
     app.add_handler(CommandHandler("auditlog", cmd_admin.get_audit_log))
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
-    app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
 
     # --- SUPER OWNER ---
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
@@ -104,6 +132,8 @@ def main():
     app.add_handler(CommandHandler("removemember", cmd_admin.remove_member_req))
     app.add_handler(CommandHandler("graveyard", cmd_admin.graveyard))
     app.add_handler(CommandHandler("super_reset", cmd_admin.super_reset_req))
+    app.add_handler(CommandHandler("pause", cmd_admin.pause_bot))
+    app.add_handler(CommandHandler("restart", cmd_admin.restart_bot))
 
     # --- FALLBACK TRACKERS ---
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
