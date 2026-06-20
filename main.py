@@ -51,11 +51,18 @@ async def dynamic_quota_fallback(update: Update, context: ContextTypes.DEFAULT_T
     await update.message.reply_text("⚠️ Quota command handler configuration mismatch inside cmd_user module.")
 
 async def dynamic_mystar_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely discovers and runs the monthly stars lookup under any varying function names inside cmd_user."""
-    for attr in ['my_stars', 'check_my_stars', 'view_my_stars', 'view_stars', 'stars_command', 'mystar', 'stars']:
+    """Safely discovers and runs the monthly stars tally under any varying function names inside cmd_user."""
+    for attr in ['my_stars', 'check_my_stars', 'view_my_stars', 'view_stars', 'stars_command', 'mystar', 'my_star']:
         if hasattr(cmd_user, attr):
             return await getattr(cmd_user, attr)(update, context)
-    await update.message.reply_text("⚠️ Monthly stars command handler configuration mismatch inside cmd_user module.")
+    await update.message.reply_text("⚠️ Monthly star status checker mismatch inside cmd_user module.")
+
+async def dynamic_totalstar_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Safely discovers and runs the all-time stars tally under any varying function names inside cmd_user."""
+    for attr in ['total_stars', 'check_total_stars', 'view_total_stars', 'totalstar', 'total_star']:
+        if hasattr(cmd_user, attr):
+            return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ All-time star status checker mismatch inside cmd_user module.")
 
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
@@ -63,7 +70,6 @@ def main():
         logger.critical("❌ CRITICAL ERROR: BOT_TOKEN is unconfigured in core.py environment variables!")
         return
 
-    # Build the Telegram Application instance
     app = Application.builder().token(BOT_TOKEN).build()
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
@@ -71,10 +77,7 @@ def main():
     # ----------------------------------------------------
     # 🧠 SECTION 1: TRIVIA MODULE ROUTING
     # ----------------------------------------------------
-    # User level tracking command
     app.add_handler(CommandHandler("mypoint", cmd_trivia.my_point))
-
-    # Administrative configuration settings
     app.add_handler(CommandHandler("settriviachannel", cmd_trivia.set_trivia_channel))
     app.add_handler(CommandHandler("settriviatheme", cmd_trivia.set_trivia_theme))
     app.add_handler(CommandHandler("settriviatime", cmd_trivia.set_trivia_time))
@@ -88,8 +91,6 @@ def main():
     app.add_handler(CommandHandler("forcesupertrivia", cmd_trivia.force_super_trivia))
     app.add_handler(CommandHandler("canceltrivia", cmd_trivia.cancel_trivia))
     app.add_handler(CommandHandler("admin_kp", cmd_trivia.admin_kp))
-
-    # Register Interactive Inline Keyboard Taps
     app.add_handler(CallbackQueryHandler(cmd_trivia.trivia_callback, pattern="^triv_"))
 
     # ----------------------------------------------------
@@ -107,9 +108,8 @@ def main():
     
     app.add_handler(CommandHandler("thanks", dynamic_thanks_fallback))
     app.add_handler(CommandHandler("myquota", dynamic_quota_fallback))
-    # Secure fallback configuration mapping for /mystar
     app.add_handler(CommandHandler("mystar", dynamic_mystar_fallback))
-    app.add_handler(CommandHandler("totalstar", cmd_user.check_total_stars))
+    app.add_handler(CommandHandler("totalstar", dynamic_totalstar_fallback))
     app.add_handler(CommandHandler("leaderboard", cmd_user.view_leaderboard))
     
     app.add_handler(CommandHandler("addlib", cmd_user.add_library))
@@ -199,7 +199,6 @@ def main():
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(cmd_trivia.run_monthly_trivia_reset, time=datetime.time(hour=13, minute=0, tzinfo=WIB))
 
-    # Connect polling loops
     logger.info("🚀 [RW] Nukhba Manager initialized. Starting event polling loops...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
