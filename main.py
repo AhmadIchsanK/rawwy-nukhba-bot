@@ -43,7 +43,6 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
     is_adm = await is_bot_admin(username, pool)
     is_sup = await is_super(username)
     
-    # Categorized Base Commands for EVERYONE
     base_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("newevent", "📅 Schedule an event"),
@@ -72,6 +71,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("listbdays", "🎂 View all birthdays"),
             BotCommand("setbdaychannel", "⚙️ Set Group for Bdays"),
             BotCommand("attendance", "⚙️ View Away vs Available"),
+            BotCommand("forceback", "⚙️ Force stop user away status"),
             BotCommand("checkquota", "⚙️ Audit user quotas"),
             BotCommand("admin_stars", "⚙️ Modify user stars"),
             BotCommand("grouptasks", "⚙️ View group tasks"),
@@ -96,10 +96,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         ])
         
     try: 
-        # Update the user's specific private chat menu
         await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
-        
-        # If admin, ensure they see admin commands in tracked groups too
         if is_adm:
             async with pool.acquire() as conn:
                 groups = await conn.fetch("SELECT chat_id FROM active_groups")
@@ -113,7 +110,6 @@ async def init_db(app: Application):
     if not DATABASE_URL: return logger.error("DATABASE_URL missing!")
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
     
-    # 1. DATABASE BLOCK (Must be indented 4 spaces)
     async with app.bot_data['db_pool'].acquire() as conn:
         await conn.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, user_id BIGINT);''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS bot_admins (username TEXT PRIMARY KEY);''')
@@ -131,11 +127,12 @@ async def init_db(app: Application):
         await conn.execute('''CREATE TABLE IF NOT EXISTS bot_stats (date DATE PRIMARY KEY, uses INT DEFAULT 0, errors INT DEFAULT 0);''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS bug_reports (id SERIAL PRIMARY KEY, username TEXT, report TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS graveyard (username TEXT PRIMARY KEY, offboarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), data_dump TEXT);''')
-        
-        # Upgraded Audit Logs Table (STILL INSIDE the block)
         await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, user_id BIGINT, chat_id BIGINT, action_type TEXT, status TEXT, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
+        
+        # FIXED: Missing announcement tables that were causing /announce to fail
+        await conn.execute('''CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS announcement_messages (announcement_id INTEGER, chat_id BIGINT, message_id BIGINT);''')
 
-    # 2. MENU BUILDER BLOCK (Outside the database block, aligned with the 'async with')
     default_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("newevent", "📅 Schedule an event"),
@@ -155,8 +152,6 @@ async def init_db(app: Application):
         BotCommand("away", "🏖️ Set away status"),
         BotCommand("back", "🏖️ Return to available")
     ]
-    
-    # This pushes the clean base list to EVERY chat type to overwrite cached ghosts
     from telegram import BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllPrivateChats())
@@ -183,7 +178,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📅 *1/ Events*\n`/newevent Title , MM/DD/YYYY HH.MM , RemMins` - Schedules a pinned event.\n`/events` - View upcoming events.\n\n"
         "📊 *2/ Polls*\n`/poll Question , Hours (1-72) , Opt1 , Opt2` - Max 1 poll per user.\n\n"
         "🌟 *3/ RAWWY Stars*\n`/thanks` (Reply) - Give 1 Star.\n`/myquota` - Check remaining sends.\n`/mystar` - Stars earned this month.\n`/totalstar` - Stars earned all-time.\n\n"
-        "📚 *4/ Library*\n`/addlib Name , Content` - Save an asset (Add ', private' to lock it).\n`/editlib Name , Content` - Edit your asset.\n`/getlib Name` - Pull an asset.\n`/library` - Browse everything.\n\n"
+        "📚 *4/ Library*\n`/addlib Name , Content` - Save an asset.\n`/editlib Name , Content` - Edit your asset.\n`/getlib Name` - Pull an asset.\n`/library` - Browse everything.\n\n"
         "⚡ *5/ Tasks*\n`/assign @user , 60 , Task description` - Deadline in 60-480m.\n`/complete ID` - Close task.\n`/mytasks` - View your active tasks.\n\n"
         "🏖️ *6/ Away Mode*\n`/away Reason , MM/DD/YYYY HH.MM` - Set away status.\n`/back` - Return early and receive missed mentions.\n\n"
         "🐛 *Extras*\n`/bugreport Your issue here`"
@@ -195,7 +190,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "\n\n🔐 *[RW] NUKHBA ADMIN SUITE*\n\n"
             "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/setbdaychannel` (Run in target group)\n`/listbdays`\n\n"
             "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n\n"
-            "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/dellib Name`\n\n"
+            "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/dellib Name`\n\n"
             "📢 *System*\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now."
         )
         if await is_super(username):
@@ -243,24 +238,25 @@ async def generate_audit_report(pool, target_date: datetime.date) -> str:
     msg += f"**Events:**\n• Created: {events_created}\n• Updated: {events_updated}\n• RSVP Count: {rsvp_count}\n\n"
     msg += f"**Announcements:**\n• Sent: {ann_sent}\n• Failed: {ann_failed}\n\n"
     msg += f"**System:**\n• Errors: {sys_errors}\n• Warnings: {sys_warns}"
-    
     return msg
 
 async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     target_date = datetime.datetime.now(WIB).date()
-    msg = await generate_audit_report(pool, target_date)
-    
-    async with pool.acquire() as conn:
-        admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
-        super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
-    
-    admin_ids = {a['user_id'] for a in admins}
-    if super_id: admin_ids.add(super_id)
-    
-    for uid in admin_ids:
-        try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
-        except: pass
+    try:
+        msg = await generate_audit_report(pool, target_date)
+        async with pool.acquire() as conn:
+            admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
+            super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
+        
+        admin_ids = {a['user_id'] for a in admins}
+        if super_id: admin_ids.add(super_id)
+        
+        for uid in admin_ids:
+            try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+            except: pass
+    except Exception as e:
+        logger.error(f"Failed to run daily morning log: {e}")
 
 async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now(WIB)
@@ -375,6 +371,23 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
                 
             text = update.message.text
+            
+            # --- FORCE AUTO-RETURN FIX ---
+            # If the user is currently away and they type something, immediately force them back and DM recap
+            is_away = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', username)
+            if is_away:
+                for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
+                recap_msg = await process_return(username, context.bot)
+                await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} auto-returned via chat")
+                try: await update.message.reply_text(f"Welcome back @{username}! Your Away status was automatically removed because you sent a message.\n\nI have gathered your missed mentions.", parse_mode="Markdown")
+                except: pass
+                # Attempt DM
+                try:
+                    uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
+                    if uid: await context.bot.send_message(uid, recap_msg, parse_mode="Markdown")
+                except: pass
+            
+            # Continue tracking tags
             aways = await conn.fetch('SELECT username, reason, end_time, last_notified FROM away_status')
             for a in aways:
                 if f"@{a['username']}" in text:
@@ -855,6 +868,24 @@ async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
 # --- 6/ AWAY MODE ---
+# FIXED: The process_return function now safely generates the text and passes it back
+# so it can be pushed reliably to the group chat instead of breaking on DM failure.
+async def process_return(username, bot):
+    pool = bot.application.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        mentions = await conn.fetch('SELECT mentioner, message, chat_title, created_at FROM away_mentions WHERE away_username=$1 ORDER BY created_at ASC', username)
+        await conn.execute('DELETE FROM away_status WHERE username=$1', username)
+        await conn.execute('DELETE FROM away_mentions WHERE away_username=$1', username)
+        
+    msg = f"🎉 **A warm welcome back, @{username}!** You are now marked as **🟢 Available**.\n\n"
+    if mentions:
+        msg += "Here is your Away Mentions Recap:\n\n"
+        for m in mentions:
+            t_str = m['created_at'].astimezone(WIB).strftime('%m/%d %H:%M WIB')
+            msg += f"🔹 [{t_str}] in **{m['chat_title']}**\n**@{m['mentioner']}**: \"{m['message']}\"\n\n"
+    else: msg += "It was quiet! You had absolutely zero mentions while you were away."
+    return msg
+
 async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -893,10 +924,37 @@ async def set_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not status: return await update.message.reply_text("You are not marked as Away. Your status is already available 🟢.")
     
     for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
-    await process_return(username, context.bot, update.effective_chat.id)
+    msg = await process_return(username, context.bot)
     
     await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} manually returned")
-    await update.message.reply_text("Your Away status has been removed. You are now marked as Available.")
+    
+    # Send it directly to the chat they typed /back in to guarantee delivery
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "")
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/forceback @user`")
+    
+    async with pool.acquire() as conn:
+        status = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', target)
+        if not status: return await context.bot.send_message(update.effective_user.id, f"@{target} is not currently marked as Away.")
+        
+    for j in context.job_queue.get_jobs_by_name(f"away_{target}"): j.schedule_removal()
+    msg = await process_return(target, context.bot)
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Force Removed", f"@{username} forced @{target} back")
+    
+    try: 
+        async with pool.acquire() as conn:
+            uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", target)
+        if uid: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+        await context.bot.send_message(update.effective_user.id, f"✅ @{target} forced back to Available. Digest sent to them.", parse_mode="Markdown")
+    except:
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 async def auto_return_away(context: ContextTypes.DEFAULT_TYPE): 
     pool = context.bot.application.bot_data.get('db_pool')
@@ -905,28 +963,12 @@ async def auto_return_away(context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
         
-    await process_return(username, context.bot, context.job.data['chat_id'])
+    msg = await process_return(username, context.bot)
     await log_action(pool, uid or 0, context.job.data['chat_id'], "Away Status", "Removed", f"@{username} auto-returned")
-
-async def process_return(username, bot, chat_id=None):
-    pool = bot.application.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        mentions = await conn.fetch('SELECT mentioner, message, chat_title, created_at FROM away_mentions WHERE away_username=$1 ORDER BY created_at ASC', username)
-        await conn.execute('DELETE FROM away_status WHERE username=$1', username)
-        await conn.execute('DELETE FROM away_mentions WHERE away_username=$1', username)
-        user_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
-        
-    msg = f"🎉 **A warm welcome back, @{username}!** You are now marked as **🟢 Available**.\n\n"
-    if mentions:
-        msg += "Here are the mentions you missed:\n\n"
-        for m in mentions:
-            t_str = m['created_at'].astimezone(WIB).strftime('%m/%d %H:%M WIB')
-            msg += f"🔹 [{t_str}] in **{m['chat_title']}**\n**@{m['mentioner']}**: \"{m['message']}\"\n\n"
-    else: msg += "It was quiet! You had absolutely zero mentions."
-        
-    if user_id: 
-        try: await bot.send_message(user_id, msg, parse_mode="Markdown")
-        except: pass
+    try: 
+        if uid: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+        await context.bot.send_message(context.job.data['chat_id'], f"⏰ @{username}'s Away timer has expired. They are now 🟢 Available.")
+    except: pass
 
 async def attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1049,9 +1091,14 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(username, pool): return
-    target_date = datetime.datetime.now(WIB).date()
-    msg = await generate_audit_report(pool, target_date)
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    
+    try:
+        target_date = datetime.datetime.now(WIB).date()
+        msg = await generate_audit_report(pool, target_date)
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ Error generating audit log. System generated this exception:\n`{e}`", parse_mode="Markdown")
+        logger.error(f"Audit log error: {e}")
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1124,13 +1171,34 @@ async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn: b = await conn.fetch('SELECT username, bday FROM birthdays ORDER BY bday')
     await context.bot.send_message(update.effective_user.id, "🎂 **Birthdays**\n" + "\n".join([f"• @{x['username']}: {x['bday']}" for x in b]) if b else "None saved.", parse_mode="Markdown")
 
-# --- SUPER ACTIONS WITH CONFIRMATIONS ---
+
+# --- SUPER ACTIONS ---
+
+# FIXED: Removed the 2-step inline keyboard for super reset. It now executes directly from your prompt.
+async def super_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return
+    
+    try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].lower()
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/super_reset [stars/tasks/library/events/away/all]`", parse_mode="Markdown")
+    
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        if target in ["stars", "all"]: await conn.execute("TRUNCATE kudos")
+        if target in ["tasks", "all"]: await conn.execute("TRUNCATE tasks RESTART IDENTITY")
+        if target in ["library", "all"]: await conn.execute("TRUNCATE library")
+        if target in ["events", "all"]: await conn.execute("TRUNCATE events, rsvps CASCADE RESTART IDENTITY")
+        if target in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
+        
+    await context.bot.send_message(update.effective_user.id, f"☢️ Data Wipe for `{target}` successfully executed.", parse_mode="Markdown")
+
 async def request_super_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, label: str):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     if not await is_super(username): return
     try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "").lower()
-    except: return await context.bot.send_message(update.effective_user.id, f"❌ Format error: `/{action} @user` (or `all` for reset).")
+    except: return await context.bot.send_message(update.effective_user.id, f"❌ Format error: `/{action} @user`")
     
     cb_data = f"sup_{action}_{target}"
     kb = [[InlineKeyboardButton("Yes, Do it", callback_data=cb_data), InlineKeyboardButton("No, Cancel", callback_data="sup_cancel")]]
@@ -1139,7 +1207,6 @@ async def request_super_action(update: Update, context: ContextTypes.DEFAULT_TYP
 async def add_admin_req(u, c): await request_super_action(u, c, "addadmin", "Promote Admin")
 async def del_admin_req(u, c): await request_super_action(u, c, "deladmin", "Demote Admin")
 async def remove_member_req(u, c): await request_super_action(u, c, "removemember", "Offboard User")
-async def super_reset_req(u, c): await request_super_action(u, c, "reset", "Factory Wipe")
 
 async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -1182,19 +1249,6 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await conn.execute('DELETE FROM away_status WHERE username=$1', target)
             await conn.execute("UPDATE tasks SET assignee='Unassigned' WHERE assignee=$1", target)
         await q.edit_message_text(f"🪦 @{target} offboarded to graveyard.")
-        
-    elif action == "reset":
-        if target == "all" and "confirm" not in q.data:
-            kb = [[InlineKeyboardButton("Yes, I am absolutely sure", callback_data="sup_reset_all_confirm"), InlineKeyboardButton("No, Cancel", callback_data="sup_cancel")]]
-            return await q.edit_message_text("⚠️ **WARNING:** You selected 'all'. This will wipe EVERYTHING. Are you sure?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-            
-        async with pool.acquire() as conn:
-            if target == "stars" or "all" in target: await conn.execute("TRUNCATE kudos")
-            if target == "tasks" or "all" in target: await conn.execute("TRUNCATE tasks RESTART IDENTITY")
-            if target == "library" or "all" in target: await conn.execute("TRUNCATE library")
-            if target == "events" or "all" in target: await conn.execute("TRUNCATE events, rsvps CASCADE RESTART IDENTITY")
-            if target == "away" or "all" in target: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
-        await q.edit_message_text(f"☢️ Data Wipe for `{target}` complete.", parse_mode="Markdown")
 
 async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1237,7 +1291,7 @@ def main():
     app.add_handler(CommandHandler("listadmins", list_admins))
     app.add_handler(CommandHandler("removemember", remove_member_req))
     app.add_handler(CommandHandler("graveyard", graveyard))
-    app.add_handler(CommandHandler("super_reset", super_reset_req))
+    app.add_handler(CommandHandler("super_reset", super_reset)) # Changed from _req to direct handler
     
     app.add_handler(CommandHandler("announce", announce))
     app.add_handler(CommandHandler("editannounce", edit_announce))
@@ -1257,6 +1311,7 @@ def main():
     app.add_handler(CommandHandler("botstatus", bot_status))
     app.add_handler(CommandHandler("auditlog", get_audit_log))
     app.add_handler(CommandHandler("setbdaychannel", set_bday_channel))
+    app.add_handler(CommandHandler("forceback", force_back))
     
     app.add_handler(CommandHandler("away", set_away))
     app.add_handler(CommandHandler("back", set_back))
