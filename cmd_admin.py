@@ -1,3 +1,4 @@
+# --- NUKHBA ADMINISTRATIVE CONTROL MODULE - PART 1 ---
 import datetime, logging, pytz
 from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -141,7 +142,8 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif act == "add": await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2', amt, t)
         elif act == "sub": await conn.execute(f'UPDATE kudos SET {col}={col}-$1 WHERE username=$2', amt, t)
     await context.bot.send_message(update.effective_user.id, "✅ Stars modified.")
-    async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # --- NUKHBA ADMINISTRATIVE CONTROL MODULE - PART 2 ---
+async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -169,7 +171,6 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         temp = await context.bot.send_message(update.effective_user.id, "⏳ Generating detailed product analysis brief...")
         
-        # Grouping dynamically by date logic inside prompt data feed
         raw_data = ""
         for r in reports:
             dt = r['created_at'].astimezone(WIB).strftime('%Y-%m-%d')
@@ -214,7 +215,6 @@ async def all_time_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(update.effective_user.id, c, parse_mode="Markdown")
     else: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
-# --- STANDARD SYSTEM ADMINISTRATION ---
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
