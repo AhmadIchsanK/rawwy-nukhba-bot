@@ -39,7 +39,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
     if not BOT_TOKEN:
-        logger.critical("❌ CRITICAL ERROR: BOT_TOKEN is unconfigured in core.py environment parameters!")
+        logger.critical("❌ CRITICAL ERROR: BOT_TOKEN is unconfigured in core.py environment variables!")
         return
 
     # Build the Telegram Application instance
@@ -80,9 +80,9 @@ def main():
     app.add_handler(CommandHandler("ask", cmd_system.ask_bot))
     app.add_handler(CommandHandler("feedback", cmd_system.submit_feedback))
     
-    # Clean matches with actual cmd_user.py function naming setups
+    # Linked cleanly to cmd_user.py function names
     app.add_handler(CommandHandler("newevent", cmd_user.create_event))
-    app.add_handler(CommandHandler("events", cmd_user.view_events))
+    app.add_handler(CommandHandler("events", cmd_user.list_events))
     app.add_handler(CommandHandler("poll", cmd_user.create_poll))
     
     app.add_handler(CommandHandler("thanks", cmd_user.give_star))
@@ -178,7 +178,7 @@ def main():
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(cmd_trivia.run_monthly_trivia_reset, time=datetime.time(hour=13, minute=0, tzinfo=WIB))
 
-    # Connect polling engine threads live
+    # Connect polling loops
     logger.info("🚀 [RW] Nukhba Manager initialized. Starting event polling loops...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
