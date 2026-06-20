@@ -1,6 +1,7 @@
 import os, datetime, logging, json, sys, asyncio
 import asyncpg
 from pytz import timezone
+from telegram import Update
 from telegram.ext import Application
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,15 @@ async def is_super(username: str) -> bool:
     """Checks if a user is the primary programmatic system anchor."""
     if not username: return False
     return username.lower() == SUPER_OWNER.lower()
+
+# --- CHAT CLEANUP UTILITY ---
+async def delete_cmd(update: Update):
+    """Safely deletes the triggering command message to prevent group chat clutter."""
+    try:
+        if update.message:
+            await update.message.delete()
+    except Exception:
+        pass
 
 # --- SYSTEM DIAGNOSTIC ACTIVITY RECORDER ---
 async def log_action(pool, user_id: int, chat_id: int, category: str, status: str, detail: str):
