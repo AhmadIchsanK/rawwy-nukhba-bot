@@ -50,6 +50,13 @@ async def dynamic_quota_fallback(update: Update, context: ContextTypes.DEFAULT_T
             return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Quota command handler configuration mismatch inside cmd_user module.")
 
+async def dynamic_mystar_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Safely discovers and runs the monthly stars lookup under any varying function names inside cmd_user."""
+    for attr in ['my_stars', 'check_my_stars', 'view_my_stars', 'view_stars', 'stars_command', 'mystar', 'stars']:
+        if hasattr(cmd_user, attr):
+            return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Monthly stars command handler configuration mismatch inside cmd_user module.")
+
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
     if not BOT_TOKEN:
@@ -99,9 +106,9 @@ def main():
     app.add_handler(CommandHandler("poll", cmd_user.create_poll))
     
     app.add_handler(CommandHandler("thanks", dynamic_thanks_fallback))
-    # Secure fallback configuration mapping for /myquota
     app.add_handler(CommandHandler("myquota", dynamic_quota_fallback))
-    app.add_handler(CommandHandler("mystar", cmd_user.check_my_stars))
+    # Secure fallback configuration mapping for /mystar
+    app.add_handler(CommandHandler("mystar", dynamic_mystar_fallback))
     app.add_handler(CommandHandler("totalstar", cmd_user.check_total_stars))
     app.add_handler(CommandHandler("leaderboard", cmd_user.view_leaderboard))
     
