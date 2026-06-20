@@ -47,7 +47,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("newevent", "📅 Schedule an event"),
         BotCommand("events", "📅 View upcoming events"),
-        BotCommand("poll", "📊 Create a team poll"),
+        BotCommand("poll", "📊 Interactive Team Poll"),
         BotCommand("thanks", "🌟 Give a Star (Reply)"),
         BotCommand("myquota", "🌟 Check Star Quota left"),
         BotCommand("mystar", "🌟 Monthly Stars earned"),
@@ -131,7 +131,6 @@ async def init_db(app: Application):
         await conn.execute('''CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS announcement_messages (announcement_id INTEGER, chat_id BIGINT, message_id BIGINT);''')
         
-        # DATABASE AUTO-MIGRATOR: Safe upgrade for older tables that lack new columns
         try:
             await conn.execute('''ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;''')
         except Exception:
@@ -141,7 +140,7 @@ async def init_db(app: Application):
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("newevent", "📅 Schedule an event"),
         BotCommand("events", "📅 View upcoming events"),
-        BotCommand("poll", "📊 Create a team poll"),
+        BotCommand("poll", "📊 Interactive Team Poll"),
         BotCommand("thanks", "🌟 Give a Star (Reply)"),
         BotCommand("myquota", "🌟 Check Star Quota left"),
         BotCommand("mystar", "🌟 Monthly Stars earned"),
@@ -180,7 +179,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🚀 *[RW] Nukhba Manager Guide*\n\n"
         "📅 *1/ Events*\n`/newevent Title , MM/DD/YYYY HH.MM , RemMins` - Schedules a pinned event.\n`/events` - View upcoming events.\n\n"
-        "📊 *2/ Polls*\n`/poll Question , Hours (1-72) , Opt1 , Opt2` - Max 1 poll per user.\n\n"
+        "📊 *2/ Polls*\n`/poll Question , Opt1 , Opt2` - Launches interactive poll builder.\n\n"
         "🌟 *3/ RAWWY Stars*\n`/thanks` (Reply) - Give 1 Star.\n`/myquota` - Check remaining sends.\n`/mystar` - Stars earned this month.\n`/totalstar` - Stars earned all-time.\n\n"
         "📚 *4/ Library*\n`/addlib Name , Content` - Save an asset.\n`/editlib Name , Content` - Edit your asset.\n`/getlib Name` - Pull an asset.\n`/library` - Browse everything.\n\n"
         "⚡ *5/ Tasks*\n`/assign @user , 60 , Task description` - Deadline in 60-480m.\n`/complete ID` - Close task.\n`/mytasks` - View your active tasks.\n\n"
@@ -379,7 +378,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             is_away = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', username)
             if is_away:
                 for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
-                recap_msg = await process_return(username, context.bot)
+                recap_msg = await process_return(username, pool, context.bot)
                 await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} auto-returned via chat")
                 try: await update.message.reply_text(f"✅ Welcome back @{username}! Your Away status was automatically removed because you sent a message.\n\nI have gathered your missed mentions.", parse_mode="Markdown")
                 except: pass
@@ -553,38 +552,116 @@ async def cancel_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
 # --- 2/ POLLS ---
+def get_poll_kb(draft, pid):
+    anon_str = "🟢 Anonymous: ON" if draft['anon'] else "🔴 Anonymous: OFF"
+    multi_str = "🟢 Multi-Choice: ON" if draft['multi'] else "🔴 Multi-Choice: OFF"
+    quiz_str = f"🧠 Quiz (Answer: {draft['quiz_idx']+1})" if draft['quiz_idx'] >= 0 else "🧠 Quiz Mode: OFF"
+    hrs_str = f"⏳ Duration: {draft['hours']} Hours"
+
+    kb = [
+        [InlineKeyboardButton(anon_str, callback_data=f"pollst_{pid}_anon"),
+         InlineKeyboardButton(multi_str, callback_data=f"pollst_{pid}_multi")],
+        [InlineKeyboardButton(quiz_str, callback_data=f"pollst_{pid}_quiz"),
+         InlineKeyboardButton(hrs_str, callback_data=f"pollst_{pid}_hrs")],
+        [InlineKeyboardButton("✅ Launch Poll Now", callback_data=f"pollst_{pid}_send")],
+        [InlineKeyboardButton("❌ Cancel Setup", callback_data=f"pollst_{pid}_cancel")]
+    ]
+    return InlineKeyboardMarkup(kb)
+
 async def create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private": return await update.message.reply_text("❌ Polls must be created in a group.")
     pool = context.bot_data.get('db_pool')
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
-        if len(parts) < 4: raise ValueError
-        hours = int(parts[1])
-        if hours < 1 or hours > 72: return await update.message.reply_text("❌ Poll duration must be between 1 and 72 hours.")
-    except ValueError: return await update.message.reply_text("❌ Make sure Hours is a number and avoid using commas inside the question itself!")
+        if len(parts) < 3: raise ValueError
+        question = parts[0]
+        options = parts[1:11] # Max 10 options in Telegram
     except Exception as e:
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "Poll Create", "Error", str(e))
-        return await update.message.reply_text("❌ Poll format error. Use: `/poll Question , Hours , Opt1 , Opt2`")
+        return await update.message.reply_text("❌ Format error. Use: `/poll Question , Option 1 , Option 2 , ...`")
 
-    try:
+    pid = update.message.message_id
+    context.chat_data[f"poll_{pid}"] = {
+        'owner': update.effective_user.id,
+        'q': question,
+        'opts': options,
+        'anon': False,
+        'multi': False,
+        'quiz_idx': -1,
+        'hours': 24
+    }
+
+    opts_str = "\n".join([f"{i+1}. {o}" for i, o in enumerate(options)])
+    text = f"📊 **Interactive Poll Setup**\n\n**Question:** {question}\n\n**Options:**\n{opts_str}\n\n_Configure settings below and click Launch._"
+
+    await update.message.reply_text(text, reply_markup=get_poll_kb(context.chat_data[f"poll_{pid}"], pid), parse_mode="Markdown")
+
+async def poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    parts = q.data.split("_")
+    pid = int(parts[1])
+    action = parts[2]
+
+    draft = context.chat_data.get(f"poll_{pid}")
+    if not draft:
+        await q.message.delete()
+        return await q.answer("❌ Poll session expired.", show_alert=True)
+
+    if update.effective_user.id != draft['owner']:
+        return await q.answer("❌ Only the creator can configure this poll.", show_alert=True)
+
+    if action == "anon":
+        draft['anon'] = not draft['anon']
+    elif action == "multi":
+        if draft['quiz_idx'] >= 0: return await q.answer("❌ Multiple answers are disabled in Quiz mode!", show_alert=True)
+        draft['multi'] = not draft['multi']
+    elif action == "quiz":
+        draft['quiz_idx'] += 1
+        if draft['quiz_idx'] >= len(draft['opts']): draft['quiz_idx'] = -1
+        if draft['quiz_idx'] >= 0: draft['multi'] = False
+    elif action == "hrs":
+        cycles = [1, 6, 12, 24, 48, 72]
+        idx = cycles.index(draft['hours']) if draft['hours'] in cycles else 0
+        draft['hours'] = cycles[(idx + 1) % len(cycles)]
+    elif action == "cancel":
+        del context.chat_data[f"poll_{pid}"]
+        await q.message.delete()
+        return await q.answer("✅ Poll cancelled.")
+    elif action == "send":
+        pool = context.bot_data.get('db_pool')
         async with pool.acquire() as conn:
-            active = await conn.fetchval("SELECT end_time FROM active_polls WHERE chat_id=$1 AND user_id=$2 AND end_time > NOW()", update.effective_chat.id, update.effective_user.id)
+            active = await conn.fetchval("SELECT end_time FROM active_polls WHERE chat_id=$1 AND user_id=$2 AND end_time > NOW()", update.effective_chat.id, draft['owner'])
             if active:
-                return await update.message.reply_text(f"❌ You already have an active poll running in this group! Please wait for it to expire at {active.astimezone(WIB).strftime('%H:%M WIB')} before creating another.")
+                return await q.answer(f"❌ You already have an active poll running here until {active.astimezone(WIB).strftime('%H:%M WIB')}!", show_alert=True)
 
-        dur = hours * 3600
-        msg = await context.bot.send_poll(update.effective_chat.id, parts[0], parts[2:], is_anonymous=False, allows_multiple_answers=True, open_period=dur)
-        
-        end_time = datetime.datetime.now(WIB) + datetime.timedelta(seconds=dur)
-        async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO active_polls (chat_id, user_id, end_time) VALUES ($1, $2, $3) ON CONFLICT (chat_id, user_id) DO UPDATE SET end_time=$3", update.effective_chat.id, update.effective_user.id, end_time)
+        dur = draft['hours'] * 3600
+        try:
+            msg = await context.bot.send_poll(
+                chat_id=update.effective_chat.id,
+                question=draft['q'],
+                options=draft['opts'],
+                is_anonymous=draft['anon'],
+                allows_multiple_answers=draft['multi'],
+                type='quiz' if draft['quiz_idx'] >= 0 else 'regular',
+                correct_option_id=draft['quiz_idx'] if draft['quiz_idx'] >= 0 else None,
+                open_period=dur
+            )
+            end_time = datetime.datetime.now(WIB) + datetime.timedelta(seconds=dur)
+            async with pool.acquire() as conn:
+                await conn.execute("INSERT INTO active_polls (chat_id, user_id, end_time) VALUES ($1, $2, $3) ON CONFLICT (chat_id, user_id) DO UPDATE SET end_time=$3", update.effective_chat.id, draft['owner'], end_time)
 
-        rem_time = end_time - datetime.timedelta(minutes=15)
-        if dur > 900:
-            context.job_queue.run_once(poll_reminder, when=rem_time, data={"chat_id": update.effective_chat.id, "q": parts[0], "msg_id": msg.message_id})
-        await update.message.reply_text("✅ Poll successfully created.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ System Error: {e}")
+            rem_time = end_time - datetime.timedelta(minutes=15)
+            if dur > 900:
+                context.job_queue.run_once(poll_reminder, when=rem_time, data={"chat_id": update.effective_chat.id, "q": draft['q'], "msg_id": msg.message_id})
+
+            del context.chat_data[f"poll_{pid}"]
+            await q.message.delete()
+            return await q.answer("✅ Poll launched successfully!")
+        except Exception as e:
+            return await q.answer(f"❌ Failed to launch poll: {str(e)}", show_alert=True)
+
+    await q.edit_message_reply_markup(reply_markup=get_poll_kb(draft, pid))
+    await q.answer()
 
 async def poll_reminder(context: ContextTypes.DEFAULT_TYPE):
     try: await context.bot.send_message(context.job.data['chat_id'], f"⏳ **Attention team!** The poll '{context.job.data['q']}' is ending in 15 minutes! Please get your votes in.", reply_to_message_id=context.job.data['msg_id'], parse_mode="Markdown")
@@ -931,8 +1008,7 @@ async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
 # --- 6/ AWAY MODE ---
-async def process_return(username, bot):
-    pool = bot.application.bot_data.get('db_pool')
+async def process_return(username, pool, bot):
     async with pool.acquire() as conn:
         mentions = await conn.fetch('SELECT mentioner, message, chat_title, created_at FROM away_mentions WHERE away_username=$1 ORDER BY created_at ASC', username)
         await conn.execute('DELETE FROM away_status WHERE username=$1', username)
@@ -989,7 +1065,7 @@ async def set_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not status: return await update.message.reply_text("❌ You are not currently marked as Away. Your status is already Available 🟢.")
         
         for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
-        msg = await process_return(username, context.bot)
+        msg = await process_return(username, pool, context.bot)
         
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} manually returned")
         await update.message.reply_text(f"✅ {msg}", parse_mode="Markdown")
@@ -1012,7 +1088,7 @@ async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await context.bot.send_message(update.effective_user.id, f"❌ @{target} is not currently marked as Away. Status is already Available 🟢.")
             
         for j in context.job_queue.get_jobs_by_name(f"away_{target}"): j.schedule_removal()
-        msg = await process_return(target, context.bot)
+        msg = await process_return(target, pool, context.bot)
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Force Removed", f"@{username} forced @{target} back")
         
         try: 
@@ -1026,14 +1102,14 @@ async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
 async def auto_return_away(context: ContextTypes.DEFAULT_TYPE): 
-    pool = context.bot.application.bot_data.get('db_pool')
+    pool = context.bot_data.get('db_pool')
     username = context.job.data['username']
     
     try:
         async with pool.acquire() as conn:
             uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
             
-        msg = await process_return(username, context.bot)
+        msg = await process_return(username, pool, context.bot)
         await log_action(pool, uid or 0, context.job.data['chat_id'], "Away Status", "Removed", f"@{username} auto-returned")
         try: 
             if uid: await context.bot.send_message(uid, msg, parse_mode="Markdown")
@@ -1183,8 +1259,7 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await generate_audit_report(pool, target_date)
         await context.bot.send_message(update.effective_user.id, f"✅ {msg}", parse_mode="Markdown")
     except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ Error generating audit log. System generated this exception:\n`{e}`", parse_mode="Markdown")
-        logger.error(f"Audit log error: {e}")
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: `{e}`", parse_mode="Markdown")
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1346,10 +1421,10 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif action == "reset":
             async with pool.acquire() as conn:
-                if target in ["stars", "all"]: await conn.execute("TRUNCATE kudos")
-                if target in ["tasks", "all"]: await conn.execute("TRUNCATE tasks RESTART IDENTITY")
-                if target in ["library", "all"]: await conn.execute("TRUNCATE library")
-                if target in ["events", "all"]: await conn.execute("TRUNCATE events, rsvps CASCADE RESTART IDENTITY")
+                if target in ["stars", "all"]: await conn.execute("TRUNCATE kudos CASCADE")
+                if target in ["tasks", "all"]: await conn.execute("TRUNCATE tasks RESTART IDENTITY CASCADE")
+                if target in ["library", "all"]: await conn.execute("TRUNCATE library CASCADE")
+                if target in ["events", "all"]: await conn.execute("TRUNCATE events, rsvps RESTART IDENTITY CASCADE")
                 if target in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
             await q.edit_message_text(f"✅ ☢️ Data Wipe for `{target}` successfully executed.", parse_mode="Markdown")
             
@@ -1447,6 +1522,7 @@ def main():
     app.add_handler(CommandHandler("getlib", get_lib))
     app.add_handler(CommandHandler("library", list_lib))
 
+    app.add_handler(CallbackQueryHandler(poll_callback, pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(super_callback, pattern="^sup_"))
     app.add_handler(CallbackQueryHandler(rsvp_callback, pattern="^rsvp_"))
     app.add_handler(ChatMemberHandler(security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
