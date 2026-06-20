@@ -127,7 +127,7 @@ async def dynamic_mytasks_fallback(update: Update, context: ContextTypes.DEFAULT
     await update.message.reply_text("⚠️ Pending task viewer configuration mismatch inside cmd_user module.")
 
 # ----------------------------------------------------
-# 🛡 ... ADMIN & SUPER SUITES
+# 🛡️ DYNAMIC SMART-SEARCH FALLBACK BRIDGES (ADMIN SUITE)
 # ----------------------------------------------------
 async def run_dynamic_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, fallback_names_list: list):
     for attr in fallback_names_list:
@@ -141,8 +141,8 @@ async def run_dynamic_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TY
 async def adm_bday_add(u, c): await run_dynamic_admin_cmd(u, c, ['add_bday', 'add_birthday', 'bday'])
 async def adm_bday_edit(u, c): await run_dynamic_admin_cmd(u, c, ['edit_bday', 'edit_birthday', 'bday'])
 async def adm_bday_del(u, c): await run_dynamic_admin_cmd(u, c, ['del_bday', 'del_birthday', 'bday'])
-async def adm_bday_channel(u, c): await run_dynamic_admin_cmd(u, c, ['set_bday_channel', 'bdaychannel'])
-async def adm_bday_time(u, c): await run_dynamic_admin_cmd(u, c, ['set_bday_time', 'bdaytime'])
+async def adm_bday_channel(u, c): await run_dynamic_admin_cmd(u, c, ['set_bday_channel', 'bdaychannel', 'setbdaychannel'])
+async def adm_bday_time(u, c): await run_dynamic_admin_cmd(u, c, ['set_bday_time', 'bdaytime', 'setbdaytime'])
 async def adm_bday_config(u, c): await run_dynamic_admin_cmd(u, c, ['bday_config', 'bdayconfig'])
 async def adm_bday_list(u, c): await run_dynamic_admin_cmd(u, c, ['list_bdays', 'listbirthdays'])
 async def adm_bday_batch_add(u, c): await run_dynamic_admin_cmd(u, c, ['addbday_batch', 'batch_add'])

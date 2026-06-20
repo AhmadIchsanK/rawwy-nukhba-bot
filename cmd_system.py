@@ -306,7 +306,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /canceltrivia: Wipes ongoing active running trivia parameters.\n"
                 "- /pausetrivia: Halts the automatic clock schedule tracking sweeps.\n"
                 "- /resumetrivia: Reactivates automated clock schedule sweeps.\n"
-                "- /admin_kp <@user> , [set/add/sub] , <amount>: Customizes balanced knowledge scores directly.\n\n"
+                "- /admin_kp <@user> , [set/add/sub] , [amount]: Customizes balanced knowledge scores directly.\n\n"
                 "👑 SUPER OWNER COMMANDS (Super Owners Only):\n"
                 "- /addadmin <@username>: Promotes a user to Bot Admin.\n"
                 "- /deladmin <@username>: Demotes an Admin back to standard user.\n"
