@@ -539,3 +539,19 @@ async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn: recs = await conn.fetch('SELECT * FROM graveyard')
     await context.bot.send_message(update.effective_user.id, "🪦 **Graveyard:**\n" + "\n".join([f"• @{r['username']}" for r in recs]))
+    # --- CIRCUIT BREAKER ---
+async def pause_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    if not await is_super(update.effective_user.username or str(update.effective_user.id)): return
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO config (key, value) VALUES ('maintenance_mode', 'true') ON CONFLICT (key) DO UPDATE SET value='true'")
+    await context.bot.send_message(update.effective_user.id, "⏸️ **System Paused.**\nAll commands from standard users and admins are now blocked. Only Super Owners can interact with the bot.", parse_mode="Markdown")
+
+async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    if not await is_super(update.effective_user.username or str(update.effective_user.id)): return
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO config (key, value) VALUES ('maintenance_mode', 'false') ON CONFLICT (key) DO UPDATE SET value='false'")
+    await context.bot.send_message(update.effective_user.id, "▶️ **System Restarted.**\nThe bot is back online and accepting requests.", parse_mode="Markdown")
