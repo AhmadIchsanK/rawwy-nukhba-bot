@@ -1,7 +1,7 @@
 import datetime, logging, json, re
 from google import genai
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu
 import cmd_user 
 
@@ -188,6 +188,8 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
     
     try:
         is_adm = await is_bot_admin(username, pool)
+        is_sup = await is_super(username)
+        
         async with pool.acquire() as conn:
             limit_str = await conn.fetchval("SELECT value FROM config WHERE key='gemini_weekly_limit'")
             limit = int(limit_str) if limit_str and limit_str.isdigit() else 20
@@ -209,10 +211,11 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         client = genai.Client(api_key=GEMINI_API_KEY)
         
         if is_bot_query:
-            system_prompt = "You are Nukhba Manager, an enterprise Telegram bot. Your features: Gemini AI (/gemini), Events (/newevent, /events), Polls (/poll), RAWWY Stars (/thanks, /leaderboard), Library (/addlib, /getlib), Tasks (/assign, /complete), Away mode (/away, /back), and Feedback (/feedback). Answer the user clearly.\n"
-            if is_adm:
-                system_prompt += "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI quota), output a JSON block at the very end of your response exactly like this:\n```json\n[{\"key\": \"dm_length\", \"value\": \"800\"}, {\"key\": \"star_quota\", \"value\": \"5\"}]\n```\nValid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.\n"
-            system_prompt += "User Question: " + prompt
+            base_prompt = "You are Nukhba Manager, an enterprise Telegram bot. "
+            if is_sup:
+                system_prompt = base_prompt + "The user is the SUPER ADMIN. You have full root authority to modify the bot's code, fix bugs, edit variables, and add/remove commands. To modify database variables (dm_length, star_quota, gemini_weekly_limit), output a JSON block at the very end: ```json\n[{\"key\": \"dm_length\", \"value\": \"800\"}]\n```. To write, edit, or execute Python code (to fix bugs, add commands dynamically using app.add_handler, or manipulate the OS/files), output the raw Python code inside a ```python\n...\n``` block. This code will be injected and executed via exec() inside an async function with access to `update`, `context`, `app` (context.application), and `pool`.\nUser Question: " + prompt
+            else:
+                system_prompt = base_prompt + "The user is a Standard User or Admin. You are strictly a conversational assistant. You must ONLY answer questions about how the bot works. You CANNOT edit any variables, you CANNOT write or execute code, and you CANNOT add or remove commands. If they ask you to change a setting or edit code, cleanly decline and tell them only the Super Admin can do that.\nUser Question: " + prompt
         else:
             system_prompt = prompt
             
@@ -220,18 +223,42 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         reply = response.text
         
         config_msg = ""
-        if is_bot_query and is_adm:
-            match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
-            if match:
+        if is_bot_query and is_sup:
+            json_match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
+            if json_match:
                 try:
-                    configs = json.loads(match.group(1))
+                    configs = json.loads(json_match.group(1))
                     async with pool.acquire() as conn:
                         for c in configs:
                             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
                     reply = re.sub(r'```json\n(.*?)\n```', '', reply, flags=re.DOTALL).strip()
-                    config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
+                    config_msg += "\n\n⚙️ *Database variables updated!*"
                 except Exception as e:
                     logger.error(f"Config parse error: {e}")
+                    
+            py_match = re.search(r'```python\n(.*?)\n```', reply, re.DOTALL)
+            if py_match:
+                code_str = py_match.group(1)
+                try:
+                    local_env = {
+                        'update': update, 
+                        'context': context, 
+                        'app': context.application, 
+                        'pool': pool,
+                        'CommandHandler': CommandHandler,
+                        'MessageHandler': MessageHandler,
+                        'filters': filters
+                    }
+                    exec_code = "async def __run_ai_code():\n"
+                    for line in code_str.split('\n'):
+                        exec_code += f"    {line}\n"
+                    
+                    exec(exec_code, globals(), local_env)
+                    await local_env['__run_ai_code']()
+                    reply = re.sub(r'```python\n(.*?)\n```', '', reply, flags=re.DOTALL).strip()
+                    config_msg += "\n\n💻 *AI Python Code Executed Successfully!*"
+                except Exception as e:
+                    config_msg += f"\n\n⚠️ *AI Code Execution Error:* `{e}`"
         
         async with pool.acquire() as conn:
             dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
