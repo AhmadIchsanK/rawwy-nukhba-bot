@@ -68,7 +68,12 @@ async def weekly_quota_reset(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn: 
         await conn.execute("UPDATE kudos SET quota = 3")
-        await conn.execute("UPDATE users SET gemini_quota = 20")
+        
+        # Read the dynamic weekly limit or fallback to 20
+        limit_str = await conn.fetchval("SELECT value FROM config WHERE key='gemini_weekly_limit'")
+        limit = int(limit_str) if limit_str and limit_str.isdigit() else 20
+        
+        await conn.execute("UPDATE users SET gemini_quota = $1", limit)
 
 async def schedule_bday_job(app: Application):
     pool = app.bot_data.get('db_pool')
