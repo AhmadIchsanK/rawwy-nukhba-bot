@@ -1217,6 +1217,260 @@ async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
+# --- 6/ AWAY MODE ---
+async def process_return(username, pool, bot):
+    async with pool.acquire() as conn:
+        mentions = await conn.fetch('SELECT mentioner, message, chat_title, created_at FROM away_mentions WHERE away_username=$1 ORDER BY created_at ASC', username)
+        await conn.execute('DELETE FROM away_status WHERE username=$1', username)
+        await conn.execute('DELETE FROM away_mentions WHERE away_username=$1', username)
+        
+    msg = f"✅ 🎉 A warm welcome back, @{username}! You are now marked as 🟢 Available.\n\n"
+    if mentions:
+        msg += "Here is your Away Mentions Recap:\n\n"
+        for m in mentions:
+            t_str = m['created_at'].astimezone(WIB).strftime('%m/%d %H:%M WIB')
+            msg += f"🔹 [{t_str}] in **{m['chat_title']}**\n**@{m['mentioner']}**: \"{m['message']}\"\n\n"
+    else: 
+        msg += "It was quiet! You had absolutely zero mentions while you were away."
+    return msg
+
+async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    
+    try:
+        async with pool.acquire() as conn:
+            status = await conn.fetchrow("SELECT end_time FROM away_status WHERE username=$1", username)
+            if status: return await update.message.reply_text(f"❌ You are already marked as Away until {status['end_time'].astimezone(WIB).strftime('%m/%d %H:%M WIB')}. Please type `/back` to reset.", parse_mode="Markdown")
+
+        try:
+            raw_args = " ".join(context.args)
+            parts = [p.strip() for p in raw_args.rsplit(",", 1)]
+            if len(parts) < 2 or not all(parts): raise ValueError
+            reason, time_str = parts[0], parts[1]
+            end_time = WIB.localize(datetime.datetime.strptime(time_str, "%m/%d/%Y %H.%M"))
+            if end_time < datetime.datetime.now(WIB): 
+                return await update.message.reply_text("❌ The time provided is in the past! Please set a future time.")
+        except ValueError: return await update.message.reply_text("❌ Time format error. Strictly use `MM/DD/YYYY HH.MM` (e.g., `06/25/2026 14.30`).", parse_mode="Markdown")
+        except Exception as e:
+            await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Error", str(e))
+            return await update.message.reply_text("❌ Format error: `/away Reason , MM/DD/YYYY HH.MM`", parse_mode="Markdown")
+
+        async with pool.acquire() as conn:
+            await conn.execute('INSERT INTO away_status (username, reason, end_time) VALUES ($1, $2, $3)', username, reason, end_time)
+        
+        for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
+        context.job_queue.run_once(auto_return_away, when=end_time, data={"username": username, "chat_id": update.effective_chat.id}, name=f"away_{username}")
+        
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Set", f"@{username} set away status")
+        await update.message.reply_text(f"✅ 🏖️ @{username} is away until {end_time.strftime('%b %d at %H:%M WIB')}.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ System Error: {e}")
+
+async def set_back(update: Update, context: ContextTypes.DEFAULT_TYPE): 
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    try:
+        async with pool.acquire() as conn:
+            status = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', username)
+            uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
+            if not status:
+                if uid: 
+                    try: await context.bot.send_message(uid, "❌ You are not currently marked as Away. Your status is already Available 🟢.", parse_mode="Markdown")
+                    except: pass
+                return
+        
+        for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
+        msg = await process_return(username, pool, context.bot)
+        
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} manually returned")
+        if uid:
+            try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+            except: pass
+    except Exception as e:
+        logger.error(f"Set back error: {e}")
+
+async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "")
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/forceback @user`")
+    
+    try:
+        async with pool.acquire() as conn:
+            status = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', target)
+            if not status: 
+                return await context.bot.send_message(update.effective_user.id, f"❌ @{target} is not currently marked as Away. Status is already Available 🟢.")
+            
+        for j in context.job_queue.get_jobs_by_name(f"away_{target}"): j.schedule_removal()
+        msg = await process_return(target, pool, context.bot)
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Force Removed", f"@{username} forced @{target} back")
+        
+        try: 
+            async with pool.acquire() as conn:
+                uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", target)
+            if uid: await context.bot.send_message(uid, f"⚠️ An Admin has force-removed your Away status.\n\n{msg}", parse_mode="Markdown")
+            await context.bot.send_message(update.effective_user.id, f"✅ Successfully forced @{target} back to Available. Digest sent to them.", parse_mode="Markdown")
+        except:
+            await context.bot.send_message(update.effective_user.id, f"✅ Successfully forced @{target} back to Available.\n\n(Could not DM user, here is their recap:)\n{msg}", parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
+async def auto_return_away(context: ContextTypes.DEFAULT_TYPE): 
+    pool = context.bot_data.get('db_pool')
+    username = context.job.data['username']
+    
+    try:
+        async with pool.acquire() as conn:
+            uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
+            
+        msg = await process_return(username, pool, context.bot)
+        await log_action(pool, uid or 0, context.job.data['chat_id'], "Away Status", "Removed", f"@{username} auto-returned")
+        try: 
+            if uid: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+        except: pass
+    except: pass
+
+async def attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    now = datetime.datetime.now(WIB)
+    
+    try:
+        async with pool.acquire() as conn: aways = await conn.fetch('SELECT username, end_time FROM away_status')
+        msg = "✅ 📊 **Team Attendance Status**\n\n"
+        if aways:
+            msg += "🔴 **CURRENTLY AWAY:**\n"
+            for a in aways:
+                rem = a['end_time'].astimezone(WIB) - now
+                d = rem.days; h = rem.seconds // 3600; m = (rem.seconds % 3600) // 60
+                t_str = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
+                msg += f"• @{a['username']} (Returns in {t_str})\n"
+            msg += "\n🟢 *Everyone else is assumed Available.*"
+        else: msg += "🟢 Everyone is currently Available."
+        
+        try: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+        except: pass
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
+# --- SUPER ACTIONS ---
+
+async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return await context.bot.send_message(update.effective_user.id, "❌ Unauthorized.")
+    
+    try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].lower()
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/super_reset [stars/tasks/library/events/away/birthdays/all]`", parse_mode="Markdown")
+    
+    cb_data = f"sup_reset_{target}"
+    kb = [[InlineKeyboardButton("⚠️ Yes, Wipe Data", callback_data=cb_data), InlineKeyboardButton("No, Cancel", callback_data="sup_cancel")]]
+    await context.bot.send_message(update.effective_user.id, f"⚠️ **FACTORY WIPE MODULE**\nAre you absolutely sure you want to wipe data for `{target}`?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def request_super_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, label: str):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return await context.bot.send_message(update.effective_user.id, "❌ Unauthorized.")
+    try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "").lower()
+    except: return await context.bot.send_message(update.effective_user.id, f"❌ Format error: `/{action} @user`")
+    
+    cb_data = f"sup_{action}_{target}"
+    kb = [[InlineKeyboardButton("Yes, Do it", callback_data=cb_data), InlineKeyboardButton("No, Cancel", callback_data="sup_cancel")]]
+    await context.bot.send_message(update.effective_user.id, f"⚠️ Are you sure you want to execute **{label}** on `{target}`?", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+
+async def add_admin_req(u, c): await request_super_action(u, c, "addadmin", "Promote Admin")
+async def del_admin_req(u, c): await request_super_action(u, c, "deladmin", "Demote Admin")
+async def remove_member_req(u, c): await request_super_action(u, c, "removemember", "Offboard User")
+
+async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    username = q.from_user.username or str(q.from_user.id)
+    if not await is_super(username): return await q.answer("Unauthorized.")
+    if q.data == "sup_cancel":
+        await q.edit_message_text("❌ Action cancelled.")
+        return await q.answer()
+        
+    parts = q.data.split("_")
+    action = parts[1]; target = parts[2]
+    pool = context.bot_data.get('db_pool')
+    
+    try:
+        if action == "addadmin":
+            async with pool.acquire() as conn: 
+                await conn.execute('INSERT INTO bot_admins (username) VALUES ($1) ON CONFLICT DO NOTHING', target)
+                uid = await conn.fetchval('SELECT user_id FROM users WHERE username=$1', target)
+            if uid:
+                try:
+                    await update_user_menu(uid, target, pool, context.bot)
+                    await context.bot.send_message(uid, "🎉 **Congratulations!** You have been promoted to Global Bot Admin. Type `/help`.", parse_mode="Markdown")
+                except: pass
+            await q.edit_message_text(f"✅ @{target} is now a Bot Admin.")
+            
+        elif action == "deladmin":
+            async with pool.acquire() as conn: await conn.execute('DELETE FROM bot_admins WHERE username=$1', target)
+            await q.edit_message_text(f"✅ 🗑️ @{target} removed from Admins.")
+            
+        elif action == "removemember":
+            async with pool.acquire() as conn:
+                k = await conn.fetchrow("SELECT * FROM kudos WHERE username=$1", target)
+                b = await conn.fetchval("SELECT bday FROM birthdays WHERE username=$1", target)
+                c = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Completed' AND assignee=$1", target)
+                data_dump = f"Stars: {k['all_time_points'] if k else 0} | Bday: {b} | Tasks Done: {c}"
+                await conn.execute("INSERT INTO graveyard (username, data_dump) VALUES ($1, $2)", target, data_dump)
+                
+                await conn.execute('DELETE FROM bot_admins WHERE username=$1', target)
+                await conn.execute('DELETE FROM kudos WHERE username=$1', target)
+                await conn.execute('DELETE FROM birthdays WHERE username=$1', target)
+                await conn.execute('DELETE FROM away_status WHERE username=$1', target)
+                await conn.execute("UPDATE tasks SET assignee='Unassigned' WHERE assignee=$1", target)
+            await q.edit_message_text(f"✅ 🪦 @{target} offboarded to graveyard.")
+
+        elif action == "reset":
+            async with pool.acquire() as conn:
+                if target in ["stars", "all"]: await conn.execute("TRUNCATE kudos CASCADE")
+                if target in ["tasks", "all"]: await conn.execute("TRUNCATE tasks RESTART IDENTITY CASCADE")
+                if target in ["library", "all"]: await conn.execute("TRUNCATE library CASCADE")
+                if target in ["events", "all"]: await conn.execute("TRUNCATE events, rsvps RESTART IDENTITY CASCADE")
+                if target in ["birthdays", "all"]: await conn.execute("TRUNCATE birthdays CASCADE")
+                if target in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
+            await q.edit_message_text(f"✅ ☢️ Data Wipe for `{target}` successfully executed.", parse_mode="Markdown")
+            
+    except Exception as e:
+        await q.edit_message_text(f"❌ System Error: {e}")
+
+async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return await context.bot.send_message(update.effective_user.id, "❌ Unauthorized.")
+    pool = context.bot_data.get('db_pool')
+    try:
+        async with pool.acquire() as conn: admins = await conn.fetch('SELECT username FROM bot_admins')
+        msg = "✅ 👑 **Bot Admins**\n" + "\n".join([f"• @{a['username']}" for a in admins]) if admins else "✅ 👑 **Bot Admins**\nNone (Only Super Owner exists)."
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
+async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return await context.bot.send_message(update.effective_user.id, "❌ Unauthorized.")
+    pool = context.bot_data.get('db_pool')
+    try:
+        async with pool.acquire() as conn: gy = await conn.fetch('SELECT * FROM graveyard')
+        if not gy: return await context.bot.send_message(update.effective_user.id, "❌ 🪦 The graveyard is empty.")
+        msg = "✅ 🪦 **Employee Graveyard**\n\n"
+        for g in gy: msg += f"• @{g['username']} (Left: {g['offboarded_at'].strftime('%m/%d/%Y')})\n  _{g['data_dump']}_\n\n"
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
 # --- RUNNER ---
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
