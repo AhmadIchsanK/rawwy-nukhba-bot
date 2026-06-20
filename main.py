@@ -80,7 +80,8 @@ def main():
     app.add_handler(CommandHandler("ask", cmd_system.ask_bot))
     app.add_handler(CommandHandler("feedback", cmd_system.submit_feedback))
     
-    app.add_handler(CommandHandler("newevent", cmd_user.new_event))
+    # Clean matches with actual cmd_user.py function naming setups
+    app.add_handler(CommandHandler("newevent", cmd_user.create_event))
     app.add_handler(CommandHandler("events", cmd_user.view_events))
     app.add_handler(CommandHandler("poll", cmd_user.create_poll))
     
