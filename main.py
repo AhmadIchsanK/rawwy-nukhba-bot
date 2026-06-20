@@ -25,10 +25,10 @@ def main():
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
 
-    # Background Jobs
+    # Background Jobs (Reset runs at 07:00 AM WIB on Monday - day 0)
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
-    app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=0, minute=0, tzinfo=WIB), days=(0,))
+    app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=7, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
 
     # Core
@@ -58,7 +58,9 @@ def main():
     app.add_handler(CommandHandler("back", commands.set_back))
 
     # Admin Commands
-    app.add_handler(CommandHandler("setgeminiquota", commands.set_gemini_quota))
+    app.add_handler(CommandHandler("admin_gemini", commands.admin_gemini))
+    app.add_handler(CommandHandler("checkgeminiquota", commands.check_gemini_quota))
+    app.add_handler(CommandHandler("setweeklylimit", commands.set_weekly_limit))
     app.add_handler(CommandHandler("announce", commands.announce))
     app.add_handler(CommandHandler("editannounce", commands.edit_announce))
     app.add_handler(CommandHandler("delannounce", commands.del_announce))
