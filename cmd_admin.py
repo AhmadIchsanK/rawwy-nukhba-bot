@@ -138,30 +138,30 @@ async def admin_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await context.bot.send_message(update.effective_user.id, "❌ Format: `/admin_limit @user , [set/add/sub] , Amount`")
     
     async with pool.acquire() as conn:
+        await conn.execute(f'INSERT INTO kudos (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
         if act == "set": 
-            await conn.execute("UPDATE users SET gemini_quota=$1 WHERE username=$2", amt, t)
+            await conn.execute(f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
         elif act == "add": 
-            await conn.execute("UPDATE users SET gemini_quota=gemini_quota+$1 WHERE username=$2", amt, t)
+            await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2', amt, t)
         elif act == "sub": 
-            await conn.execute("UPDATE users SET gemini_quota=gemini_quota-$1 WHERE username=$2", amt, t)
-    await context.bot.send_message(update.effective_user.id, "✅ AI Limit modified.")
+            await conn.execute(f'UPDATE kudos SET {col}={col}-$1 WHERE username=$2', amt, t)
+    await context.bot.send_message(update.effective_user.id, "✅ Stars modified.")
 
-async def check_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_weekly_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): 
         return
-    target = context.args[0].lower().replace("@", "") if context.args else 'all'
-    async with pool.acquire() as conn:
-        if target == 'all':
-            recs = await conn.fetch('SELECT username, gemini_quota FROM users ORDER BY gemini_quota ASC')
-            msg = "✅ 🤖 **AI Limits**\n" + "\n".join([f"@{r['username']}: {r['gemini_quota']}" for r in recs])
-        else:
-            r = await conn.fetchval('SELECT gemini_quota FROM users WHERE username=$1', target)
-            msg = f"✅ @{target} Limit left: {r}" if r is not None else "❌ User not found."
-    await context.bot.send_message(update.effective_user.id, msg[:4000])
+    try: 
+        limit = int(context.args[0])
+    except: 
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setweeklyquota 5`")
+    async with pool.acquire() as conn: 
+        await conn.execute("INSERT INTO config (key, value) VALUES ('star_quota', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(limit))
+    await context.bot.send_message(update.effective_user.id, f"✅ Global Star Quota set to {limit}.")
 
-async def set_limit(update: Update, context: ContextTypes.DEFAULT_TYPE): 
+# --- LIBRARY ENGINE CONTROLS ---
+async def del_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_limit(update, context)
 
 # --- RAWWY STARS QUOTA CONTROLS ---
