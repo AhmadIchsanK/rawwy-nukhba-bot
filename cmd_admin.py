@@ -206,8 +206,9 @@ async def edit_bday(update, context):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
-    try: parts = [p.strip() for p in " ".join(context.args).split(",")]
-    u, b = parts[0].replace("@", "").lower(), parts[1]
+    try: 
+        parts = [p.strip() for p in " ".join(context.args).split(",")]
+        u, b = parts[0].replace("@", "").lower(), parts[1]
     except: return
     async with pool.acquire() as conn:
         res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE lower(username)=$2', b, u)
@@ -218,7 +219,8 @@ async def del_bday(update, context):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
-    u = context.args[0].replace("@", "").lower()
+    try: u = context.args[0].replace("@", "").lower()
+    except: return
     async with pool.acquire() as conn: await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
     await context.bot.send_message(update.effective_user.id, "✅ Birthday dropped.")
 
@@ -371,7 +373,8 @@ async def del_announce(update, context):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
-    a_id = int(context.args[0])
+    try: a_id = int(context.args[0])
+    except: return
     async with pool.acquire() as conn:
         msgs = await conn.fetch("SELECT chat_id, message_id FROM announcement_messages WHERE announcement_id=$1", a_id)
         for m in msgs:
