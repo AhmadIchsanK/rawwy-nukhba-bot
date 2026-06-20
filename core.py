@@ -1,6 +1,6 @@
 import os, logging, pytz, asyncpg
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember
-from telegram.ext import Application  # Restored missing import
+from telegram.ext import Application
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
@@ -54,6 +54,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         BotCommand("myquota", "🌟 Check Star Quota left"),
         BotCommand("mystar", "🌟 Monthly Stars earned"),
         BotCommand("totalstar", "🌟 All-time Stars earned"),
+        BotCommand("leaderboard", "🏆 RAWWY Stars Leaderboard"),
         BotCommand("addlib", "📚 Save a library asset"),
         BotCommand("editlib", "📚 Edit your asset"),
         BotCommand("dellib", "📚 Delete your asset"),
@@ -92,8 +93,9 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("delannounce", "📢 Delete Broadcast"),
             BotCommand("groupid", "📢 Check Chat IDs"),
             BotCommand("auditlog", "📢 Pull diagnostics log"),
+            BotCommand("feedbacklist", "📋 View Recent Feedback"),
             BotCommand("analyze_feedback", "🤖 AI Feedback Analysis"),
-            BotCommand("alltimefeedback", "📋 View Archive Feedback")
+            BotCommand("alltimefeedback", "🗄️ View Archive Feedback")
         ])
     if is_sup:
         base_cmds.extend([
