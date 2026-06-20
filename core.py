@@ -109,6 +109,8 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("removemember", "🛑 Offboard User"),
             BotCommand("graveyard", "🪦 View Graveyard"),
             BotCommand("botstatus", "📈 Global DB Status"),
+            BotCommand("pause", "🛑 Pause Bot Services"),
+            BotCommand("restart", "▶️ Resume Bot Services"),
             BotCommand("super_reset", "☢️ Factory Wipe Module")
         ])
         
@@ -148,7 +150,6 @@ async def init_db(app: Application):
         try: await conn.execute('ALTER TABLE bug_reports ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();')
         except: pass
 
-    # Sets the base UI commands so the popup menu matches the standard user list exactly
     default_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("gemini", "🤖 Ask Gemini AI"),
