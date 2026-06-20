@@ -138,15 +138,33 @@ async def admin_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await context.bot.send_message(update.effective_user.id, "❌ Format: `/admin_limit @user , [set/add/sub] , Amount`")
     
     async with pool.acquire() as conn:
-        await conn.execute(f'INSERT INTO kudos (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
         if act == "set": 
-            await conn.execute(f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
+            await conn.execute("UPDATE users SET gemini_quota=$1 WHERE username=$2", amt, t)
         elif act == "add": 
-            await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2', amt, t)
+            await conn.execute("UPDATE users SET gemini_quota=gemini_quota+$1 WHERE username=$2", amt, t)
         elif act == "sub": 
-            await conn.execute(f'UPDATE kudos SET {col}={col}-$1 WHERE username=$2', amt, t)
-    await context.bot.send_message(update.effective_user.id, "✅ Stars modified.")
+            await conn.execute("UPDATE users SET gemini_quota=gemini_quota-$1 WHERE username=$2", amt, t)
+    await context.bot.send_message(update.effective_user.id, "✅ AI Limit modified.")
 
+async def check_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): 
+        return
+    target = context.args[0].lower().replace("@", "") if context.args else 'all'
+    async with pool.acquire() as conn:
+        if target == 'all':
+            recs = await conn.fetch('SELECT username, gemini_quota FROM users ORDER BY gemini_quota ASC')
+            msg = "✅ 🤖 **AI Limits**\n" + "\n".join([f"@{r['username']}: {r['gemini_quota']}" for r in recs])
+        else:
+            r = await conn.fetchval('SELECT gemini_quota FROM users WHERE username=$1', target)
+            msg = f"✅ @{target} Limit left: {r}" if r is not None else "❌ User not found."
+    await context.bot.send_message(update.effective_user.id, msg[:4000])
+
+async def set_limit(update: Update, context: ContextTypes.DEFAULT_TYPE): 
+    await admin_limit(update, context)
+
+# --- RAWWY STARS QUOTA CONTROLS ---
 async def set_weekly_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -155,10 +173,50 @@ async def set_weekly_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: 
         limit = int(context.args[0])
     except: 
-        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setweeklyquota 5`")
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setweeklyquota 3`")
     async with pool.acquire() as conn: 
         await conn.execute("INSERT INTO config (key, value) VALUES ('star_quota', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(limit))
-    await context.bot.send_message(update.effective_user.id, f"✅ Global Star Quota set to {limit}.")
+    await context.bot.send_message(update.effective_user.id, f"✅ Default weekly Star Quota set to {limit}.")
+
+async def check_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): 
+        return
+    target = context.args[0].lower().replace("@", "") if context.args else 'all'
+    async with pool.acquire() as conn:
+        if target == 'all':
+            recs = await conn.fetch('SELECT username, quota FROM kudos')
+            msg = "✅ 🌟 **Star Quotas**\n" + "\n".join([f"@{r['username']}: {r['quota']}" for r in recs])
+        else:
+            r = await conn.fetchval('SELECT quota FROM kudos WHERE username=$1', target)
+            msg = f"✅ @{target} Quota left: {r}" if r is not None else "❌ User not found."
+    await context.bot.send_message(update.effective_user.id, msg)
+
+async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): 
+        return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",", 3)]
+        t = parts[0].replace("@", "").lower()
+        field = parts[1].lower()
+        act = parts[2].lower()
+        amt = int(parts[3])
+        col = 'monthly_points' if field == 'monthly' else 'all_time_points' if field == 'total' else 'quota'
+    except: 
+        return await context.bot.send_message(update.effective_user.id, "❌ Format error.")
+    
+    async with pool.acquire() as conn:
+        await conn.execute(f'INSERT INTO kudos (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
+        if act == "set": 
+            await conn.execute(f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
+        elif act == "add": 
+            await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2', amt, t)
+        elif act == "sub": 
+            await conn.execute(f'UPDATE kudos SET {col}={col}-$1 WHERE username=$2', amt, t)
+    await context.bot.send_message(update.effective_user.id, "✅ Stars modified.")
 
 # --- LIBRARY ENGINE CONTROLS ---
 async def del_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
