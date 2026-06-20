@@ -64,17 +64,17 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("addbday", "@user , MM/DD"),
             BotCommand("editbday", "@user , MM/DD"),
             BotCommand("listbdays", "View all birthdays"),
+            BotCommand("setbdaychannel", "Set Group for Bdays"),
+            BotCommand("attendance", "View Away vs Available list"),
             BotCommand("checkquota", "Audit user quotas"),
             BotCommand("admin_stars", "@user , [quota/monthly/total] , [set/add/sub] , Amt"),
+            BotCommand("grouptasks", "View group tasks"),
             BotCommand("cancelevent", "ID - Cancel Event"),
             BotCommand("canceltask", "ID - Cancel Task"),
             BotCommand("dellib", "Name - Delete Asset"),
             BotCommand("announce", "ChatID/All , Message"),
-            BotCommand("attendance", "View Away vs Available list"),
-            BotCommand("grouptasks", "View group tasks"),
-            BotCommand("setbdaychannel", "Set this group for bday pings"),
-            BotCommand("getlog", "Pull diagnostics log now"),
-            BotCommand("listgroups", "View joined channels & IDs")
+            BotCommand("groupid", "Check Chat IDs"),
+            BotCommand("getlog", "Pull diagnostics log now")
         ])
     if is_sup:
         base_cmds.extend([
@@ -86,14 +86,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("super_reset", "Factory Wipe Module")
         ])
         
-    try: 
-        await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
-        if is_adm:
-            async with pool.acquire() as conn:
-                groups = await conn.fetch("SELECT chat_id FROM active_groups")
-                for g in groups:
-                    try: await bot.set_my_commands(base_cmds, scope=BotCommandScopeChatMember(chat_id=g['chat_id'], user_id=user_id))
-                    except: pass
+    try: await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
     except: pass
 
 # --- DATABASE SETUP ---
@@ -310,7 +303,6 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("INSERT INTO users (username, user_id) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET user_id=$2", username, update.effective_user.id)
         await conn.execute("INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, 1, 0) ON CONFLICT (date) DO UPDATE SET uses = bot_stats.uses + 1")
         
-        # Passive Group Tracking (Catches groups if the Invite Event was missed)
         chat = update.effective_chat
         if chat.type in ['group', 'supergroup']:
             await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
@@ -565,7 +557,7 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
         t = parts[0].replace("@", ""); field = parts[1].lower(); act = parts[2].lower(); amt = int(parts[3])
         if field not in ['quota', 'monthly', 'total'] or act not in ['add', 'sub', 'set']: raise ValueError
     except: 
-        return await context.bot.send_message(update.effective_user.id, "❌ Incorrect format. Please strictly use: `/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n*Example:* `/admin_stars Justin , quota , set , 5`", parse_mode="Markdown")
+        return await context.bot.send_message(update.effective_user.id, "❌ Incorrect format. Please strictly use: `/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`", parse_mode="Markdown")
     
     async with pool.acquire() as conn:
         col = 'monthly_points' if field == 'monthly' else 'all_time_points' if field == 'total' else 'quota'
@@ -912,11 +904,11 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("DELETE FROM announcement_messages WHERE announcement_id=$1", a_id)
     await context.bot.send_message(update.effective_user.id, f"✅ Deleted Announcement {a_id}.")
 
-async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return
     pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
     
     if update.effective_chat.type in ['group', 'supergroup']:
         msg = f"📌 **Current Group Info**\nTitle: `{update.effective_chat.title}`\nID: `{update.effective_chat.id}`"
@@ -1115,8 +1107,8 @@ def main():
     app.add_handler(CommandHandler("dellib", del_lib))
     app.add_handler(CommandHandler("attendance", attendance))
     app.add_handler(CommandHandler("grouptasks", group_tasks))
-    app.add_handler(CommandHandler("groupid", check_group_id))
-    app.add_handler(CommandHandler("listgroups", check_group_id))
+    app.add_handler(CommandHandler("groupid", bot_status))
+    app.add_handler(CommandHandler("listgroups", bot_status))
     app.add_handler(CommandHandler("botstatus", bot_status))
     app.add_handler(CommandHandler("getlog", get_log))
     app.add_handler(CommandHandler("setbdaychannel", set_bday_channel))
