@@ -49,6 +49,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🛑 *Offboarding:* `/removemember @user`\n"
                 "🪦 *Graveyard:* `/graveyard`\n"
                 "📈 *System:* `/botstatus`\n"
+                "🛑 *Power:* `/pause` | `/restart`\n"
                 "☢️ *Wipe:* `/super_reset [stars/tasks/library/events/away/birthdays/all]`"
             )
 
