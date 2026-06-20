@@ -59,6 +59,7 @@ def main():
     app.add_handler(CommandHandler("library", cmd_user.list_lib))
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
+    app.add_handler(CommandHandler("leaderboard", cmd_user.leaderboard))
 
     # --- ADMIN BRANCH ---
     app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
@@ -94,6 +95,7 @@ def main():
     app.add_handler(CommandHandler("auditlog", cmd_admin.get_audit_log))
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
+    app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
 
     # --- SUPER OWNER ---
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
