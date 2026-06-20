@@ -555,3 +555,87 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO config (key, value) VALUES ('maintenance_mode', 'false') ON CONFLICT (key) DO UPDATE SET value='false'")
     await context.bot.send_message(update.effective_user.id, "▶️ **System Restarted.**\nThe bot is back online and accepting requests.", parse_mode="Markdown")
+    # --- CUSTOM SCHEDULER MODULE ---
+async def process_schedules(context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not pool: return
+    now = datetime.datetime.now(WIB)
+    async with pool.acquire() as conn:
+        schedules = await conn.fetch("SELECT * FROM scheduled_announcements")
+        for s in schedules:
+            should_run = False
+            f = s['frequency']
+            t_str = s['run_time']
+            
+            try:
+                if f == 'once':
+                    run_dt = WIB.localize(datetime.datetime.strptime(t_str, "%m/%d/%Y %H.%M"))
+                    if now >= run_dt and not s['last_run']: should_run = True
+                elif f == 'daily':
+                    h, m = map(int, t_str.split('.'))
+                    if now.hour == h and now.minute == m:
+                        if not s['last_run'] or s['last_run'].date() < now.date(): should_run = True
+                elif f == 'weekly':
+                    day, tm = t_str.split(' ')
+                    h, m = map(int, tm.split('.'))
+                    if now.weekday() == int(day) and now.hour == h and now.minute == m:
+                        if not s['last_run'] or (now - s['last_run'].astimezone(WIB)).days >= 6: should_run = True
+            except: continue # Skips malformed rows
+            
+            if should_run:
+                msg = f"📢 **Scheduled Announcement**\n\n{s['message']}"
+                if s['mention']:
+                    users = await conn.fetch("SELECT username FROM users WHERE username IS NOT NULL")
+                    tags = " ".join([f"@{u['username']}" for u in users])
+                    msg += f"\n\n👥 {tags}"
+                    
+                targets = [g['chat_id'] for g in await conn.fetch("SELECT chat_id FROM active_groups")] if s['chat_id'] == 'all' else [int(s['chat_id'])]
+                for t in targets:
+                    try: await send_md(context, t, msg)
+                    except: pass
+                await conn.execute("UPDATE scheduled_announcements SET last_run=$1 WHERE id=$2", now, s['id'])
+
+async def schedule_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",", 4)]
+        chat_id = parts[0].lower(); freq = parts[1].lower(); t_str = parts[2]
+        mention = parts[3].lower() in ['mention', 'yes', 'y', 'true']
+        msg = parts[4]
+        
+        if freq == 'once': datetime.datetime.strptime(t_str, "%m/%d/%Y %H.%M")
+        elif freq == 'daily': 
+            h, m = map(int, t_str.split('.')); assert 0<=h<=23 and 0<=m<=59
+        elif freq == 'weekly':
+            d, tm = t_str.split(' '); h, m = map(int, tm.split('.')); assert 0<=int(d)<=6 and 0<=h<=23 and 0<=m<=59
+        else: raise ValueError
+    except:
+        err = "❌ **Format Error:**\n`/schedule [ChatID/all] , [once/daily/weekly] , [Time] , [yes/no] , [Message]`\n\n*Time Formats:*\n• `once`: MM/DD/YYYY HH.MM\n• `daily`: HH.MM\n• `weekly`: Day(0-6) HH.MM (0=Monday)"
+        return await update.message.reply_text(err, parse_mode="Markdown")
+        
+    async with pool.acquire() as conn: 
+        await conn.execute("INSERT INTO scheduled_announcements (chat_id, frequency, run_time, mention, message, created_by) VALUES ($1, $2, $3, $4, $5, $6)", chat_id, freq, t_str, mention, msg, update.effective_user.username)
+    await update.message.reply_text("✅ Announcement scheduled successfully!")
+
+async def list_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    async with pool.acquire() as conn: recs = await conn.fetch("SELECT * FROM scheduled_announcements ORDER BY id ASC")
+    if not recs: return await update.message.reply_text("❌ No active schedules.")
+    out = "✅ 🗓️ **Active Schedules**\n\n"
+    for r in recs: out += f"🔹 `ID: {r['id']}` | **{r['frequency'].upper()}** | ⏰ {r['run_time']}\nTarget: {r['chat_id']} | Tag All: {r['mention']}\n📝 {r['message'][:30]}...\n\n"
+    await send_md(context, update.effective_user.id, out)
+
+async def del_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    try: s_id = int(context.args[0])
+    except: return await update.message.reply_text("❌ Format: `/delschedule ID`")
+    async with pool.acquire() as conn:
+        res = await conn.execute("DELETE FROM scheduled_announcements WHERE id=$1", s_id)
+        if res == "DELETE 0": return await update.message.reply_text("❌ ID not found.")
+    await update.message.reply_text(f"✅ Schedule {s_id} deleted.")
