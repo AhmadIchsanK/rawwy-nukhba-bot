@@ -28,16 +28,13 @@ async def maintenance_middleware(update: Update, context: ContextTypes.DEFAULT_T
     if not update.effective_user: return
     pool = context.bot_data.get('db_pool')
     if not pool: return
-    
-    async with pool.acquire() as conn:
-        maint = await conn.fetchval("SELECT value FROM config WHERE key='maintenance_mode'")
-        
+    async with pool.acquire() as conn: maint = await conn.fetchval("SELECT value FROM config WHERE key='maintenance_mode'")
     if maint == 'true':
         from core import is_super
         username = update.effective_user.username or str(update.effective_user.id)
         if await is_super(username): return 
         if update.message and update.message.text and update.message.text.startswith('/'):
-            try: await update.message.reply_text("⚠️ **[RW] Nukhba Manager is currently paused.**\nThe system is undergoing maintenance to fix bugs. Please try again later.", parse_mode="Markdown")
+            try: await update.message.reply_text("⚠️ **[RW] Nukhba Manager is currently paused.**\nThe system is undergoing maintenance. Please try again later.", parse_mode="Markdown")
             except: pass
         elif update.callback_query:
             try: await update.callback_query.answer("⚠️ Bot is paused for maintenance.", show_alert=True)
@@ -49,24 +46,21 @@ def main():
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
 
-    # Background Schedulers
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=7, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
-    app.job_queue.run_repeating(cmd_admin.process_schedules, interval=60) # New Schedule Engine
+    app.job_queue.run_repeating(cmd_admin.process_schedules, interval=60)
 
-    # 0. MIDDLEWARE
     app.add_handler(TypeHandler(Update, maintenance_middleware), group=-1)
 
-    # 1. SYSTEM BRANCH
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
     app.add_handler(CommandHandler("feedback", cmd_system.submit_feedback))
     app.add_handler(CommandHandler("gemini", cmd_system.ask_gemini))
+    app.add_handler(CommandHandler("ask", cmd_system.ask_bot))
     app.add_handler(ChatMemberHandler(cmd_system.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     
-    # 2. USER BRANCH
     app.add_handler(CommandHandler("thanks", cmd_user.give_thanks))
     app.add_handler(CommandHandler("myquota", cmd_user.my_quota))
     app.add_handler(CommandHandler("mystar", cmd_user.my_star))
@@ -86,7 +80,6 @@ def main():
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
-    # 3. ADMIN BRANCH
     app.add_handler(CommandHandler("schedule", cmd_admin.schedule_announcement))
     app.add_handler(CommandHandler("listschedules", cmd_admin.list_schedules))
     app.add_handler(CommandHandler("delschedule", cmd_admin.del_schedule))
@@ -125,7 +118,6 @@ def main():
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
 
-    # 4. SUPER OWNER
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
     app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
     app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
@@ -135,7 +127,6 @@ def main():
     app.add_handler(CommandHandler("pause", cmd_admin.pause_bot))
     app.add_handler(CommandHandler("restart", cmd_admin.restart_bot))
 
-    # 5. FALLBACK TRACKERS
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(cmd_admin.super_callback, pattern="^sup_"))
     app.add_handler(CallbackQueryHandler(cmd_user.rsvp_callback, pattern="^rsvp_"))
