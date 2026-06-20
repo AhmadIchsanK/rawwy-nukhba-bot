@@ -89,6 +89,11 @@ async def dynamic_library_fallback(update: Update, context: ContextTypes.DEFAULT
         if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Main library viewing layout configuration mismatch inside cmd_user module.")
 
+async def dynamic_mytasks_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for attr in ['my_tasks', 'view_my_tasks', 'check_my_tasks', 'list_my_tasks', 'cmd_mytasks']:
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Pending task viewer configuration mismatch inside cmd_user module.")
+
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
     if not BOT_TOKEN:
@@ -141,12 +146,12 @@ def main():
     app.add_handler(CommandHandler("editlib", dynamic_editlib_fallback))
     app.add_handler(CommandHandler("dellib", dynamic_dellib_fallback))
     app.add_handler(CommandHandler("getlib", dynamic_getlib_fallback))
-    # Secure auto-discovery mapping wrapper for /library
     app.add_handler(CommandHandler("library", dynamic_library_fallback))
     
     app.add_handler(CommandHandler("assign", cmd_user.assign_task))
     app.add_handler(CommandHandler("complete", cmd_user.complete_task))
-    app.add_handler(CommandHandler("mytasks", cmd_user.view_my_tasks))
+    # Secure auto-discovery mapping wrapper for /mytasks
+    app.add_handler(CommandHandler("mytasks", dynamic_mytasks_fallback))
     
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
