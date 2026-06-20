@@ -96,7 +96,10 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("editannounce", "📢 Edit Broadcast"),
             BotCommand("delannounce", "📢 Delete Broadcast"),
             BotCommand("groupid", "📢 Check Chat IDs"),
-            BotCommand("auditlog", "📢 Pull diagnostics log")
+            BotCommand("auditlog", "📢 Pull diagnostics log"),
+            BotCommand("groupid", "📢 Check Chat IDs"),
+            BotCommand("auditlog", "📢 Pull diagnostics log"),
+            BotCommand("analyze_feedback", "🤖 AI Bug/Feature Analysis")
         ])
     if is_sup:
         base_cmds.extend([
