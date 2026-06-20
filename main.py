@@ -3,7 +3,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from core import BOT_TOKEN, WIB, init_db, log_action
 from crons import daily_morning_log, monthly_leaderboard, weekly_quota_reset, poll_cleanup, schedule_bday_job
 
-# Import our split command modules
 import cmd_system
 import cmd_user
 import cmd_admin
@@ -29,20 +28,20 @@ def main():
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
 
-    # Background Jobs
+    # Background Schedulers
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=7, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
 
-    # 1. SYSTEM COMMANDS
+    # --- SYSTEM BRANCH ---
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
     app.add_handler(CommandHandler("feedback", cmd_system.submit_feedback))
     app.add_handler(CommandHandler("gemini", cmd_system.ask_gemini))
     app.add_handler(ChatMemberHandler(cmd_system.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     
-    # 2. USER COMMANDS
+    # --- USER BRANCH ---
     app.add_handler(CommandHandler("thanks", cmd_user.give_thanks))
     app.add_handler(CommandHandler("myquota", cmd_user.my_quota))
     app.add_handler(CommandHandler("mystar", cmd_user.my_star))
@@ -61,8 +60,9 @@ def main():
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
-    # 3. ADMIN COMMANDS
+    # --- ADMIN BRANCH ---
     app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
+    app.add_handler(CommandHandler("alltimefeedback", cmd_admin.all_time_feedback))
     app.add_handler(CommandHandler("setgeminiquota", cmd_admin.set_gemini_quota))
     app.add_handler(CommandHandler("checkgeminiquota", cmd_admin.check_gemini_quota))
     app.add_handler(CommandHandler("admin_gemini", cmd_admin.admin_gemini))
@@ -70,12 +70,8 @@ def main():
     app.add_handler(CommandHandler("announce", cmd_admin.announce))
     app.add_handler(CommandHandler("editannounce", cmd_admin.edit_announce))
     app.add_handler(CommandHandler("delannounce", cmd_admin.del_announce))
-    
-    # --- FIX: Routed to cmd_user where the functions reside ---
-    app.add_handler(CommandHandler("admin_stars", cmd_user.admin_stars))
-    app.add_handler(CommandHandler("checkquota", cmd_user.check_quota))
-    # ----------------------------------------------------------
-    
+    app.add_handler(CommandHandler("admin_stars", cmd_admin.admin_stars))
+    app.add_handler(CommandHandler("checkquota", cmd_admin.check_quota))
     app.add_handler(CommandHandler("addbday", cmd_admin.add_bday))
     app.add_handler(CommandHandler("editbday", cmd_admin.edit_bday))
     app.add_handler(CommandHandler("delbday", cmd_admin.del_bday))
@@ -99,7 +95,7 @@ def main():
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
 
-    # 4. SUPER OWNER
+    # --- SUPER OWNER ---
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
     app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
     app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
@@ -107,12 +103,10 @@ def main():
     app.add_handler(CommandHandler("graveyard", cmd_admin.graveyard))
     app.add_handler(CommandHandler("super_reset", cmd_admin.super_reset_req))
 
-    # 5. CALLBACKS 
+    # --- FALLBACK TRACKERS ---
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(cmd_admin.super_callback, pattern="^sup_"))
     app.add_handler(CallbackQueryHandler(cmd_user.rsvp_callback, pattern="^rsvp_"))
-
-    # 6. TRACKERS & FALLBACKS (These MUST be at the very bottom!)
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
 
