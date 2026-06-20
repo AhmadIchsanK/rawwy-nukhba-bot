@@ -11,15 +11,16 @@ async def generate_audit_report(pool, target_date: datetime.date) -> str:
     
     async with pool.acquire() as conn:
         active_groups = await conn.fetchval("SELECT COUNT(*) FROM active_groups")
-        away_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Away Status' AND status='Set' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        back_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Away Status' AND status='Removed' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        events_created = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Event Created' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        events_updated = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Event Updated' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        rsvp_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='RSVP' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        ann_sent = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Announcement' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        ann_failed = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Announcement' AND status='Failed' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        sys_errors = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Error' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        sys_warns = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Warning' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
+        # Use the audit_logs schema created in core.log_action: (timestamp, user_id, chat_id, category, status, detail)
+        away_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Away Status' AND status='Set' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        back_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Away Status' AND status='Removed' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        events_created = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Event Created' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        events_updated = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Event Updated' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        rsvp_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='RSVP' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        ann_sent = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Announcement' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        ann_failed = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Announcement' AND status='Failed' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        sys_errors = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Error' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
+        sys_warns = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Warning' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
         
     msg = f"✅ 🌅 **Daily Diagnostic Audit Report**\nDate: {target_date.strftime('%d/%m/%Y')} | Time: {now.strftime('%H:%M')} WIB\n\n"
     msg += f"**Groups:**\n• Total Active Groups: {active_groups}\n\n"
@@ -58,7 +59,7 @@ async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
         groups = await conn.fetch('SELECT chat_id FROM active_groups')
         
         if top_earner:
-            msg = f"🏆 **Best star earner this month ({month_name}) is @{top_earner['username']}!** 🏆\n\nTotal **{top_earner['monthly_points']} RAWWY Stars** earned. Absolutely incredible work! 🌟 Keep up the amazing momentum, team!"
+            msg = f"🏆 **Best star earner this month ({month_name}) is @{top_earner['username']}!** 🏆\n\nTotal **{top_earner['monthly_points']} RAWWY Stars** earned. Absolutely incredible work! 🎉"
             for g in groups:
                 try: await context.bot.send_message(g['chat_id'], msg, parse_mode="Markdown")
                 except: pass
