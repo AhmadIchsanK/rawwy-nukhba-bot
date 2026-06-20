@@ -92,6 +92,9 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("cancelpoll", "⚙️ Stop Poll (Reply)"),
             BotCommand("addlib_batch", "⚙️ Batch Add Assets"),
             BotCommand("dellib_batch", "⚙️ Batch Delete Assets"),
+            BotCommand("schedule", "🗓️ Schedule Announcement"),
+            BotCommand("listschedules", "🗓️ View Schedules"),
+            BotCommand("delschedule", "🗓️ Delete Schedule"),
             BotCommand("announce", "📢 Send Broadcast"),
             BotCommand("editannounce", "📢 Edit Broadcast"),
             BotCommand("delannounce", "📢 Delete Broadcast"),
@@ -142,6 +145,7 @@ async def init_db(app: Application):
         await conn.execute('CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());')
         await conn.execute('CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());')
         await conn.execute('CREATE TABLE IF NOT EXISTS announcement_messages (announcement_id INTEGER, chat_id BIGINT, message_id BIGINT);')
+        await conn.execute('CREATE TABLE IF NOT EXISTS scheduled_announcements (id SERIAL PRIMARY KEY, chat_id TEXT, frequency TEXT, run_time TEXT, mention BOOLEAN DEFAULT FALSE, message TEXT, created_by TEXT, last_run TIMESTAMP WITH TIME ZONE);')
         
         try: await conn.execute('ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;')
         except: pass
