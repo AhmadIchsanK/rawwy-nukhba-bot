@@ -68,8 +68,11 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         base_cmds.extend([
             BotCommand("addbday", "🎂 Add user birthday"),
             BotCommand("editbday", "🎂 Edit user birthday"),
+            BotCommand("delbday", "🎂 Remove a birthday"),
             BotCommand("listbdays", "🎂 View all birthdays"),
             BotCommand("setbdaychannel", "⚙️ Set Group for Bdays"),
+            BotCommand("setbdaytime", "⚙️ Set Alert Time (HH:MM)"),
+            BotCommand("bdayconfig", "⚙️ Check Bday Setup"),
             BotCommand("attendance", "⚙️ View Away vs Available"),
             BotCommand("forceback", "⚙️ Force stop user away status"),
             BotCommand("checkquota", "⚙️ Audit user quotas"),
@@ -161,6 +164,9 @@ async def init_db(app: Application):
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllPrivateChats())
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllGroupChats())
     
+    # Initialize the dynamic birthday cron job from the database settings
+    await schedule_bday_job(app)
+    
     logger.info("✅ Enterprise Database & Scoped Menus Configured!")
 
 # --- CORE INTERFACE ---
@@ -192,7 +198,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_adm:
         help_text += (
             "\n\n🔐 *[RW] NUKHBA ADMIN SUITE*\n\n"
-            "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/setbdaychannel` (Run in target group)\n`/listbdays`\n\n"
+            "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/delbday @user`\n`/setbdaychannel` (Run in target group)\n`/setbdaytime HH:MM`\n`/bdayconfig` | `/listbdays`\n\n"
             "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n\n"
             "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n`/dellib Name`\n\n"
             "📢 *System*\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now."
@@ -204,7 +210,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "🛑 *Offboarding:* `/removemember @user` (Archives to graveyard)\n"
                 "🪦 *Graveyard:* `/graveyard`\n"
                 "📈 *System:* `/botstatus`\n"
-                "☢️ *Wipe:* `/super_reset [stars/tasks/library/events/away/all]`"
+                "☢️ *Wipe:* `/super_reset [stars/tasks/library/events/away/birthdays/all]`"
             )
 
     try:
@@ -283,6 +289,25 @@ async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
 async def weekly_quota_reset(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn: await conn.execute("UPDATE kudos SET quota = 3")
+
+async def schedule_bday_job(app: Application):
+    pool = app.bot_data.get('db_pool')
+    try:
+        async with pool.acquire() as conn:
+            t_val = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'")
+        
+        hour, minute = 10, 0
+        if t_val:
+            try: hour, minute = map(int, t_val.split(':'))
+            except: pass
+            
+        for job in app.job_queue.get_jobs_by_name('bday_cron'):
+            job.schedule_removal()
+            
+        app.job_queue.run_daily(daily_bday_announcement, datetime.time(hour=hour, minute=minute, tzinfo=WIB), name='bday_cron')
+        logger.info(f"✅ Birthday alerts actively scheduled for {hour:02d}:{minute:02d} WIB.")
+    except Exception as e:
+        logger.error(f"Failed to schedule birthday job: {e}")
 
 async def daily_bday_announcement(context: ContextTypes.DEFAULT_TYPE):
     now = datetime.datetime.now(WIB)
@@ -1296,9 +1321,10 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             u_count = await conn.fetchval("SELECT COUNT(*) FROM users")
             t_count = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending'")
             l_count = await conn.fetchval("SELECT COUNT(*) FROM library")
+            b_count = await conn.fetchval("SELECT COUNT(*) FROM birthdays")
         
         msg = "✅ 📈 **Enterprise System Status**\n\n"
-        msg += f"👥 Users Tracked: `{u_count}`\n📋 Pending Tasks: `{t_count}`\n📚 Library Assets: `{l_count}`\n\n"
+        msg += f"👥 Users Tracked: `{u_count}`\n📋 Pending Tasks: `{t_count}`\n📚 Library Assets: `{l_count}`\n🎂 Birthdays Saved: `{b_count}`\n\n"
         msg += f"🏠 **Active Groups ({len(groups)}):**\n" + "\n".join([f"• `{g['chat_id']}` : {g['title']}" for g in groups])
         try: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
         except: pass
@@ -1319,6 +1345,51 @@ async def set_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
+async def set_bday_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    try:
+        time_str = context.args[0]
+        h, m = map(int, time_str.split(':'))
+        if not (0 <= h <= 23 and 0 <= m <= 59): raise ValueError
+    except:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setbdaytime HH:MM` (24-hour format, e.g., 09:00)", parse_mode="Markdown")
+    
+    try:
+        formatted_time = f"{h:02d}:{m:02d}"
+        async with pool.acquire() as conn:
+            await conn.execute("INSERT INTO config (key, value) VALUES ('bday_time', $1) ON CONFLICT (key) DO UPDATE SET value=$1", formatted_time)
+        
+        await schedule_bday_job(context.application)
+        await context.bot.send_message(update.effective_user.id, f"✅ Birthday alerts will now be triggered daily at {formatted_time} WIB.")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
+async def bday_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    try:
+        async with pool.acquire() as conn:
+            channel = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'")
+            time_val = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'") or "10:00"
+        
+        msg = "✅ 🎂 **Birthday System Configuration**\n\n"
+        if channel:
+            msg += f"📢 Target Chat ID: `{channel}`\n"
+        else:
+            msg += f"📢 Target Chat ID: ❌ Not Set (Use `/setbdaychannel` in target group)\n"
+        msg += f"⏰ Alert Time: `{time_val} WIB` (Use `/setbdaytime HH:MM` to change)\n"
+        
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
 async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
@@ -1327,15 +1398,15 @@ async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
         if len(parts) < 2: raise ValueError
-        u = parts[0].replace("@", ""); b = parts[1]
+        u = parts[0].replace("@", "").lower(); b = parts[1]
         datetime.datetime.strptime(b, "%m/%d")
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format error. Try: `/addbday @user , MM/DD`", parse_mode="Markdown")
     
     try:
         async with pool.acquire() as conn:
-            exist = await conn.fetchval('SELECT 1 FROM birthdays WHERE username=$1', u)
+            exist = await conn.fetchval('SELECT bday FROM birthdays WHERE lower(username)=$1', u)
             if exist: 
-                return await context.bot.send_message(update.effective_user.id, "❌ Birthday already exists.\nUse `/editbday` to edit the input.", parse_mode="Markdown")
+                return await context.bot.send_message(update.effective_user.id, f"❌ @{u} already has a birthday registered (Date: {exist}). Use `/editbday` to update it.", parse_mode="Markdown")
             await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2)', u, b)
         await context.bot.send_message(update.effective_user.id, f"✅ 🎂 Birthday securely logged for @{u}.")
     except Exception as e:
@@ -1348,15 +1419,33 @@ async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(username, pool): return
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
-        u = parts[0].replace("@", ""); b = parts[1]
+        u = parts[0].replace("@", "").lower(); b = parts[1]
         datetime.datetime.strptime(b, "%m/%d")
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/editbday @user , MM/DD`", parse_mode="Markdown")
     
     try:
         async with pool.acquire() as conn: 
-            res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE username=$2', b, u)
+            res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE lower(username)=$2', b, u)
             if res == "UPDATE 0": return await context.bot.send_message(update.effective_user.id, "❌ User not found. Use `/addbday`.")
         await context.bot.send_message(update.effective_user.id, f"✅ 🎂 Birthday updated for @{u}.")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
+async def del_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    try: u = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "").lower()
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/delbday @user`")
+    
+    try:
+        async with pool.acquire() as conn:
+            res = await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
+            if res == "DELETE 0":
+                return await context.bot.send_message(update.effective_user.id, f"❌ @{u} not found in birthday database.")
+        await context.bot.send_message(update.effective_user.id, f"✅ Removed @{u} from birthday database.")
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
@@ -1379,7 +1468,7 @@ async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_super(username): return await context.bot.send_message(update.effective_user.id, "❌ Unauthorized.")
     
     try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].lower()
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/super_reset [stars/tasks/library/events/away/all]`", parse_mode="Markdown")
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/super_reset [stars/tasks/library/events/away/birthdays/all]`", parse_mode="Markdown")
     
     cb_data = f"sup_reset_{target}"
     kb = [[InlineKeyboardButton("⚠️ Yes, Wipe Data", callback_data=cb_data), InlineKeyboardButton("No, Cancel", callback_data="sup_cancel")]]
@@ -1449,6 +1538,7 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if target in ["tasks", "all"]: await conn.execute("TRUNCATE tasks RESTART IDENTITY CASCADE")
                 if target in ["library", "all"]: await conn.execute("TRUNCATE library CASCADE")
                 if target in ["events", "all"]: await conn.execute("TRUNCATE events, rsvps RESTART IDENTITY CASCADE")
+                if target in ["birthdays", "all"]: await conn.execute("TRUNCATE birthdays CASCADE")
                 if target in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
             await q.edit_message_text(f"✅ ☢️ Data Wipe for `{target}` successfully executed.", parse_mode="Markdown")
             
@@ -1488,7 +1578,6 @@ def main():
     app.add_error_handler(error_handler)
 
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
-    app.job_queue.run_daily(daily_bday_announcement, datetime.time(hour=10, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=0, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
@@ -1509,9 +1598,15 @@ def main():
     app.add_handler(CommandHandler("delannounce", del_announce))
     app.add_handler(CommandHandler("admin_stars", admin_stars))
     app.add_handler(CommandHandler("checkquota", check_quota))
+    
     app.add_handler(CommandHandler("addbday", add_bday))
     app.add_handler(CommandHandler("editbday", edit_bday))
+    app.add_handler(CommandHandler("delbday", del_bday))
     app.add_handler(CommandHandler("listbdays", list_bdays))
+    app.add_handler(CommandHandler("setbdaychannel", set_bday_channel))
+    app.add_handler(CommandHandler("setbdaytime", set_bday_time))
+    app.add_handler(CommandHandler("bdayconfig", bday_config))
+    
     app.add_handler(CommandHandler("cancelevent", cancel_event))
     app.add_handler(CommandHandler("canceltask", cancel_task))
     app.add_handler(CommandHandler("dellib", del_lib))
@@ -1521,7 +1616,6 @@ def main():
     app.add_handler(CommandHandler("listgroups", check_group_id))
     app.add_handler(CommandHandler("botstatus", bot_status))
     app.add_handler(CommandHandler("auditlog", get_audit_log))
-    app.add_handler(CommandHandler("setbdaychannel", set_bday_channel))
     app.add_handler(CommandHandler("forceback", force_back))
     
     app.add_handler(CommandHandler("away", set_away))
