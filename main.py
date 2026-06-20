@@ -273,7 +273,8 @@ async def daily_bday_announcement(context: ContextTypes.DEFAULT_TYPE):
 
 async def poll_cleanup(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn: await conn.execute("DELETE FROM active_polls WHERE end_time < NOW()")
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM active_polls WHERE end_time < NOW()")
 
 # --- FORTRESS SECURITY & GLOBAL TRACKER ---
 async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -294,13 +295,13 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
             
         async with pool.acquire() as conn:
             await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
-        await notify_admins(context.bot, pool, f"🔔 **System Alert:** Bot joined group `{chat.title}` (ID: `{chat.id}`). Inviter: @{inviter}")
+        
         try: await context.bot.send_message(chat.id, "✅ **Authorization confirmed.** [RW] Nukhba Manager is locked in and syncing data.")
         except: pass
         
     elif status in ['left', 'kicked']:
-        async with pool.acquire() as conn: await conn.execute('DELETE FROM active_groups WHERE chat_id=$1', chat.id)
-        await notify_admins(context.bot, pool, f"🔔 **System Alert:** Bot was removed from group `{chat.title}` (ID: `{chat.id}`).")
+        async with pool.acquire() as conn:
+            await conn.execute('DELETE FROM active_groups WHERE chat_id=$1', chat.id)
 
 async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
@@ -344,7 +345,8 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Exception handled:", exc_info=context.error)
     pool = context.bot_data.get('db_pool')
     if pool:
-        async with pool.acquire() as conn: await conn.execute("INSERT INTO bot_stats (date, errors) VALUES (CURRENT_DATE, 1) ON CONFLICT (date) DO UPDATE SET errors = bot_stats.errors + 1")
+        async with pool.acquire() as conn:
+            await conn.execute("INSERT INTO bot_stats (date, errors) VALUES (CURRENT_DATE, 1) ON CONFLICT (date) DO UPDATE SET errors = bot_stats.errors + 1")
 
 # --- 1/ EVENTS ---
 async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -939,6 +941,23 @@ async def get_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await generate_log_text(pool, target_date)
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
+async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    if not await is_super(username): return
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        groups = await conn.fetch("SELECT chat_id, title FROM active_groups")
+        u_count = await conn.fetchval("SELECT COUNT(*) FROM users")
+        t_count = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending'")
+        l_count = await conn.fetchval("SELECT COUNT(*) FROM library")
+    
+    msg = "📈 **Enterprise System Status**\n\n"
+    msg += f"👥 Users Tracked: `{u_count}`\n📋 Pending Tasks: `{t_count}`\n📚 Library Assets: `{l_count}`\n\n"
+    msg += f"🏠 **Active Groups ({len(groups)}):**\n" + "\n".join([f"• `{g['chat_id']}` : {g['title']}" for g in groups])
+    try: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except: pass
+
 async def set_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
@@ -975,7 +994,6 @@ async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(username, pool): return
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
-        if len(parts) < 2: raise ValueError
         u = parts[0].replace("@", ""); b = parts[1]
         datetime.datetime.strptime(b, "%m/%d")
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/editbday @user , MM/DD`", parse_mode="Markdown")
