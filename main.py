@@ -35,16 +35,14 @@ def main():
     app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=7, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
 
-    # SYSTEM COMMANDS & TRACKERS
+    # 1. SYSTEM COMMANDS
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
     app.add_handler(CommandHandler("bugreport", cmd_system.report_bug))
     app.add_handler(CommandHandler("gemini", cmd_system.ask_gemini))
     app.add_handler(ChatMemberHandler(cmd_system.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     
-    # USER COMMANDS
+    # 2. USER COMMANDS
     app.add_handler(CommandHandler("thanks", cmd_user.give_thanks))
     app.add_handler(CommandHandler("myquota", cmd_user.my_quota))
     app.add_handler(CommandHandler("mystar", cmd_user.my_star))
@@ -63,7 +61,7 @@ def main():
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
-    # ADMIN COMMANDS
+    # 3. ADMIN COMMANDS
     app.add_handler(CommandHandler("setgeminiquota", cmd_admin.set_gemini_quota))
     app.add_handler(CommandHandler("checkgeminiquota", cmd_admin.check_gemini_quota))
     app.add_handler(CommandHandler("admin_gemini", cmd_admin.admin_gemini))
@@ -96,7 +94,7 @@ def main():
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
 
-    # SUPER OWNER
+    # 4. SUPER OWNER
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
     app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
     app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
@@ -104,10 +102,14 @@ def main():
     app.add_handler(CommandHandler("graveyard", cmd_admin.graveyard))
     app.add_handler(CommandHandler("super_reset", cmd_admin.super_reset_req))
 
-    # CALLBACKS
+    # 5. CALLBACKS 
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(cmd_admin.super_callback, pattern="^sup_"))
     app.add_handler(CallbackQueryHandler(cmd_user.rsvp_callback, pattern="^rsvp_"))
+
+    # 6. TRACKERS & FALLBACKS (These MUST be at the very bottom!)
+    app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
 
     logger.info("Starting Enterprise bot...")
     app.run_polling()
