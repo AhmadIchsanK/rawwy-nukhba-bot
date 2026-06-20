@@ -2,7 +2,7 @@ import logging, datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from core import BOT_TOKEN, DATABASE_URL, WIB, init_db, log_action
-import cmd_system, cmd_user, cmd_admin, cmd_cheers, cmd_trivia
+import cmd_system, cmd_user, cmd_admin, cmd_trivia
 
 # Configure standard internal logging trackers
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -48,7 +48,7 @@ def main():
     app.add_error_handler(error_handler)
 
     # ----------------------------------------------------
-    # 🧠 SECTION 1: TRIVIA MODULE ROUTING (NEW INGREDIENT)
+    # 🧠 SECTION 1: TRIVIA MODULE ROUTING
     # ----------------------------------------------------
     # User level tracking command
     app.add_handler(CommandHandler("mypoint", cmd_trivia.my_point))
@@ -68,14 +68,11 @@ def main():
     app.add_handler(CommandHandler("canceltrivia", cmd_trivia.cancel_trivia))
     app.add_handler(CommandHandler("admin_kp", cmd_trivia.admin_kp))
 
-    # ----------------------------------------------------
-    # 🥂 SECTION 2: AI MOTIVATIONAL CHEERS ROUTING
-    # ----------------------------------------------------
-    app.add_handler(CommandHandler("setcheer", cmd_cheers.set_cheer))
-    app.add_handler(CommandHandler("cheerme", cmd_cheers.cheer_me))
+    # Register Interactive Inline Keyboard Taps
+    app.add_handler(CallbackQueryHandler(cmd_trivia.trivia_callback, pattern="^triv_"))
 
     # ----------------------------------------------------
-    # 🟢 SECTION 3: STANDARD USER FEATURE ROUTING
+    # 🟢 SECTION 2: STANDARD USER FEATURE ROUTING
     # ----------------------------------------------------
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
@@ -107,7 +104,7 @@ def main():
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
     # ----------------------------------------------------
-    # 🔐 SECTION 4: PRIVILEGED ADMINISTRATIVE ROUTING
+    # 🔐 SECTION 3: PRIVILEGED ADMINISTRATIVE ROUTING
     # ----------------------------------------------------
     app.add_handler(CommandHandler("addbday", cmd_admin.add_birthday))
     app.add_handler(CommandHandler("editbday", cmd_admin.edit_birthday))
@@ -150,7 +147,7 @@ def main():
     app.add_handler(CommandHandler("alltimefeedback", cmd_admin.review_historical_feedback))
 
     # ----------------------------------------------------
-    # 👑 SECTION 5: SUPER OWNER STRUCTURAL EXCLUSIVES
+    # 👑 SECTION 4: SUPER OWNER STRUCTURAL EXCLUSIVES
     # ----------------------------------------------------
     app.add_handler(CommandHandler("addadmin", cmd_admin.promote_to_admin))
     app.add_handler(CommandHandler("deladmin", cmd_admin.demote_from_admin))
@@ -163,30 +160,21 @@ def main():
     app.add_handler(CommandHandler("super_reset", cmd_admin.trigger_structural_factory_wipe))
 
     # ----------------------------------------------------
-    # ⚙️ SECTION 6: CALLBACK & DATA CONTEXT RESOLVERS
+    # ⚙️ SECTION 5: CALLBACK & DATA CONTEXT RESOLVERS
     # ----------------------------------------------------
-    # Interactive event RSVP and custom group selections
     app.add_handler(CallbackQueryHandler(cmd_user.event_callback, pattern="^ev_"))
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
     
-    # Global state chat room trackers and background text intercepts
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER, cmd_system.security_track_chats))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
     # ----------------------------------------------------
-    # ⏱️ SECTION 7: BACKGROUND CRON ALARMS & TIME CHECKS
+    # ⏱️ SECTION 6: BACKGROUND CRON ALARMS & TIME CHECKS
     # ----------------------------------------------------
-    # Scan active games for expiration limits every 10 seconds
     app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=10)
-    
-    # Check automated launch times for trivia rounds every 60 seconds
     app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
-    
-    # Automated server status audit run every morning at 7:00 AM WIB
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
-    
-    # Run Trivia Monthly Reset and Champ Announcements on the 1st of every month at 13:00 WIB (1:00 PM)
     app.job_queue.run_daily(cmd_trivia.run_monthly_trivia_reset, time=datetime.time(hour=13, minute=0, tzinfo=WIB))
 
     # Connect polling engine threads live
