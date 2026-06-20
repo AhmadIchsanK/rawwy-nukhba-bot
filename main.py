@@ -43,59 +43,63 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
     is_adm = await is_bot_admin(username, pool)
     is_sup = await is_super(username)
     
+    # Categorized Base Commands for EVERYONE
     base_cmds = [
-        BotCommand("help", "View User Manual"),
-        BotCommand("newevent", "Title , MM/DD/YYYY HH.MM , RemMins"),
-        BotCommand("events", "View upcoming events"),
-        BotCommand("poll", "Question , Hours , Opt1 , Opt2"),
-        BotCommand("mystar", "RAWWY Stars earned this month"),
-        BotCommand("totalstar", "RAWWY Stars earned all-time"),
-        BotCommand("myquota", "Star Quota left to give"),
-        BotCommand("thanks", "(Reply) Send a Star"),
-        BotCommand("addlib", "Name , Content , [private]"),
-        BotCommand("editlib", "Name , New Content"),
-        BotCommand("getlib", "Retrieve an asset"),
-        BotCommand("library", "Browse Library"),
-        BotCommand("assign", "@user , Mins (60-480) , Task"),
-        BotCommand("complete", "ID - Mark task complete"),
-        BotCommand("mytasks", "View your tasks"),
-        BotCommand("away", "Reason , MM/DD/YYYY HH.MM"),
-        BotCommand("back", "Return from Away"),
-        BotCommand("bugreport", "Report issue to Admin")
+        BotCommand("help", "📖 View Nukhba Manual"),
+        BotCommand("newevent", "📅 Schedule an event"),
+        BotCommand("events", "📅 View upcoming events"),
+        BotCommand("poll", "📊 Create a team poll"),
+        BotCommand("thanks", "🌟 Give a Star (Reply)"),
+        BotCommand("myquota", "🌟 Check Star Quota left"),
+        BotCommand("mystar", "🌟 Monthly Stars earned"),
+        BotCommand("totalstar", "🌟 All-time Stars earned"),
+        BotCommand("addlib", "📚 Save a library asset"),
+        BotCommand("editlib", "📚 Edit your asset"),
+        BotCommand("getlib", "📚 Retrieve an asset"),
+        BotCommand("library", "📚 Browse the Library"),
+        BotCommand("assign", "⚡ Assign a task"),
+        BotCommand("complete", "⚡ Mark task complete"),
+        BotCommand("mytasks", "⚡ View your active tasks"),
+        BotCommand("away", "🏖️ Set away status"),
+        BotCommand("back", "🏖️ Return to available"),
+        BotCommand("bugreport", "🐛 Report an issue")
     ]
     
     if is_adm:
         base_cmds.extend([
-            BotCommand("addbday", "@user , MM/DD"),
-            BotCommand("editbday", "@user , MM/DD"),
-            BotCommand("listbdays", "View all birthdays"),
-            BotCommand("setbdaychannel", "Set Group for Bdays"),
-            BotCommand("attendance", "View Away vs Available list"),
-            BotCommand("checkquota", "Audit user quotas"),
-            BotCommand("admin_stars", "@user , [quota/monthly/total] , [set/add/sub] , Amt"),
-            BotCommand("grouptasks", "View group tasks"),
-            BotCommand("cancelevent", "ID - Cancel Event"),
-            BotCommand("canceltask", "ID - Cancel Task"),
-            BotCommand("dellib", "Name - Delete Asset"),
-            BotCommand("announce", "ChatID/All , Message"),
-            BotCommand("editannounce", "ID , New Msg"),
-            BotCommand("delannounce", "ID - Delete Broadcast"),
-            BotCommand("groupid", "Check Chat IDs"),
-            BotCommand("auditlog", "Pull diagnostics log now")
+            BotCommand("addbday", "🎂 Add user birthday"),
+            BotCommand("editbday", "🎂 Edit user birthday"),
+            BotCommand("listbdays", "🎂 View all birthdays"),
+            BotCommand("setbdaychannel", "⚙️ Set Group for Bdays"),
+            BotCommand("attendance", "⚙️ View Away vs Available"),
+            BotCommand("checkquota", "⚙️ Audit user quotas"),
+            BotCommand("admin_stars", "⚙️ Modify user stars"),
+            BotCommand("grouptasks", "⚙️ View group tasks"),
+            BotCommand("cancelevent", "⚙️ Cancel Event"),
+            BotCommand("canceltask", "⚙️ Cancel Task"),
+            BotCommand("dellib", "⚙️ Delete Asset"),
+            BotCommand("announce", "📢 Send Broadcast"),
+            BotCommand("editannounce", "📢 Edit Broadcast"),
+            BotCommand("delannounce", "📢 Delete Broadcast"),
+            BotCommand("groupid", "📢 Check Chat IDs"),
+            BotCommand("auditlog", "📢 Pull diagnostics log")
         ])
     if is_sup:
         base_cmds.extend([
-            BotCommand("addadmin", "@user - Promote Admin"),
-            BotCommand("deladmin", "@user - Demote Admin"),
-            BotCommand("listadmins", "View Admins"),
-            BotCommand("removemember", "@user - Offboard User"),
-            BotCommand("graveyard", "View offboarded users"),
-            BotCommand("botstatus", "View Global DB Status"),
-            BotCommand("super_reset", "Factory Wipe Module")
+            BotCommand("addadmin", "👑 Promote Admin"),
+            BotCommand("deladmin", "👑 Demote Admin"),
+            BotCommand("listadmins", "👑 View Admins"),
+            BotCommand("removemember", "🛑 Offboard User"),
+            BotCommand("graveyard", "🪦 View Graveyard"),
+            BotCommand("botstatus", "📈 Global DB Status"),
+            BotCommand("super_reset", "☢️ Factory Wipe Module")
         ])
         
     try: 
+        # Update the user's specific private chat menu
         await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
+        
+        # If admin, ensure they see admin commands in tracked groups too
         if is_adm:
             async with pool.acquire() as conn:
                 groups = await conn.fetch("SELECT chat_id FROM active_groups")
@@ -128,8 +132,35 @@ async def init_db(app: Application):
         await conn.execute('''CREATE TABLE IF NOT EXISTS graveyard (username TEXT PRIMARY KEY, offboarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), data_dump TEXT);''')
         
         # Upgraded Audit Logs Table
-        await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, user_id BIGINT, chat_id BIGINT, action_type TEXT, status TEXT, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
+    await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, user_id BIGINT, chat_id BIGINT, action_type TEXT, status TEXT, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
 
+    # Force Global Default Menus so old commands are wiped out
+    default_cmds = [
+        BotCommand("help", "📖 View Nukhba Manual"),
+        BotCommand("newevent", "📅 Schedule an event"),
+        BotCommand("events", "📅 View upcoming events"),
+        BotCommand("poll", "📊 Create a team poll"),
+        BotCommand("thanks", "🌟 Give a Star (Reply)"),
+        BotCommand("myquota", "🌟 Check Star Quota left"),
+        BotCommand("mystar", "🌟 Monthly Stars earned"),
+        BotCommand("totalstar", "🌟 All-time Stars earned"),
+        BotCommand("addlib", "📚 Save a library asset"),
+        BotCommand("editlib", "📚 Edit your asset"),
+        BotCommand("getlib", "📚 Retrieve an asset"),
+        BotCommand("library", "📚 Browse the Library"),
+        BotCommand("assign", "⚡ Assign a task"),
+        BotCommand("complete", "⚡ Mark task complete"),
+        BotCommand("mytasks", "⚡ View your active tasks"),
+        BotCommand("away", "🏖️ Set away status"),
+        BotCommand("back", "🏖️ Return to available")
+    ]
+    
+    # This pushes the clean base list to EVERY chat type to overwrite cached ghosts
+    from telegram import BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+    await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
+    await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllPrivateChats())
+    await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllGroupChats())
+    
     logger.info("✅ Enterprise Database & Scoped Menus Configured!")
 
 # --- CORE INTERFACE ---
