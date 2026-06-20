@@ -211,8 +211,69 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         if is_bot_query:
             system_prompt = "You are Nukhba Manager, an enterprise Telegram bot. Your features: Gemini AI (/gemini), Events (/newevent, /events), Polls (/poll), RAWWY Stars (/thanks, /leaderboard), Library (/addlib, /getlib), Tasks (/assign, /complete), Away mode (/away, /back), and Feedback (/feedback). Answer the user clearly.\n"
             if is_adm:
-                system_prompt += "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI quota), output a JSON block at the very end of your response exactly like this:\n
-http://googleusercontent.com/immersive_entry_chip/0
+                system_prompt += "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI quota), output a JSON block at the very end of your response exactly like this:\n```json\n[{\"key\": \"dm_length\", \"value\": \"800\"}, {\"key\": \"star_quota\", \"value\": \"5\"}]\n```\nValid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.\n"
+            system_prompt += "User Question: " + prompt
+        else:
+            system_prompt = prompt
+            
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=system_prompt)
+        reply = response.text
+        
+        config_msg = ""
+        if is_bot_query and is_adm:
+            match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
+            if match:
+                try:
+                    configs = json.loads(match.group(1))
+                    async with pool.acquire() as conn:
+                        for c in configs:
+                            await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
+                    reply = re.sub(r'```json\n(.*?)\n```', '', reply, flags=re.DOTALL).strip()
+                    config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
+                except Exception as e:
+                    logger.error(f"Config parse error: {e}")
+        
+        async with pool.acquire() as conn:
+            dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
+            dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 500
 
-Now, try running an `/ask` command to update configs! For example:
-> `/ask Update the dm_length limit to 1000 and set the star_quota to 5`
+        prefix = "🤖 **About Me:**\n\n" if is_bot_query else "🤖 **Gemini AI Response:**\n\n"
+        inline_prefix = "🤖 **Nukhba Manager:** " if is_bot_query else "🤖 **Gemini:** "
+        
+        final_reply = reply + config_msg
+        
+        if len(final_reply) > dm_len and update.effective_chat.type != "private":
+            try:
+                await context.bot.send_message(update.effective_user.id, f"{prefix}{final_reply}", parse_mode="Markdown")
+                await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{quota_msg}", parse_mode="Markdown")
+            except:
+                await temp.edit_text("❌ Please open a private chat with me first so I can DM you.")
+                if not is_adm:
+                    async with pool.acquire() as conn: 
+                        await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
+        else: 
+            await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{quota_msg}", parse_mode="Markdown")
+            
+    except Exception as e:
+        if "429" in str(e).lower() or "quota" in str(e).lower():
+            await temp.edit_text("❌ Gemini API credit limit depleted (429). Admins notified.")
+            async with pool.acquire() as conn:
+                admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
+                super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
+            admin_ids = {a['user_id'] for a in admins if a['user_id']}
+            if super_id: admin_ids.add(super_id)
+            for uid in admin_ids:
+                try: await context.bot.send_message(uid, "⚠️ **CRITICAL:** Gemini API limit depleted.", parse_mode="Markdown")
+                except: pass
+        else: 
+            await temp.edit_text(f"❌ AI Error: {e}")
+            
+        if not is_adm:
+            async with pool.acquire() as conn: 
+                await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
+
+async def ask_gemini(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_gemini_request(update, context, " ".join(context.args), False)
+
+async def ask_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_gemini_request(update, context, " ".join(context.args), True)
