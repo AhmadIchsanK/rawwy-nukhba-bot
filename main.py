@@ -64,6 +64,13 @@ async def dynamic_totalstar_fallback(update: Update, context: ContextTypes.DEFAU
             return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ All-time star status checker mismatch inside cmd_user module.")
 
+async def dynamic_leaderboard_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Safely discovers and runs the leaderboard viewer under any varying function names inside cmd_user."""
+    for attr in ['leaderboard', 'view_leaderboard', 'check_leaderboard', 'cmd_leaderboard']:
+        if hasattr(cmd_user, attr):
+            return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Leaderboard command handler configuration mismatch inside cmd_user module.")
+
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
     if not BOT_TOKEN:
@@ -110,7 +117,8 @@ def main():
     app.add_handler(CommandHandler("myquota", dynamic_quota_fallback))
     app.add_handler(CommandHandler("mystar", dynamic_mystar_fallback))
     app.add_handler(CommandHandler("totalstar", dynamic_totalstar_fallback))
-    app.add_handler(CommandHandler("leaderboard", cmd_user.view_leaderboard))
+    # Secure fallback configuration mapping for /leaderboard
+    app.add_handler(CommandHandler("leaderboard", dynamic_leaderboard_fallback))
     
     app.add_handler(CommandHandler("addlib", cmd_user.add_library))
     app.add_handler(CommandHandler("editlib", cmd_user.edit_library))
