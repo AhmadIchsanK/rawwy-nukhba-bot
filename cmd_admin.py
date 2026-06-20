@@ -111,7 +111,7 @@ async def cancel_poll_admin(update, context):
         await context.bot.send_message(update.effective_user.id, f"❌ Error: {e}")
 
 # --- GEMINI MANAGER CONTROLS ---
-async def set_weekly_limit(update, context):
+async def set_weekly_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): 
@@ -122,9 +122,9 @@ async def set_weekly_limit(update, context):
         return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setweeklylimit 20`")
     async with pool.acquire() as conn: 
         await conn.execute("INSERT INTO config (key, value) VALUES ('gemini_weekly_limit', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(limit))
-    await context.bot.send_message(update.effective_user.id, f"✅ Global limit set to {limit}.")
+    await context.bot.send_message(update.effective_user.id, f"✅ Global AI limit set to {limit}.")
 
-async def admin_gemini(update, context):
+async def admin_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): 
@@ -135,7 +135,7 @@ async def admin_gemini(update, context):
         act = parts[1].lower()
         amt = int(parts[2])
     except: 
-        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/admin_gemini @user , [set/add/sub] , Amount`")
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/admin_limit @user , [set/add/sub] , Amount`")
     
     async with pool.acquire() as conn:
         if act == "set": 
@@ -144,9 +144,9 @@ async def admin_gemini(update, context):
             await conn.execute("UPDATE users SET gemini_quota=gemini_quota+$1 WHERE username=$2", amt, t)
         elif act == "sub": 
             await conn.execute("UPDATE users SET gemini_quota=gemini_quota-$1 WHERE username=$2", amt, t)
-    await context.bot.send_message(update.effective_user.id, "✅ AI Quota modified.")
+    await context.bot.send_message(update.effective_user.id, "✅ AI Limit modified.")
 
-async def check_gemini_quota(update, context):
+async def check_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): 
@@ -155,14 +155,14 @@ async def check_gemini_quota(update, context):
     async with pool.acquire() as conn:
         if target == 'all':
             recs = await conn.fetch('SELECT username, gemini_quota FROM users ORDER BY gemini_quota ASC')
-            msg = "✅ 🤖 **AI Quotas**\n" + "\n".join([f"@{r['username']}: {r['gemini_quota']}" for r in recs])
+            msg = "✅ 🤖 **AI Limits**\n" + "\n".join([f"@{r['username']}: {r['gemini_quota']}" for r in recs])
         else:
             r = await conn.fetchval('SELECT gemini_quota FROM users WHERE username=$1', target)
-            msg = f"✅ @{target} Quota left: {r}" if r is not None else "❌ User not found."
+            msg = f"✅ @{target} Limit left: {r}" if r is not None else "❌ User not found."
     await context.bot.send_message(update.effective_user.id, msg[:4000])
 
-async def set_gemini_quota(update, context): 
-    await admin_gemini(update, context)
+async def set_limit(update: Update, context: ContextTypes.DEFAULT_TYPE): 
+    await admin_limit(update, context)
 
 # --- RAWWY STARS QUOTA CONTROLS ---
 async def check_quota(update, context):
