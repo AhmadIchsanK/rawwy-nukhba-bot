@@ -12,10 +12,13 @@ async def send_md(context, chat_id, text):
     chunk = ""
     for line in text.split('\n'):
         if len(chunk) + len(line) > 3800:
-            await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            try: await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            except: await context.bot.send_message(chat_id, chunk) # Auto-fallback if AI breaks formatting
             chunk = line + "\n"
         else: chunk += line + "\n"
-    if chunk.strip(): await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
+    if chunk.strip(): 
+        try: await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
+        except: await context.bot.send_message(chat_id, chunk) # Auto-fallback if AI breaks formatting
 
 # --- BACKGROUND AUTOMATION WORKERS ---
 async def unpin_event(context):
@@ -300,21 +303,16 @@ async def delbday_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(update.effective_user.id, "✅ Birthday drop batch processed.")
 
 # --- AI INSIGHT BRIEF ENGINE ---
-async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
+async def feedback_list(update, context):
+    await delete_cmd(update); pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
-    async with pool.acquire() as conn:
-        recs = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC")
+    async with pool.acquire() as conn: recs = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC")
     if not recs: return await context.bot.send_message(update.effective_user.id, "🪹 No feedback in the last 7 days.")
-    msg = "📋 **Feedback Feed (Last 7 Days)**\n\n"
-    for r in recs: msg += f"• `[{r['created_at'].astimezone(WIB).strftime('%m/%d/%Y %H:%M')}]` @{r['username']}: {r['report']}\n"
-    from cmd_admin import send_md
+    msg = "📋 **Feedback Feed (Last 7 Days)**\n\n" + "".join([f"• `[{r['created_at'].astimezone(WIB).strftime('%m/%d/%Y %H:%M')}]` @{r['username']}: {r['report']}\n" for r in recs])
     await send_md(context, update.effective_user.id, msg)
 
-async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
+async def analyze_feedback(update, context):
+    await delete_cmd(update); pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
     if not GEMINI_API_KEY: return await context.bot.send_message(update.effective_user.id, "❌ API Key Missing.")
     arg = "".join(context.args).strip() if context.args else ""
@@ -322,49 +320,24 @@ async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with pool.acquire() as conn:
             if "," in arg:
                 st, en = [p.strip() for p in arg.split(",", 1)]
-                s_dt = datetime.datetime.strptime(st, "%m/%d/%Y").date()
-                e_dt = datetime.datetime.strptime(en, "%m/%d/%Y").date()
-                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date >= $1 AND created_at::date <= $2 ORDER BY created_at ASC", s_dt, e_dt)
+                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date >= $1 AND created_at::date <= $2 ORDER BY created_at ASC", datetime.datetime.strptime(st, "%m/%d/%Y").date(), datetime.datetime.strptime(en, "%m/%d/%Y").date())
                 range_desc = f"from {st} to {en}"
             elif arg:
-                tgt = datetime.datetime.strptime(arg, "%m/%d/%Y").date()
-                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date = $1 ORDER BY created_at ASC", tgt)
+                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date = $1 ORDER BY created_at ASC", datetime.datetime.strptime(arg, "%m/%d/%Y").date())
                 range_desc = f"for specific date: {arg}"
             else:
                 reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC")
                 range_desc = f"within default active period (last 7 days)"
-    except ValueError:
-        return await context.bot.send_message(update.effective_user.id, "❌ Date format error. Use MM/DD/YYYY (e.g., 06/15/2026)")
-    except Exception as e:
-        return await context.bot.send_message(update.effective_user.id, f"❌ Database error: {e}")
-
-    if not reports: return await context.bot.send_message(update.effective_user.id, f"✅ Backlog clean {range_desc}.")
-    temp = await context.bot.send_message(update.effective_user.id, "⏳ Generating detailed product analysis brief...")
-    
-    raw_data = ""
-    for r in reports:
-        dt = r['created_at'].astimezone(WIB).strftime('%m/%d/%Y')
-        raw_data += f"• [{dt}] @{r['username']}: {r['report']}\n"
-
-    ai_prompt = (
-        f"You are a Senior Product Manager and Software Architect. Process this grouped team feedback {range_desc}.\n"
-        "Produce an expert executive brief strictly matching this structure:\n\n"
-        "### 📋 1. Executive Summary\n[Summarize core operational constraints, recurring problem areas, and structural patterns]\n\n"
-        "### 💡 2. Expected Suggestions\n[Outline exactly what functional workflow enhancement the team is trying to achieve]\n\n"
-        "### 🛠️ 3. Proposed Solutions & Code-Level Implementations\n[Provide architectural execution maps or pseudo-code fixes for doable items]\n\n"
-        "### 🔄 4. Actionable Alternatives & Adjustments\n[For complex, high-risk, or non-doable requests, offer robust fallback options]\n\n"
-        f"Feedback Feed Data:\n{raw_data}"
-    )
-    
-    try:
+        if not reports: return await context.bot.send_message(update.effective_user.id, f"✅ Backlog clean {range_desc}.")
+        temp = await context.bot.send_message(update.effective_user.id, "⏳ Generating detailed product analysis brief...")
+        raw_data = "".join([f"• [{r['created_at'].astimezone(WIB).strftime('%m/%d/%Y')}] @{r['username']}: {r['report']}\n" for r in reports])
+        ai_prompt = f"You are a Senior Product Manager and Software Architect. Process this grouped team feedback {range_desc}.\nProduce an expert executive brief strictly matching this structure:\n\n### 📋 1. Executive Summary\n[Summarize core operational constraints, recurring problem areas, and structural patterns]\n\n### 💡 2. Expected Suggestions\n[Outline exactly what functional workflow enhancement the team is trying to achieve]\n\n### 🛠️ 3. Proposed Solutions & Code-Level Implementations\n[Provide architectural execution maps or pseudo-code fixes for doable items]\n\n### 🔄 4. Actionable Alternatives & Adjustments\n[For complex, high-risk, or non-doable requests, offer robust fallback options]\n\nFeedback Feed Data:\n{raw_data}"
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(model='gemini-2.5-flash', contents=ai_prompt)
         reply = f"✅ 🤖 **Gemini Architecture Analytics ({range_desc})**\n\n{response.text}"
         await temp.delete()
-        from cmd_admin import send_md
         await send_md(context, update.effective_user.id, reply)
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ Analysis Error: {e}")
+    except Exception as e: await context.bot.send_message(update.effective_user.id, f"❌ Analysis Error: {e}")
 
 async def all_time_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
