@@ -54,7 +54,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         BotCommand("myquota", "🌟 Check Star Quota left"),
         BotCommand("mystar", "🌟 Monthly Stars earned"),
         BotCommand("totalstar", "🌟 All-time Stars earned"),
-        BotCommand("leaderboard", "🏆 RAWWY Stars Leaderboard"),
+        BotCommand("leaderboard", "🏆 Top RAWWY Stars"),
         BotCommand("addlib", "📚 Save a library asset"),
         BotCommand("editlib", "📚 Edit your asset"),
         BotCommand("dellib", "📚 Delete your asset"),
@@ -65,7 +65,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         BotCommand("mytasks", "⚡ View your active tasks"),
         BotCommand("away", "🏖️ Set away status"),
         BotCommand("back", "🏖️ Return to available"),
-        BotCommand("feedback", "💡 Submit Feedback / Ideas")
+        BotCommand("feedback", "💡 Submit Feedback")
     ]
     
     if is_adm:
@@ -73,29 +73,33 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("addbday", "🎂 Add user birthday"),
             BotCommand("editbday", "🎂 Edit user birthday"),
             BotCommand("delbday", "🎂 Remove a birthday"),
-            BotCommand("listbdays", "🎂 View all birthdays"),
             BotCommand("setbdaychannel", "⚙️ Set Group for Bdays"),
             BotCommand("setbdaytime", "⚙️ Set Alert Time (HH:MM)"),
             BotCommand("bdayconfig", "⚙️ Check Bday Setup"),
-            BotCommand("attendance", "⚙️ View Away vs Available"),
-            BotCommand("forceback", "⚙️ Force stop user away status"),
+            BotCommand("listbdays", "🎂 View all birthdays"),
+            BotCommand("addbday_batch", "🎂 Batch Add Birthdays"),
+            BotCommand("delbday_batch", "🎂 Batch Delete Birthdays"),
             BotCommand("checkquota", "⚙️ Audit user quotas"),
             BotCommand("admin_stars", "⚙️ Modify user stars"),
             BotCommand("checkgeminiquota", "⚙️ Audit AI quotas"),
             BotCommand("admin_gemini", "⚙️ Modify user AI quota"),
             BotCommand("setweeklylimit", "⚙️ Set default AI limit"),
+            BotCommand("attendance", "⚙️ View Away vs Available"),
+            BotCommand("forceback", "⚙️ Force stop user away status"),
             BotCommand("grouptasks", "⚙️ View group tasks"),
             BotCommand("cancelevent", "⚙️ Cancel Event"),
             BotCommand("canceltask", "⚙️ Cancel Task"),
             BotCommand("cancelpoll", "⚙️ Stop Poll (Reply)"),
+            BotCommand("addlib_batch", "⚙️ Batch Add Assets"),
+            BotCommand("dellib_batch", "⚙️ Batch Delete Assets"),
             BotCommand("announce", "📢 Send Broadcast"),
             BotCommand("editannounce", "📢 Edit Broadcast"),
             BotCommand("delannounce", "📢 Delete Broadcast"),
             BotCommand("groupid", "📢 Check Chat IDs"),
             BotCommand("auditlog", "📢 Pull diagnostics log"),
-            BotCommand("feedbacklist", "📋 View Recent Feedback"),
             BotCommand("analyze_feedback", "🤖 AI Feedback Analysis"),
-            BotCommand("alltimefeedback", "🗄️ View Archive Feedback")
+            BotCommand("alltimefeedback", "🗄️ View Archive Feedback"),
+            BotCommand("feedbacklist", "📋 View Recent Feedback")
         ])
     if is_sup:
         base_cmds.extend([
@@ -143,3 +147,33 @@ async def init_db(app: Application):
         except: pass
         try: await conn.execute('ALTER TABLE bug_reports ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();')
         except: pass
+
+    # Sets the base UI commands so the popup menu matches the standard user list exactly
+    default_cmds = [
+        BotCommand("help", "📖 View Nukhba Manual"),
+        BotCommand("gemini", "🤖 Ask Gemini AI"),
+        BotCommand("newevent", "📅 Schedule an event"),
+        BotCommand("events", "📅 View upcoming events"),
+        BotCommand("poll", "📊 Interactive Team Poll"),
+        BotCommand("thanks", "🌟 Give a Star (Reply)"),
+        BotCommand("myquota", "🌟 Check Star Quota left"),
+        BotCommand("mystar", "🌟 Monthly Stars earned"),
+        BotCommand("totalstar", "🌟 All-time Stars earned"),
+        BotCommand("leaderboard", "🏆 Top RAWWY Stars"),
+        BotCommand("addlib", "📚 Save a library asset"),
+        BotCommand("editlib", "📚 Edit your asset"),
+        BotCommand("dellib", "📚 Delete your asset"),
+        BotCommand("getlib", "📚 Retrieve an asset"),
+        BotCommand("library", "📚 Browse the Library"),
+        BotCommand("assign", "⚡ Assign a task"),
+        BotCommand("complete", "⚡ Mark task complete"),
+        BotCommand("mytasks", "⚡ View your active tasks"),
+        BotCommand("away", "🏖️ Set away status"),
+        BotCommand("back", "🏖️ Return to available"),
+        BotCommand("feedback", "💡 Submit Feedback")
+    ]
+    try:
+        await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
+        await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllPrivateChats())
+        await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllGroupChats())
+    except: pass
