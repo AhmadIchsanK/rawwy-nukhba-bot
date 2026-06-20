@@ -1,9 +1,8 @@
-from google import genai
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, update_user_menu
 import datetime, logging
+from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from core import WIB, SUPER_OWNER, is_super, is_bot_admin, delete_cmd, log_action, update_user_menu
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, update_user_menu
 
 # Import process_return for force_back
 from cmd_user import process_return
@@ -180,6 +179,61 @@ async def check_gemini_quota(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def set_gemini_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await admin_gemini(update, context)
 
+# --- AI ANALYTICS ---
+async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    
+    if not await is_bot_admin(username, pool): return
+    if not GEMINI_API_KEY:
+        return await context.bot.send_message(update.effective_user.id, "❌ System Error: GEMINI_API_KEY is not configured.")
+
+    try:
+        async with pool.acquire() as conn:
+            # Query updated to remove strict created_at requirement
+            reports = await conn.fetch("SELECT username, report FROM bug_reports")
+            
+        if not reports:
+            return await context.bot.send_message(update.effective_user.id, "✅ 🎉 Your backlog is completely clean! There is zero feedback to analyze.")
+            
+        temp_msg = await context.bot.send_message(update.effective_user.id, "⏳ Compiling data and booting up Gemini for analysis... This might take a few seconds.")
+        
+        raw_data = ""
+        for r in reports:
+            raw_data += f"• @{r['username']} reported: {r['report']}\n"
+            
+        ai_prompt = (
+            "You are a Senior Product Manager and Lead Software Engineer for an enterprise Telegram bot. "
+            "Analyze the following raw user feedback and bug reports. Please provide a highly structured Markdown report with the following sections:\n"
+            "1. 🚨 **Critical Bugs**: Identify actual broken features. Suggest technical solutions or code-level fixes to resolve them.\n"
+            "2. 💡 **Feature Requests**: Group user requests into actionable new features. Rank them by perceived impact.\n"
+            "3. 🔄 **Duplicates**: Point out if multiple users are asking for the same thing.\n\n"
+            f"Here is the raw data:\n\n{raw_data}"
+        )
+        
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=ai_prompt
+        )
+        
+        reply_text = f"✅ 🤖 **Gemini AI Product Analysis**\n\n{response.text}"
+        
+        if len(reply_text) > 4000:
+            await temp_msg.delete()
+            chunks = [reply_text[i:i+4000] for i in range(0, len(reply_text), 4000)]
+            for chunk in chunks:
+                await context.bot.send_message(update.effective_user.id, chunk, parse_mode="Markdown")
+        else:
+            await temp_msg.edit_text(reply_text, parse_mode="Markdown")
+            
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Feedback Analytics", "Success", f"@{username} ran analysis.")
+        
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ AI Execution Error: {e}")
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Feedback Analytics", "Error", str(e))
+
 # --- BROADCASTS ---
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -266,392 +320,6 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
-# --- STARS/QUOTA ADMIN ---
-async def check_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    try: target = " ".join(context.args).replace("@", "").strip()
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Please use: `/checkquota all` OR `/checkquota @user`")
-    if not target: return await context.bot.send_message(update.effective_user.id, "❌ Please provide a user or 'all'.")
-    
-    try:
-        async with pool.acquire() as conn:
-            if target.lower() == 'all':
-                recs = await conn.fetch('SELECT username, quota, monthly_points, all_time_points FROM kudos')
-                msg = "✅ 🌟 **Team Stars Audit**\n" + "\n".join([f"@{r['username']} - Quota: {r['quota']} | Month: {r['monthly_points']} | Total: {r['all_time_points']}" for r in recs]) if recs else "❌ No records found."
-            else:
-                r = await conn.fetchrow('SELECT monthly_points, all_time_points, quota FROM kudos WHERE username=$1', target)
-                msg = f"✅ 🌟 **@{target} Audit**\nQuota left: {r['quota']}\nMonthly: {r['monthly_points']}\nTotal: {r['all_time_points']}" if r else "❌ User not found in database."
-        await context.bot.send_message(update.effective_user.id, msg)
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    
-    try:
-        parts = [p.strip() for p in " ".join(context.args).split(",", 3) if p.strip()]
-        if len(parts) != 4: raise ValueError
-        t = parts[0].replace("@", ""); field = parts[1].lower(); act = parts[2].lower(); amt = int(parts[3])
-        if field not in ['quota', 'monthly', 'total'] or act not in ['add', 'sub', 'set']: raise ValueError
-    except Exception as e: 
-        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Admin Stars", "Error", str(e))
-        return await context.bot.send_message(update.effective_user.id, "❌ Incorrect format. Please strictly use: `/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`", parse_mode="Markdown")
-    
-    try:
-        async with pool.acquire() as conn:
-            col = 'monthly_points' if field == 'monthly' else 'all_time_points' if field == 'total' else 'quota'
-            await conn.execute(f'INSERT INTO kudos (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
-            
-            if act == "set": await conn.execute(f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
-            elif act == "add": await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2', amt, t)
-            elif act == "sub": await conn.execute(f'UPDATE kudos SET {col}={col}-$1 WHERE username=$2', amt, t)
-            
-        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Admin Stars", "Success", f"@{username} used '{act}' on @{t}'s {field} by {amt}.")
-        await context.bot.send_message(update.effective_user.id, f"✅ The {field} stars for @{t} have been successfully updated.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-# --- BIRTHDAY ADMIN ---
-async def set_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    if update.effective_chat.type == "private": return await context.bot.send_message(update.effective_user.id, "❌ Run this command inside the group you want to set.")
-    
-    try:
-        async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO config (key, value) VALUES ('bday_channel', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(update.effective_chat.id))
-        await context.bot.send_message(update.effective_user.id, f"✅ Birthday announcements will now be sent to {update.effective_chat.title}.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def set_bday_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    
-    try:
-        time_str = context.args[0]
-        h, m = map(int, time_str.split(':'))
-        if not (0 <= h <= 23 and 0 <= m <= 59): raise ValueError
-    except:
-        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setbdaytime HH:MM` (24-hour format, e.g., 09:00)", parse_mode="Markdown")
-    
-    try:
-        formatted_time = f"{h:02d}:{m:02d}"
-        async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO config (key, value) VALUES ('bday_time', $1) ON CONFLICT (key) DO UPDATE SET value=$1", formatted_time)
-        
-        from crons import schedule_bday_job
-        await schedule_bday_job(context.application)
-        await context.bot.send_message(update.effective_user.id, f"✅ Birthday alerts will now be triggered daily at {formatted_time} WIB.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def bday_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    
-    try:
-        async with pool.acquire() as conn:
-            channel = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'")
-            time_val = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'") or "10:00"
-        
-        msg = "✅ 🎂 **Birthday System Configuration**\n\n"
-        if channel:
-            msg += f"📢 Target Chat ID: `{channel}`\n"
-        else:
-            msg += f"📢 Target Chat ID: ❌ Not Set (Use `/setbdaychannel` in target group)\n"
-        msg += f"⏰ Alert Time: `{time_val} WIB` (Use `/setbdaytime HH:MM` to change)\n"
-        
-        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    try: 
-        parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
-        if len(parts) < 2: raise ValueError
-        u = parts[0].replace("@", "").lower(); b = parts[1]
-        datetime.datetime.strptime(b, "%m/%d")
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error. Try: `/addbday @user , MM/DD`", parse_mode="Markdown")
-    
-    try:
-        async with pool.acquire() as conn:
-            exist = await conn.fetchval('SELECT bday FROM birthdays WHERE lower(username)=$1', u)
-            if exist: 
-                return await context.bot.send_message(update.effective_user.id, f"❌ @{u} already has a birthday registered (Date: {exist}). Use `/editbday` to update it.", parse_mode="Markdown")
-            await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2)', u, b)
-        await context.bot.send_message(update.effective_user.id, f"✅ 🎂 Birthday securely logged for @{u}.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    try: 
-        parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
-        u = parts[0].replace("@", "").lower(); b = parts[1]
-        datetime.datetime.strptime(b, "%m/%d")
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/editbday @user , MM/DD`", parse_mode="Markdown")
-    
-    try:
-        async with pool.acquire() as conn: 
-            res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE lower(username)=$2', b, u)
-            if res == "UPDATE 0": return await context.bot.send_message(update.effective_user.id, "❌ User not found. Use `/addbday`.")
-        await context.bot.send_message(update.effective_user.id, f"✅ 🎂 Birthday updated for @{u}.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def del_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    
-    try: u = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "").lower()
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/delbday @user`")
-    
-    try:
-        async with pool.acquire() as conn:
-            res = await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
-            if res == "DELETE 0":
-                return await context.bot.send_message(update.effective_user.id, f"❌ @{u} not found in birthday database.")
-        await context.bot.send_message(update.effective_user.id, f"✅ Removed @{u} from birthday database.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    try:
-        async with pool.acquire() as conn: b = await conn.fetch('SELECT username, bday FROM birthdays ORDER BY bday')
-        await context.bot.send_message(update.effective_user.id, "✅ 🎂 **Birthdays**\n" + "\n".join([f"• @{x['username']}: {x['bday']}" for x in b]) if b else "❌ None saved.", parse_mode="Markdown")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def addbday_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-
-    text = update.message.text
-    lines = text.split('\n')
-    first_line = lines[0].split(' ', 1)
-    items = []
-    if len(first_line) > 1: items.append(first_line[1].strip())
-    items.extend([l.strip() for l in lines[1:] if l.strip()])
-
-    if not items: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/addbday_batch @user,MM/DD \n @user2,MM/DD`")
-
-    success, failed = 0, 0
-    fail_reasons = []
-
-    async with pool.acquire() as conn:
-        for item in items:
-            try:
-                parts = [p.strip() for p in item.split(",")]
-                if len(parts) < 2: raise ValueError("Missing date")
-                u = parts[0].replace("@", "").lower(); b = parts[1]
-                datetime.datetime.strptime(b, "%m/%d")
-
-                exist = await conn.fetchval('SELECT bday FROM birthdays WHERE lower(username)=$1', u)
-                if exist:
-                    failed += 1
-                    fail_reasons.append(f"@{u}: Already exists ({exist})")
-                    continue
-
-                await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2)', u, b)
-                success += 1
-            except Exception as e:
-                failed += 1
-                fail_reasons.append(f"{item.split(',')[0][:15]}: Invalid format")
-
-    msg = f"✅ **Batch Add Birthdays Complete**\nSuccess: {success}\nFailed: {failed}"
-    if failed > 0: msg += "\n\n**Errors:**\n" + "\n".join(fail_reasons[:10]) + ("\n..." if len(fail_reasons)>10 else "")
-    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday Add Batch", "Success", f"Added {success}, failed {failed}")
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-async def delbday_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-
-    text = update.message.text
-    lines = text.split('\n')
-    first_line = lines[0].split(' ', 1)
-    items = []
-    if len(first_line) > 1: items.append(first_line[1].strip())
-    items.extend([l.strip() for l in lines[1:] if l.strip()])
-
-    if not items: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/delbday_batch @user1 \n @user2`")
-
-    success, failed = 0, 0
-    fail_reasons = []
-
-    async with pool.acquire() as conn:
-        for item in items:
-            u = item.replace("@", "").strip().lower()
-            res = await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
-            if res == "DELETE 0":
-                failed += 1
-                fail_reasons.append(f"@{u}: Not found")
-            else:
-                success += 1
-
-    msg = f"✅ **Batch Delete Birthdays Complete**\nSuccess: {success}\nFailed: {failed}"
-    if failed > 0: msg += "\n\n**Errors:**\n" + "\n".join(fail_reasons[:10]) + ("\n..." if len(fail_reasons)>10 else "")
-    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday Delete Batch", "Success", f"Deleted {success}, failed {failed}")
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-# --- BATCH LIBRARY ---
-async def addlib_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-
-    text = update.message.text
-    lines = text.split('\n')
-    first_line = lines[0].split(' ', 1)
-    items = []
-    if len(first_line) > 1: items.append(first_line[1].strip())
-    items.extend([l.strip() for l in lines[1:] if l.strip()])
-
-    if not items: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/addlib_batch Name,Content,[private] \n Name2,Content2`")
-
-    success, failed = 0, 0
-    fail_reasons = []
-
-    async with pool.acquire() as conn:
-        for item in items:
-            try:
-                is_private = False
-                raw_args = item
-                if raw_args.lower().endswith(", private"):
-                    is_private = True
-                    raw_args = raw_args[:-9].strip()
-                parts = [p.strip() for p in raw_args.split(",", 1)]
-                if len(parts) < 2: raise ValueError("Missing content")
-                name = parts[0].lower(); content = parts[1]
-
-                exist = await conn.fetchval('SELECT name FROM library WHERE name=$1', name)
-                if exist:
-                    failed += 1
-                    fail_reasons.append(f"{name}: Already exists")
-                    continue
-
-                await conn.execute('INSERT INTO library (name, content, added_by, is_private) VALUES ($1, $2, $3, $4)', name, content, username, is_private)
-                success += 1
-            except Exception as e:
-                failed += 1
-                fail_reasons.append(f"{item.split(',')[0][:15]}: Format/DB error")
-
-    msg = f"✅ **Batch Add Library Complete**\nSuccess: {success}\nFailed: {failed}"
-    if failed > 0: msg += "\n\n**Errors:**\n" + "\n".join(fail_reasons[:10]) + ("\n..." if len(fail_reasons)>10 else "")
-    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Library Add Batch", "Success", f"Added {success}, failed {failed}")
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-async def dellib_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-
-    text = update.message.text
-    lines = text.split('\n')
-    first_line = lines[0].split(' ', 1)
-    items = []
-    if len(first_line) > 1: items.append(first_line[1].strip())
-    items.extend([l.strip() for l in lines[1:] if l.strip()])
-
-    if not items: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/dellib_batch Name1 \n Name2`")
-
-    success, failed = 0, 0
-    fail_reasons = []
-
-    async with pool.acquire() as conn:
-        for item in items:
-            name = item.lower()
-            res = await conn.execute('DELETE FROM library WHERE name=$1', name)
-            if res == "DELETE 0":
-                failed += 1
-                fail_reasons.append(f"{name}: Not found")
-            else:
-                success += 1
-
-    msg = f"✅ **Batch Delete Library Complete**\nSuccess: {success}\nFailed: {failed}"
-    if failed > 0: msg += "\n\n**Errors:**\n" + "\n".join(fail_reasons[:10]) + ("\n..." if len(fail_reasons)>10 else "")
-    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Library Delete Batch", "Success", f"Deleted {success}, failed {failed}")
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-# --- GROUP & SYSTEM INFO ---
-async def attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    now = datetime.datetime.now(WIB)
-    
-    try:
-        async with pool.acquire() as conn: aways = await conn.fetch('SELECT username, end_time FROM away_status')
-        msg = "✅ 📊 **Team Attendance Status**\n\n"
-        if aways:
-            msg += "🔴 **CURRENTLY AWAY:**\n"
-            for a in aways:
-                rem = a['end_time'].astimezone(WIB) - now
-                d = rem.days; h = rem.seconds // 3600; m = (rem.seconds % 3600) // 60
-                t_str = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
-                msg += f"• @{a['username']} (Returns in {t_str})\n"
-            msg += "\n🟢 *Everyone else is assumed Available.*"
-        else: msg += "🟢 Everyone is currently Available."
-        
-        try: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-        except: pass
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    now = datetime.datetime.now(WIB)
-    try:
-        async with pool.acquire() as conn:
-            tasks = await conn.fetch("SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks WHERE status='Pending' ORDER BY deadline")
-        if not tasks: msg = "✅ 🎉 Zero pending tasks in the entire database."
-        else:
-            msg = "✅ 📋 **Global Pending Tasks**\n\n"
-            for t in tasks:
-                rem = int((t['deadline'] - now).total_seconds() / 60)
-                status = f"{rem}m left" if rem > 0 else "OVERDUE"
-                msg += f"🔹 `{t['id']}` | **{t['task_desc']}**\nTo: @{t['assignee']} | By: @{t['assigned_by']} | ⏳ {status}\n\n"
-        try: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-        except: pass
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
 async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
@@ -671,6 +339,19 @@ async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+
+async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    try:
+        target_date = datetime.datetime.now(WIB).date()
+        msg = await generate_audit_report(pool, target_date)
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: `{e}`", parse_mode="Markdown")
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -692,63 +373,6 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    
-    try:
-        target_date = datetime.datetime.now(WIB).date()
-        msg = await generate_audit_report(pool, target_date)
-        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: `{e}`", parse_mode="Markdown")
-
-async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    
-    try: target = [p.strip() for p in " ".join(context.args).split(",") if p.strip()][0].replace("@", "")
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/forceback @user`")
-    
-    try:
-        async with pool.acquire() as conn:
-            status = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', target)
-            if not status: 
-                return await context.bot.send_message(update.effective_user.id, f"❌ @{target} is not currently marked as Away. Status is already Available 🟢.")
-            
-        for j in context.job_queue.get_jobs_by_name(f"away_{target}"): j.schedule_removal()
-        msg = await process_return(target, pool, context.bot)
-        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Force Removed", f"@{username} forced @{target} back")
-        
-        try: 
-            async with pool.acquire() as conn:
-                uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", target)
-            if uid: await context.bot.send_message(uid, f"⚠️ An Admin has force-removed your Away status.\n\n{msg}", parse_mode="Markdown")
-            await context.bot.send_message(update.effective_user.id, f"✅ Successfully forced @{target} back to Available. Digest sent to them.", parse_mode="Markdown")
-        except:
-            await context.bot.send_message(update.effective_user.id, f"✅ Successfully forced @{target} back to Available.\n\n(Could not DM user, here is their recap:)\n{msg}", parse_mode="Markdown")
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-async def auto_return_away(context: ContextTypes.DEFAULT_TYPE): 
-    pool = context.bot_data.get('db_pool')
-    username = context.job.data['username']
-    
-    try:
-        async with pool.acquire() as conn:
-            uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
-            
-        msg = await process_return(username, pool, context.bot)
-        await log_action(pool, uid or 0, context.job.data['chat_id'], "Away Status", "Removed", f"@{username} auto-returned")
-        try: 
-            if uid: await context.bot.send_message(uid, msg, parse_mode="Markdown")
-        except: pass
-    except: pass
 
 # --- SUPER ACTIONS ---
 async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -864,61 +488,3 @@ async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-        # --- AI ANALYTICS ---
-async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    
-    if not await is_bot_admin(username, pool): return
-    if not GEMINI_API_KEY:
-        return await context.bot.send_message(update.effective_user.id, "❌ System Error: GEMINI_API_KEY is not configured.")
-
-    try:
-        async with pool.acquire() as conn:
-            reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports ORDER BY created_at ASC")
-            
-        if not reports:
-            return await context.bot.send_message(update.effective_user.id, "✅ 🎉 Your backlog is completely clean! There are zero bug reports or feature requests to analyze.")
-            
-        temp_msg = await context.bot.send_message(update.effective_user.id, "⏳ Compiling data and booting up Gemini for analysis... This might take a few seconds.")
-        
-        # Format the raw database data into a clean text block for the AI to read
-        raw_data = ""
-        for r in reports:
-            date_str = r['created_at'].astimezone(WIB).strftime('%Y-%m-%d')
-            raw_data += f"[{date_str}] @{r['username']} reported: {r['report']}\n"
-            
-        # The System Prompt guiding Gemini on how to behave
-        ai_prompt = (
-            "You are a Senior Product Manager and Lead Software Engineer for an enterprise Telegram bot. "
-            "Analyze the following raw user feedback and bug reports. Please provide a highly structured Markdown report with the following sections:\n"
-            "1. 🚨 **Critical Bugs**: Identify actual broken features. Suggest technical solutions or code-level fixes to resolve them.\n"
-            "2. 💡 **Feature Requests**: Group user requests into actionable new features. Rank them by perceived impact.\n"
-            "3. 🔄 **Duplicates**: Point out if multiple users are asking for the same thing.\n\n"
-            f"Here is the raw data:\n\n{raw_data}"
-        )
-        
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=ai_prompt
-        )
-        
-        reply_text = f"✅ 🤖 **Gemini AI Product Analysis**\n\n{response.text}"
-        
-        # Telegram has a 4096 character limit per message. If the AI writes a massive report, we split it.
-        if len(reply_text) > 4000:
-            await temp_msg.delete()
-            # Chunk the message safely
-            chunks = [reply_text[i:i+4000] for i in range(0, len(reply_text), 4000)]
-            for chunk in chunks:
-                await context.bot.send_message(update.effective_user.id, chunk, parse_mode="Markdown")
-        else:
-            await temp_msg.edit_text(reply_text, parse_mode="Markdown")
-            
-        await log_action(pool, update.effective_user.id, update.effective_chat.id, "AI Analytics", "Success", f"@{username} ran bug report analysis.")
-        
-    except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ AI Execution Error: {e}")
-        await log_action(pool, update.effective_user.id, update.effective_chat.id, "AI Analytics", "Error", str(e))
