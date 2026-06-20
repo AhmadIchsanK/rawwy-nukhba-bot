@@ -24,7 +24,6 @@ async def post_init_wrapper(app: Application):
     await init_db(app)
     await schedule_bday_job(app)
 
-# --- CIRCUIT BREAKER MIDDLEWARE ---
 async def maintenance_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.effective_user: return
     pool = context.bot_data.get('db_pool')
@@ -36,16 +35,14 @@ async def maintenance_middleware(update: Update, context: ContextTypes.DEFAULT_T
     if maint == 'true':
         from core import is_super
         username = update.effective_user.username or str(update.effective_user.id)
-        if await is_super(username): return # Super admin completely bypasses the pause lock
-        
+        if await is_super(username): return 
         if update.message and update.message.text and update.message.text.startswith('/'):
             try: await update.message.reply_text("⚠️ **[RW] Nukhba Manager is currently paused.**\nThe system is undergoing maintenance to fix bugs. Please try again later.", parse_mode="Markdown")
             except: pass
         elif update.callback_query:
             try: await update.callback_query.answer("⚠️ Bot is paused for maintenance.", show_alert=True)
             except: pass
-            
-        raise ApplicationHandlerStop # Instantly blocks the command from proceeding to other handlers
+        raise ApplicationHandlerStop 
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -57,19 +54,19 @@ def main():
     app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=7, minute=0, tzinfo=WIB), days=(0,))
     app.job_queue.run_repeating(poll_cleanup, interval=3600)
+    app.job_queue.run_repeating(cmd_admin.process_schedules, interval=60) # New Schedule Engine
 
-    # --- 0. MIDDLEWARE ---
-    # Group -1 runs before any standard command
+    # 0. MIDDLEWARE
     app.add_handler(TypeHandler(Update, maintenance_middleware), group=-1)
 
-    # --- SYSTEM BRANCH ---
+    # 1. SYSTEM BRANCH
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
     app.add_handler(CommandHandler("feedback", cmd_system.submit_feedback))
     app.add_handler(CommandHandler("gemini", cmd_system.ask_gemini))
     app.add_handler(ChatMemberHandler(cmd_system.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     
-    # --- USER BRANCH ---
+    # 2. USER BRANCH
     app.add_handler(CommandHandler("thanks", cmd_user.give_thanks))
     app.add_handler(CommandHandler("myquota", cmd_user.my_quota))
     app.add_handler(CommandHandler("mystar", cmd_user.my_star))
@@ -89,7 +86,10 @@ def main():
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
-    # --- ADMIN BRANCH ---
+    # 3. ADMIN BRANCH
+    app.add_handler(CommandHandler("schedule", cmd_admin.schedule_announcement))
+    app.add_handler(CommandHandler("listschedules", cmd_admin.list_schedules))
+    app.add_handler(CommandHandler("delschedule", cmd_admin.del_schedule))
     app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
     app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
     app.add_handler(CommandHandler("alltimefeedback", cmd_admin.all_time_feedback))
@@ -125,7 +125,7 @@ def main():
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
 
-    # --- SUPER OWNER ---
+    # 4. SUPER OWNER
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
     app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
     app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
@@ -135,7 +135,7 @@ def main():
     app.add_handler(CommandHandler("pause", cmd_admin.pause_bot))
     app.add_handler(CommandHandler("restart", cmd_admin.restart_bot))
 
-    # --- FALLBACK TRACKERS ---
+    # 5. FALLBACK TRACKERS
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(cmd_admin.super_callback, pattern="^sup_"))
     app.add_handler(CallbackQueryHandler(cmd_user.rsvp_callback, pattern="^rsvp_"))
