@@ -1,5 +1,5 @@
 import logging, datetime, pytz, os, asyncpg
-from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember
+from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, BotCommandScopeChat, BotCommandScopeDefault
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters, ContextTypes
 
 # --- CONFIGURATION ---
@@ -32,6 +32,20 @@ async def log_action(pool, text: str):
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO audit_logs (log_text) VALUES ($1)", text)
 
+async def notify_admins(bot, pool, text: str):
+    async with pool.acquire() as conn:
+        admins = await conn.fetch("SELECT username FROM bot_admins")
+        owner_id = await conn.fetchval('SELECT user_id FROM users WHERE username=$1', SUPER_OWNER)
+        
+        admin_ids = [owner_id] if owner_id else []
+        for a in admins:
+            uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", a['username'])
+            if uid and uid not in admin_ids: admin_ids.append(uid)
+            
+        for uid in admin_ids:
+            try: await bot.send_message(uid, text, parse_mode="Markdown")
+            except: pass
+
 # --- DYNAMIC MENU BUILDER ---
 async def update_user_menu(user_id: int, username: str, pool, bot):
     is_adm = await is_bot_admin(username, pool)
@@ -39,54 +53,56 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
     
     base_cmds = [
         BotCommand("help", "View User Manual"),
-        BotCommand("newevent", "Title , MM/DD/YYYY HH.MM , RemMins"),
-        BotCommand("events", "View upcoming events"),
-        BotCommand("poll", "Question , Hours , Opt1 , Opt2"),
-        BotCommand("mystar", "RAWWY Stars earned this month"),
-        BotCommand("totalstar", "RAWWY Stars earned all-time"),
-        BotCommand("myquota", "Star Quota left to give"),
-        BotCommand("thanks", "(Reply) Send a Star"),
-        BotCommand("addlib", "Name , Content , [private]"),
-        BotCommand("editlib", "Name , New Content"),
-        BotCommand("getlib", "Retrieve an asset"),
-        BotCommand("library", "Browse Library"),
-        BotCommand("assign", "@user , Mins (60-480) , Task"),
-        BotCommand("complete", "ID - Mark task complete"),
-        BotCommand("mytasks", "View your tasks"),
-        BotCommand("away", "Reason , MM/DD/YYYY HH.MM"),
-        BotCommand("back", "Return from Away"),
+        BotCommand("newevent", "[1] Schedule an event"),
+        BotCommand("events", "[1] View upcoming events"),
+        BotCommand("poll", "[2] Create a team poll"),
+        BotCommand("mystar", "[3] RAWWY Stars earned this month"),
+        BotCommand("totalstar", "[3] RAWWY Stars earned all-time"),
+        BotCommand("myquota", "[3] Star Quota left to give"),
+        BotCommand("thanks", "[3] (Reply) Send a Star"),
+        BotCommand("addlib", "[4] Save to Library"),
+        BotCommand("editlib", "[4] Edit Library File"),
+        BotCommand("getlib", "[4] Retrieve an asset"),
+        BotCommand("library", "[4] Browse Library"),
+        BotCommand("assign", "[5] Assign a task"),
+        BotCommand("complete", "[5] Mark task complete"),
+        BotCommand("mytasks", "[5] View your tasks"),
+        BotCommand("away", "[6] Set Away status"),
+        BotCommand("back", "[6] Return from Away"),
         BotCommand("bugreport", "Report issue to Admin")
     ]
     
     if is_adm:
         base_cmds.extend([
-            BotCommand("help_admin", "View Admin Suite"),
-            BotCommand("addbday", "@user , MM/DD"),
-            BotCommand("editbday", "@user , MM/DD"),
-            BotCommand("listbdays", "View all birthdays"),
-            BotCommand("setbdaychannel", "Set Group for Bdays"),
-            BotCommand("attendance", "View Away vs Available list"),
-            BotCommand("checkquota", "Audit user quotas"),
-            BotCommand("admin_stars", "@user , [quota/monthly/total] , [set/add/sub] , Amt"),
-            BotCommand("grouptasks", "View group tasks"),
-            BotCommand("cancelevent", "ID - Cancel Event"),
-            BotCommand("canceltask", "ID - Cancel Task"),
-            BotCommand("dellib", "Name - Delete Asset"),
-            BotCommand("announce", "ChatID/All , Message"),
-            BotCommand("groupid", "Check Chat IDs"),
-            BotCommand("getlog", "Pull diagnostics log now")
+            BotCommand("help_admin", "[Admin] View Suite"),
+            BotCommand("addbday", "[Admin] Add Bday"),
+            BotCommand("editbday", "[Admin] Edit Bday"),
+            BotCommand("listbdays", "[Admin] View Bdays"),
+            BotCommand("setbdaychannel", "[Admin] Set Bday Group"),
+            BotCommand("attendance", "[Admin] View Away List"),
+            BotCommand("checkquota", "[Admin] Audit Quotas"),
+            BotCommand("admin_stars", "[Admin] Edit Stars"),
+            BotCommand("grouptasks", "[Admin] View Group Tasks"),
+            BotCommand("cancelevent", "[Admin] Cancel Event"),
+            BotCommand("canceltask", "[Admin] Cancel Task"),
+            BotCommand("dellib", "[Admin] Delete Asset"),
+            BotCommand("announce", "[Admin] Broadcast"),
+            BotCommand("groupid", "[Admin] Check Chat IDs"),
+            BotCommand("getlog", "[Admin] Diagnostics Log")
         ])
     if is_sup:
         base_cmds.extend([
-            BotCommand("addadmin", "@user - Promote Admin"),
-            BotCommand("deladmin", "@user - Demote Admin"),
-            BotCommand("listadmins", "View Admins"),
-            BotCommand("removemember", "@user - Offboard User"),
-            BotCommand("graveyard", "View offboarded users"),
-            BotCommand("super_reset", "Factory Wipe Module")
+            BotCommand("addadmin", "[Super] Promote Admin"),
+            BotCommand("deladmin", "[Super] Demote Admin"),
+            BotCommand("listadmins", "[Super] View Admins"),
+            BotCommand("removemember", "[Super] Offboard User"),
+            BotCommand("graveyard", "[Super] View Graveyard"),
+            BotCommand("super_reset", "[Super] Factory Wipe")
         ])
         
-    try: await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
+    try: 
+        # INJECT ONLY IN DM.
+        await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
     except: pass
 
 # --- DATABASE SETUP ---
@@ -111,7 +127,7 @@ async def init_db(app: Application):
         await conn.execute('''CREATE TABLE IF NOT EXISTS active_groups (chat_id BIGINT PRIMARY KEY, title TEXT);''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS bot_stats (date DATE PRIMARY KEY, uses INT DEFAULT 0, errors INT DEFAULT 0);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS bug_reports (id SERIAL PRIMARY KEY, username TEXT, report TEXT);''')
+        await conn.execute('''CREATE TABLE IF NOT EXISTS bug_reports (id SERIAL PRIMARY KEY, username TEXT, report TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS graveyard (username TEXT PRIMARY KEY, offboarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), data_dump TEXT);''')
 
@@ -135,7 +151,7 @@ async def init_db(app: Application):
         BotCommand("back", "[6] Return")
     ]
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
-    logger.info("✅ Enterprise Database, Graveyard & Scoped Menus Configured!")
+    logger.info("✅ Enterprise Database & Scoped Menus Configured!")
 
 # --- CORE INTERFACE ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -195,21 +211,21 @@ async def help_admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Nothing happens on this command. Please check with the admin.")
 
-# --- CRONS ---
-async def generate_log_text(pool):
+# --- CRONS & LOGS ---
+async def generate_log_text(pool, target_date: datetime.date):
+    start_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.min))
+    end_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.max))
+    
     async with pool.acquire() as conn:
-        stats = await conn.fetchrow('SELECT uses, errors FROM bot_stats WHERE date=CURRENT_DATE - INTERVAL \'1 day\'')
-        bugs = await conn.fetch('SELECT username, report FROM bug_reports')
-        audit = await conn.fetch('SELECT log_text FROM audit_logs ORDER BY created_at ASC')
+        stats = await conn.fetchrow('SELECT uses, errors FROM bot_stats WHERE date=$1', target_date)
+        bugs = await conn.fetch('SELECT username, report FROM bug_reports WHERE created_at >= $1 AND created_at <= $2', start_dt, end_dt)
+        audit = await conn.fetch('SELECT log_text FROM audit_logs WHERE created_at >= $1 AND created_at <= $2 ORDER BY created_at ASC', start_dt, end_dt)
         
-        msg = "🌅 **Diagnostic Audit Log:**\n\n"
-        msg += f"📈 **Usage Yesterday:** {stats['uses'] if stats else 0} interactions\n"
-        msg += f"⚠️ **Errors Caught:** {stats['errors'] if stats else 0} errors\n\n"
+        msg = f"🌅 **Diagnostic Audit Log ({target_date.strftime('%m/%d/%Y')}):**\n\n"
+        msg += f"📈 **Usage:** {stats['uses'] if stats else 0} interactions\n"
+        msg += f"⚠️ **Errors:** {stats['errors'] if stats else 0} errors\n\n"
         msg += "🐛 **Bug Reports:**\n" + ("\n".join([f"- @{b['username']}: {b['report']}" for b in bugs]) if bugs else "No bugs reported! 🎉")
         msg += "\n\n🌟 **System Audit Log:**\n" + ("\n".join([f"- {s['log_text']}" for s in audit]) if audit else "No administrative modifications recorded.")
-        
-        await conn.execute("TRUNCATE bug_reports")
-        await conn.execute("TRUNCATE audit_logs")
     return msg
 
 async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
@@ -217,7 +233,9 @@ async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         owner_id = await conn.fetchval('SELECT user_id FROM users WHERE username=$1', SUPER_OWNER)
     if not owner_id: return
-    msg = await generate_log_text(pool)
+    # Send report for yesterday (00:00 to 23:59)
+    target_date = (datetime.datetime.now(WIB) - datetime.timedelta(days=1)).date()
+    msg = await generate_log_text(pool, target_date)
     try: await context.bot.send_message(owner_id, msg, parse_mode="Markdown")
     except: pass
 
@@ -285,12 +303,15 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
             
         async with pool.acquire() as conn:
             await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
+        
+        await notify_admins(context.bot, pool, f"🔔 **System Alert:** Bot joined group `{chat.title}` (ID: `{chat.id}`). Inviter: @{inviter}")
         try: await context.bot.send_message(chat.id, "✅ **Authorization confirmed.** [RW] Nukhba Manager is locked in and syncing data.")
         except: pass
         
     elif status in ['left', 'kicked']:
         async with pool.acquire() as conn:
             await conn.execute('DELETE FROM active_groups WHERE chat_id=$1', chat.id)
+        await notify_admins(context.bot, pool, f"🔔 **System Alert:** Bot was removed from group `{chat.title}` (ID: `{chat.id}`).")
 
 async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text: return
@@ -303,6 +324,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("INSERT INTO users (username, user_id) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET user_id=$2", username, update.effective_user.id)
         await conn.execute("INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, 1, 0) ON CONFLICT (date) DO UPDATE SET uses = bot_stats.uses + 1")
         
+        # Passive tracking to ensure group is recorded if Join Event was missed
         chat = update.effective_chat
         if chat.type in ['group', 'supergroup']:
             await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
@@ -822,28 +844,6 @@ async def process_return(username, bot, chat_id=None):
         try: await bot.send_message(user_id, msg, parse_mode="Markdown")
         except: pass
 
-async def attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    now = datetime.datetime.now(WIB)
-    
-    async with pool.acquire() as conn: aways = await conn.fetch('SELECT username, end_time FROM away_status')
-    msg = "📊 **Team Attendance Status**\n\n"
-    if aways:
-        msg += "🔴 **CURRENTLY AWAY:**\n"
-        for a in aways:
-            rem = a['end_time'].astimezone(WIB) - now
-            d = rem.days; h = rem.seconds // 3600; m = (rem.seconds % 3600) // 60
-            t_str = f"{d}d {h}h {m}m" if d > 0 else f"{h}h {m}m"
-            msg += f"• @{a['username']} (Returns in {t_str})\n"
-        msg += "\n🟢 *Everyone else is assumed Available.*"
-    else: msg += "🟢 Everyone is currently Available."
-    
-    try: await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-    except: pass
-
 # --- ADMINISTRATION ---
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -858,7 +858,14 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     async with pool.acquire() as conn:
         a_id = await conn.fetchval("INSERT INTO announcements (text) VALUES ($1) RETURNING id", msg)
-        targets = await conn.fetch("SELECT chat_id FROM active_groups") if target.lower() == "all" else [{"chat_id": int(target)}]
+        if target.lower() == "all":
+            targets = await conn.fetch("SELECT chat_id, title FROM active_groups")
+        else:
+            targets = [{"chat_id": int(target), "title": "Specific Group"}]
+            
+        if not targets:
+            return await context.bot.send_message(update.effective_user.id, "❌ No active groups found to send the announcement.")
+            
         sent = 0
         for t in targets:
             try:
@@ -866,49 +873,15 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 m = await context.bot.send_message(t['chat_id'], formatted_msg, parse_mode="Markdown")
                 await conn.execute("INSERT INTO announcement_messages (announcement_id, chat_id, message_id) VALUES ($1, $2, $3)", a_id, t['chat_id'], m.message_id)
                 sent += 1
-            except: pass
-    await context.bot.send_message(update.effective_user.id, f"✅ Broadcast sent! ID `{a_id}` hit {sent} groups.", parse_mode="Markdown")
+            except Exception as e:
+                logger.error(f"Failed to announce in {t['chat_id']}: {e}")
+    await context.bot.send_message(update.effective_user.id, f"✅ Broadcast sent! ID `{a_id}` hit {sent} out of {len(targets)} groups.", parse_mode="Markdown")
 
-async def edit_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(username, pool): return
-    try: 
-        parts = [p.strip() for p in " ".join(context.args).split(",", 1) if p.strip()]
-        a_id = int(parts[0]); new_msg = parts[1]
-    except: return await context.bot.send_message(update.effective_user.id, "❌ `/editannounce ID , New Msg`")
-    
-    async with pool.acquire() as conn:
-        msgs = await conn.fetch("SELECT chat_id, message_id FROM announcement_messages WHERE announcement_id=$1", a_id)
-        for m in msgs:
-            try: await context.bot.edit_message_text(f"📢 **[RW] NUKHBA BROADCAST**\n\nGreetings Team,\n\n{new_msg}", chat_id=m['chat_id'], message_id=m['message_id'], parse_mode="Markdown")
-            except: pass
-        await conn.execute("UPDATE announcements SET text=$1 WHERE id=$2", new_msg, a_id)
-    await context.bot.send_message(update.effective_user.id, f"✅ Updated Announcement {a_id}.")
-
-async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    try: a_id = int([p.strip() for p in " ".join(context.args).split(",") if p.strip()][0])
-    except: return await context.bot.send_message(update.effective_user.id, "❌ `/delannounce ID`")
-    
-    async with pool.acquire() as conn:
-        msgs = await conn.fetch("SELECT chat_id, message_id FROM announcement_messages WHERE announcement_id=$1", a_id)
-        for m in msgs:
-            try: await context.bot.delete_message(chat_id=m['chat_id'], message_id=m['message_id'])
-            except: pass
-        await conn.execute("DELETE FROM announcements WHERE id=$1", a_id)
-        await conn.execute("DELETE FROM announcement_messages WHERE announcement_id=$1", a_id)
-    await context.bot.send_message(update.effective_user.id, f"✅ Deleted Announcement {a_id}.")
-
-async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    if not await is_super(username): return
-    pool = context.bot_data.get('db_pool')
     
     if update.effective_chat.type in ['group', 'supergroup']:
         msg = f"📌 **Current Group Info**\nTitle: `{update.effective_chat.title}`\nID: `{update.effective_chat.id}`"
@@ -926,19 +899,9 @@ async def get_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(username, pool): return
-    msg = await generate_log_text(pool)
+    target_date = datetime.datetime.now(WIB).date()
+    msg = await generate_log_text(pool, target_date)
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-async def set_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(username, pool): return
-    if update.effective_chat.type == "private": return await context.bot.send_message(update.effective_user.id, "❌ Run this command inside the group you want to set.")
-    
-    async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO config (key, value) VALUES ('bday_channel', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(update.effective_chat.id))
-    await context.bot.send_message(update.effective_user.id, f"✅ Birthday announcements will now be sent to {update.effective_chat.title}.")
 
 async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -951,8 +914,11 @@ async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
         u = parts[0].replace("@", ""); b = parts[1]
         datetime.datetime.strptime(b, "%m/%d")
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format error. Try: `/addbday @user , MM/DD`", parse_mode="Markdown")
-    async with pool.acquire() as conn: 
-        await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET bday=EXCLUDED.bday', u, b)
+    
+    async with pool.acquire() as conn:
+        exist = await conn.fetchval('SELECT 1 FROM birthdays WHERE username=$1', u)
+        if exist: return await context.bot.send_message(update.effective_user.id, f"❌ @{u} already has a birthday set. Use `/editbday`.")
+        await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2)', u, b)
     await context.bot.send_message(update.effective_user.id, f"🎂 Birthday securely logged for @{u}.")
 
 async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -962,13 +928,26 @@ async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(username, pool): return
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
+        if len(parts) < 2: raise ValueError
         u = parts[0].replace("@", ""); b = parts[1]
         datetime.datetime.strptime(b, "%m/%d")
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format error: `/editbday @user , MM/DD`", parse_mode="Markdown")
+    
     async with pool.acquire() as conn: 
         res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE username=$2', b, u)
-        if res == "UPDATE 0": return await context.bot.send_message(update.effective_user.id, "❌ User not found.")
+        if res == "UPDATE 0": return await context.bot.send_message(update.effective_user.id, "❌ User not found. Use `/addbday`.")
     await context.bot.send_message(update.effective_user.id, f"🎂 Birthday updated for @{u}.")
+
+async def set_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    if update.effective_chat.type == "private": return await context.bot.send_message(update.effective_user.id, "❌ Run this command inside the group you want to set.")
+    
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO config (key, value) VALUES ('bday_channel', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(update.effective_chat.id))
+    await context.bot.send_message(update.effective_user.id, f"✅ Birthday announcements will now be sent to {update.effective_chat.title}.")
 
 async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1107,9 +1086,8 @@ def main():
     app.add_handler(CommandHandler("dellib", del_lib))
     app.add_handler(CommandHandler("attendance", attendance))
     app.add_handler(CommandHandler("grouptasks", group_tasks))
-    app.add_handler(CommandHandler("groupid", bot_status))
-    app.add_handler(CommandHandler("listgroups", bot_status))
-    app.add_handler(CommandHandler("botstatus", bot_status))
+    app.add_handler(CommandHandler("groupid", check_group_id))
+    app.add_handler(CommandHandler("listgroups", check_group_id))
     app.add_handler(CommandHandler("getlog", get_log))
     app.add_handler(CommandHandler("setbdaychannel", set_bday_channel))
     
