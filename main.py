@@ -3,7 +3,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from core import BOT_TOKEN, WIB, init_db, log_action
 from crons import daily_morning_log, monthly_leaderboard, weekly_quota_reset, poll_cleanup, schedule_bday_job
 
-# Import our new split command modules
+# Import our split command modules
 import cmd_system
 import cmd_user
 import cmd_admin
@@ -38,7 +38,7 @@ def main():
     # 1. SYSTEM COMMANDS
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
-    app.add_handler(CommandHandler("bugreport", cmd_system.report_bug))
+    app.add_handler(CommandHandler("feedback", cmd_system.submit_feedback))
     app.add_handler(CommandHandler("gemini", cmd_system.ask_gemini))
     app.add_handler(ChatMemberHandler(cmd_system.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     
@@ -62,6 +62,7 @@ def main():
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
     # 3. ADMIN COMMANDS
+    app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
     app.add_handler(CommandHandler("setgeminiquota", cmd_admin.set_gemini_quota))
     app.add_handler(CommandHandler("checkgeminiquota", cmd_admin.check_gemini_quota))
     app.add_handler(CommandHandler("admin_gemini", cmd_admin.admin_gemini))
@@ -93,7 +94,6 @@ def main():
     app.add_handler(CommandHandler("auditlog", cmd_admin.get_audit_log))
     app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
     app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
-    app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
 
     # 4. SUPER OWNER
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
