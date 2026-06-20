@@ -70,8 +70,12 @@ def main():
     app.add_handler(CommandHandler("announce", cmd_admin.announce))
     app.add_handler(CommandHandler("editannounce", cmd_admin.edit_announce))
     app.add_handler(CommandHandler("delannounce", cmd_admin.del_announce))
-    app.add_handler(CommandHandler("admin_stars", cmd_admin.admin_stars))
-    app.add_handler(CommandHandler("checkquota", cmd_admin.check_quota))
+    
+    # --- FIX: Routed to cmd_user where the functions reside ---
+    app.add_handler(CommandHandler("admin_stars", cmd_user.admin_stars))
+    app.add_handler(CommandHandler("checkquota", cmd_user.check_quota))
+    # ----------------------------------------------------------
+    
     app.add_handler(CommandHandler("addbday", cmd_admin.add_bday))
     app.add_handler(CommandHandler("editbday", cmd_admin.edit_bday))
     app.add_handler(CommandHandler("delbday", cmd_admin.del_bday))
