@@ -113,6 +113,7 @@ async def init_db(app: Application):
     if not DATABASE_URL: return logger.error("DATABASE_URL missing!")
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
     
+    # 1. DATABASE BLOCK (Must be indented 4 spaces)
     async with app.bot_data['db_pool'].acquire() as conn:
         await conn.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, user_id BIGINT);''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS bot_admins (username TEXT PRIMARY KEY);''')
@@ -131,10 +132,10 @@ async def init_db(app: Application):
         await conn.execute('''CREATE TABLE IF NOT EXISTS bug_reports (id SERIAL PRIMARY KEY, username TEXT, report TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS graveyard (username TEXT PRIMARY KEY, offboarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), data_dump TEXT);''')
         
-        # Upgraded Audit Logs Table
-    await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, user_id BIGINT, chat_id BIGINT, action_type TEXT, status TEXT, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
+        # Upgraded Audit Logs Table (STILL INSIDE the block)
+        await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, user_id BIGINT, chat_id BIGINT, action_type TEXT, status TEXT, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
 
-    # Force Global Default Menus so old commands are wiped out
+    # 2. MENU BUILDER BLOCK (Outside the database block, aligned with the 'async with')
     default_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("newevent", "📅 Schedule an event"),
