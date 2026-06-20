@@ -1,4 +1,4 @@
-import datetime, logging, json, re, asyncio, sys, os, importlib
+import datetime, logging, json, re, asyncio, sys, importlib
 from google import genai
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
@@ -6,48 +6,6 @@ from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_a
 import cmd_user 
 
 logger = logging.getLogger(__name__)
-
-async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
-    """
-    Splits long messages into safe sizes (<4096 chars) and sends them sequentially,
-    safely handling markdown entity parse crashes chunk-by-chunk.
-    """
-    limit = 3800
-    full = f"{prefix}{text}{suffix}"
-    
-    # If the message is already within safe limits, send it directly
-    if len(full) <= limit:
-        try:
-            await bot.send_message(chat_id, full, parse_mode="Markdown")
-        except Exception:
-            await bot.send_message(chat_id, full)
-        return
-
-    # Split message into chunks safely
-    chunks = []
-    current_chunk = prefix
-    
-    for line in text.split('\n'):
-        if len(current_chunk) + len(line) + 1 > limit:
-            chunks.append(current_chunk)
-            current_chunk = line + "\n"
-        else:
-            current_chunk += line + "\n"
-            
-    if len(current_chunk) + len(suffix) > limit:
-        chunks.append(current_chunk)
-        chunks.append(suffix)
-    else:
-        current_chunk += suffix
-        chunks.append(current_chunk)
-
-    # Deliver each chunk sequentially
-    for chunk in chunks:
-        if chunk.strip():
-            try:
-                await bot.send_message(chat_id, chunk, parse_mode="Markdown")
-            except Exception:
-                await bot.send_message(chat_id, chunk)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
@@ -100,7 +58,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, help_text, parse_mode="Markdown")
         if update.effective_chat.type != "private":
             await update.message.reply_text("✅ I have securely sent the manual to your Direct Messages!")
-    except Exception:
+    except:
         if update.effective_chat.type != "private":
             await update.message.reply_text("❌ I cannot send you a DM yet. Please start a private chat with me first!")
 
@@ -129,19 +87,19 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
                 await context.bot.send_message(chat.id, "❌ **Access Denied.** I am a private enterprise system. Leaving chat.")
                 await context.bot.leave_chat(chat.id)
                 await log_action(pool, update.effective_user.id, chat.id, "Security", "Warning", f"Unauthorized invite by @{inviter}")
-            except Exception: pass
+            except: pass
             return
             
         async with pool.acquire() as conn:
             await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
         
         try: await context.bot.send_message(chat.id, "✅ **Authorization confirmed.** [RW] Nukhba Manager is locked in and syncing data.")
-        except Exception: pass
+        except: pass
         
         adm_msg = f"✅ **Bot Joined Group**\nGroup Name: {chat.title}\nGroup ID: `{chat.id}`\nTime: {now_str}"
         for uid in admin_ids:
             try: await context.bot.send_message(uid, adm_msg, parse_mode="Markdown")
-            except Exception: pass
+            except: pass
             
         await log_action(pool, update.effective_user.id, chat.id, "System", "Success", "Bot joined group successfully.")
         
@@ -152,7 +110,7 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
         adm_msg = f"⚠️ **Bot Left Group**\nGroup Name: {chat.title}\nGroup ID: `{chat.id}`\nTime: {now_str}"
         for uid in admin_ids:
             try: await context.bot.send_message(uid, adm_msg, parse_mode="Markdown")
-            except Exception: pass
+            except: pass
             
         await log_action(pool, update.effective_user.id, chat.id, "System", "Warning", "Bot left or was removed from group.")
 
@@ -184,7 +142,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
                     if uid: await context.bot.send_message(uid, f"✅ {recap_msg}", parse_mode="Markdown")
-                except Exception: pass
+                except: pass
             
             aways = await conn.fetch('SELECT username, reason, end_time, last_notified FROM away_status')
             for a in aways:
@@ -261,15 +219,15 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /ask <query>: Queries you (this bot) about your features, settings, and commands. (Consumes weekly AI limit).\n"
                 "- /newevent <Title> , <MM/DD/YYYY HH.MM> , <RemMins>: Schedules a team event.\n"
                 "- /events: Lists the next 5 upcoming scheduled events.\n"
-                "- /poll <Question> , <Opt1> , ...: Launches an interactive group poll.\n"
+                "- /poll <Question> , <Opt1> , <Opt2> , ...: Launches interactive polls.\n"
                 "- /thanks: Award 1 RAWWY Star by REPLYING directly to another user's message.\n"
                 "- /myquota: Checks your remaining Star Quotas left before Monday reset.\n"
                 "- /mystar: Shows cumulative RAWWY Stars earned this current month.\n"
                 "- /totalstar: Shows cumulative RAWWY Stars earned all-time.\n"
                 "- /leaderboard: Displays top Star earners.\n"
                 "- /addlib <Name> , <Content> [, private]: Saves an asset to the shared team database.\n"
-                "- /editlib <Name> , <Content>: Modifies library assets you originally added.\n"
-                "- /dellib <Name>: Removes library assets you added.\n"
+                "- /editlib <Name> , <Content>: Modifies library assets.\n"
+                "- /dellib <Name>: Removes library assets.\n"
                 "- /getlib <Name>: Pulls a saved library asset.\n"
                 "- /library: Lists all browseable library assets.\n"
                 "- /assign <@username> , <Minutes> , <Description>: Assigns a task.\n"
@@ -289,10 +247,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /addadmin, /deladmin, /listadmins, /removemember, /graveyard, /botstatus, /pause, /restart, /super_reset\n\n"
             )
             
-            # If standard Admin is talking, provide config editing capabilities.
             if is_adm and not is_sup:
                 system_prompt += (
-                    "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI limit), "
+                    "If the admin asks to configure or change a hidden setting, "
                     "output a JSON block at the very end of your response exactly like this:\n"
                     "```json\n"
                     '[{"key": "dm_length", "value": "800"}, {"key": "star_quota", "value": "5"}]\n'
@@ -300,18 +257,17 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                     "Valid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.\n"
                 )
             
-            # ROOT MODE: If the Super Admin is asking, enable live modification powers!
             if is_sup:
                 system_prompt += (
                     "⚠️ ROOT LEVEL PRIVILEGES DETECTED ⚠️\n"
                     "You are communicating with the Super Owner. You have authorization to hotpatch the runtime, write files, modify codes, and execute features dynamically.\n"
-                    "To modify, create, or rewrite a Python module file (such as cmd_user.py or cmd_admin.py), output a JSON list block containing the file writes:\n"
+                    "To modify, create, or rewrite any Python module file, output a JSON list block containing the file writes:\n"
                     "```json\n"
                     "[\n"
                     "  {\n"
                     '    "action": "write_file",\n'
                     '    "filepath": "cmd_user.py",\n'
-                    '    "content": "Full contents of the file as string..."\n'
+                    '    "content": "Full contents of the file..."\n'
                     "  }\n"
                     "]\n"
                     "```\n"
@@ -363,7 +319,6 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                                 if filepath and content:
                                     with open(filepath, "w", encoding="utf-8") as f:
                                         f.write(content)
-                                    # Dynamically reload module if already loaded in system memory
                                     mod_name = filepath.replace(".py", "")
                                     if mod_name in sys.modules:
                                         importlib.reload(sys.modules[mod_name])
@@ -373,7 +328,6 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                             elif action == "hotpatch" and is_sup:
                                 code_str = c.get("code")
                                 if code_str:
-                                    # Run python payload on current bot runtime
                                     local_vars = {
                                         "update": update,
                                         "context": context,
@@ -404,29 +358,29 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             try:
                 await send_md_chunks(context.bot, update.effective_user.id, final_reply, prefix)
                 await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{limit_msg}", parse_mode="Markdown")
-            except Exception:
+            except:
                 try: await temp.edit_text("❌ Please open a private chat with me first so I can DM you.")
-                except Exception: pass
+                except: pass
                 if not is_adm:
                     async with pool.acquire() as conn: 
                         await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
         else: 
             try:
                 await temp.delete()
-            except Exception:
+            except:
                 pass
             await send_md_chunks(context.bot, update.effective_chat.id, final_reply, inline_prefix, f"\n\n{limit_msg}")
                 
     except asyncio.TimeoutError:
         try: await temp.edit_text("❌ **AI Timeout:** I thought about it for 120 seconds but couldn't find an answer in time. Please try a simpler request.")
-        except Exception: pass
+        except: pass
         if not is_adm:
             async with pool.acquire() as conn: 
                 await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
     except Exception as e:
         if "429" in str(e).lower() or "quota" in str(e).lower():
             try: await temp.edit_text("❌ Gemini API credit limit depleted (429). Admins notified.")
-            except Exception: pass
+            except: pass
             async with pool.acquire() as conn:
                 admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
                 super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
@@ -434,14 +388,53 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             if super_id: admin_ids.add(super_id)
             for uid in admin_ids:
                 try: await context.bot.send_message(uid, "⚠️ **CRITICAL:** Gemini API limit depleted.", parse_mode="Markdown")
-                except Exception: pass
+                except: pass
         else: 
             try: await temp.edit_text(f"❌ AI Error: {e}")
-            except Exception: pass
+            except: pass
             
         if not is_adm:
             async with pool.acquire() as conn: 
                 await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
+
+async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
+    """
+    Splits long messages into safe sizes (<4096 chars) and sends them sequentially,
+    safely handling markdown entity parse crashes chunk-by-chunk.
+    """
+    limit = 3800
+    full = f"{prefix}{text}{suffix}"
+    
+    if len(full) <= limit:
+        try:
+            await bot.send_message(chat_id, full, parse_mode="Markdown")
+        except:
+            await bot.send_message(chat_id, full)
+        return
+
+    chunks = []
+    current_chunk = prefix
+    
+    for line in text.split('\n'):
+        if len(current_chunk) + len(line) + 1 > limit:
+            chunks.append(current_chunk)
+            current_chunk = line + "\n"
+        else:
+            current_chunk += line + "\n"
+            
+    if len(current_chunk) + len(suffix) > limit:
+        chunks.append(current_chunk)
+        chunks.append(suffix)
+    else:
+        current_chunk += suffix
+        chunks.append(current_chunk)
+
+    for chunk in chunks:
+        if chunk.strip():
+            try:
+                await bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            except:
+                await bot.send_message(chat_id, chunk)
 
 async def ask_gemini(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_gemini_request(update, context, " ".join(context.args), False)
