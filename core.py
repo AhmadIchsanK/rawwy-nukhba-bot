@@ -73,6 +73,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("delbday_batch", "🎂 Batch Delete Birthdays"),
             BotCommand("checkquota", "⚙️ Audit Star Quotas"),
             BotCommand("admin_stars", "⚙️ Modify Star Quotas"),
+            BotCommand("setweeklyquota", "⚙️ Set default Star Quota"),
             BotCommand("checklimit", "⚙️ Audit AI Limits"),
             BotCommand("admin_limit", "⚙️ Modify AI Limits"),
             BotCommand("setweeklylimit", "⚙️ Set default AI limit"),
