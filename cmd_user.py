@@ -35,7 +35,6 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_kb = [[InlineKeyboardButton("✅ Going", callback_data=f"rsvp_{e_id}_Going"), InlineKeyboardButton("❌ Not Going", callback_data=f"rsvp_{e_id}_Not Going")]]
     await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
     
-    # Import locally to avoid circular dependencies
     from cmd_admin import event_reminder, unpin_event
     context.job_queue.run_once(event_reminder, when=e_time - datetime.timedelta(minutes=rem), chat_id=update.effective_chat.id, data={"id": e_id, "title": title}, name=f"event_rem_{e_id}")
     context.job_queue.run_once(unpin_event, when=e_time, data={"chat_id": update.effective_chat.id, "msg_id": msg.message_id}, name=f"event_unpin_{e_id}")
@@ -273,6 +272,29 @@ async def total_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: await update.message.reply_text(f"✅ 🌟 Impressive! You have collected a total of **{pts} RAWWY Stars** all-time.", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"❌ System Error: {e}")
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    try:
+        async with pool.acquire() as conn:
+            monthly = await conn.fetch("SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 5")
+            all_time = await conn.fetch("SELECT username, all_time_points FROM kudos WHERE all_time_points > 0 ORDER BY all_time_points DESC LIMIT 5")
+            
+        msg = "🏆 **RAWWY Stars Leaderboard** 🏆\n\n"
+        msg += "📅 **This Month's Top Stars:**\n"
+        if monthly:
+            for i, r in enumerate(monthly): msg += f"{i+1}. @{r['username']} - {r['monthly_points']} Stars\n"
+        else: msg += "No stars given this month yet.\n"
+        
+        msg += "\n🌟 **All-Time Top Stars:**\n"
+        if all_time:
+            for i, r in enumerate(all_time): msg += f"{i+1}. @{r['username']} - {r['all_time_points']} Stars\n"
+        else: msg += "No stars given all time yet.\n"
+        
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
 # --- 4/ LIBRARY ---
 async def add_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
