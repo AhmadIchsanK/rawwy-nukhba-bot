@@ -1,4 +1,4 @@
-import datetime, logging, json, re, asyncio
+import datetime, logging, json, re, asyncio, sys, os, importlib
 from google import genai
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
@@ -230,6 +230,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
     
     try:
         is_adm = await is_bot_admin(username, pool)
+        is_sup = await is_super(username)
         async with pool.acquire() as conn:
             limit_str = await conn.fetchval("SELECT value FROM config WHERE key='gemini_weekly_limit'")
             limit = int(limit_str) if limit_str and limit_str.isdigit() else 20
@@ -258,74 +259,38 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "🟢 USER COMMANDS:\n"
                 "- /gemini <prompt>: Solves general problems, translates text, or writes content. (Consumes weekly AI limit).\n"
                 "- /ask <query>: Queries you (this bot) about your features, settings, and commands. (Consumes weekly AI limit).\n"
-                "- /newevent <Title> , <MM/DD/YYYY HH.MM> , <RemMins>: Schedules a team event with interactive RSVP (Going/Not Going) buttons, pins it in group chats, and alerts members at RemMins before start.\n"
+                "- /newevent <Title> , <MM/DD/YYYY HH.MM> , <RemMins>: Schedules a team event.\n"
                 "- /events: Lists the next 5 upcoming scheduled events.\n"
-                "- /poll <Question> , <Opt1> , <Opt2> , ...: Launches an interactive group poll with custom options (supports regular or quiz format, anon settings, single/multi answers, and closing periods).\n"
-                "- /thanks: Award 1 RAWWY Star by REPLYING directly to another user's message. (Consumes 1 Star Quota from you).\n"
+                "- /poll <Question> , <Opt1> , ...: Launches an interactive group poll.\n"
+                "- /thanks: Award 1 RAWWY Star by REPLYING directly to another user's message.\n"
                 "- /myquota: Checks your remaining Star Quotas left before Monday reset.\n"
                 "- /mystar: Shows cumulative RAWWY Stars earned this current month.\n"
                 "- /totalstar: Shows cumulative RAWWY Stars earned all-time.\n"
-                "- /leaderboard: Displays top Star earners of the month and all-time.\n"
-                "- /addlib <Name> , <Content> [, private]: Saves an asset to the shared team database. Append ', private' to deliver content strictly via DM.\n"
+                "- /leaderboard: Displays top Star earners.\n"
+                "- /addlib <Name> , <Content> [, private]: Saves an asset to the shared team database.\n"
                 "- /editlib <Name> , <Content>: Modifies library assets you originally added.\n"
                 "- /dellib <Name>: Removes library assets you added.\n"
-                "- /getlib <Name>: Pulls a saved library asset. Private assets are securely delivered to your Direct Messages.\n"
+                "- /getlib <Name>: Pulls a saved library asset.\n"
                 "- /library: Lists all browseable library assets.\n"
-                "- /assign <@username> , <Minutes> , <Description>: Assigns a task with a firm deadline between 60 to 480 minutes. Pings assignee 10 mins before time expires.\n"
-                "- /complete <ID>: Marks an assigned task as finished. Only runnable by the assignee.\n"
+                "- /assign <@username> , <Minutes> , <Description>: Assigns a task.\n"
+                "- /complete <ID>: Marks an assigned task as finished.\n"
                 "- /mytasks: Lists your active pending tasks.\n"
-                "- /away <Reason> , <MM/DD/YYYY HH.MM>: Sets away status. Auto-notifies other users when mentioned and collects missed mentions.\n"
-                "- /back: Manually returns you to Available and triggers a direct message containing missed mentions.\n"
-                "- /feedback <Description>: Files team feedback or bug reports securely.\n\n"
+                "- /away <Reason> , <MM/DD/YYYY HH.MM>: Sets away status.\n"
+                "- /back: Manually returns you to Available.\n"
+                "- /feedback <Description>: Files team feedback.\n\n"
                 "🔐 ADMIN COMMANDS (Admins & Super Owners Only):\n"
-                "- /addbday <@username> , <MM/DD>: Registers a member's birthday.\n"
-                "- /editbday <@username> , <MM/DD>: Modifies a birthday entry.\n"
-                "- /delbday <@username>: Removes a birthday entry.\n"
-                "- /setbdaychannel: Locks current group chat to receive automated birthday wishes.\n"
-                "- /setbdaytime <HH:MM>: Configures daily time (WIB timezone) for birthday alerts.\n"
-                "- /bdayconfig: Shows birthday alert group channel ID and alert time configurations.\n"
-                "- /listbdays: Lists all registered birthdays.\n"
-                "- /addbday_batch: Batch inputs multiple birthdays from a new-line separated list.\n"
-                "- /delbday_batch: Batch deletes multiple birthdays.\n"
-                "- /checkquota [all | @username]: Audits remaining Star Quotas.\n"
-                "- /admin_stars <@username> , [quota/monthly/total] , [set/add/sub] , Amount: Modifies user star records or quota.\n"
-                "- /setweeklyquota <Amount>: Sets the global default weekly Star Quota.\n"
-                "- /checklimit [all | @username]: Audits remaining weekly AI limit.\n"
-                "- /admin_limit <@username> , [set/add/sub] , Amount: Modifies a user's AI Limit.\n"
-                "- /setweeklylimit <Amount>: Sets the global default weekly AI limit.\n"
-                "- /attendance: Displays a real-time list of all users currently Away and scheduled return times.\n"
-                "- /forceback <@username>: Forces a user to return from Away status early.\n"
-                "- /grouptasks: Displays all active pending tasks globally.\n"
-                "- /cancelevent <ID>: Cancels and deletes scheduled events.\n"
-                "- /canceltask <ID>: Deletes assigned tasks.\n"
-                "- /cancelpoll: Stops and closes a live poll (Run as REPLY to the poll).\n"
-                "- /addlib_batch: Bulk loads library assets.\n"
-                "- /dellib_batch: Bulk deletes library assets.\n"
-                "- /schedule <ChatID/all> , <once/daily/weekly> , <Time> , <yes/no> , <Message>:\n"
-                "  Schedules automatic announcements. Time Formats: 'once' (MM/DD/YYYY HH.MM), 'daily' (HH.MM), 'weekly' (<0-6> HH.MM, where 0=Monday). Toggle mention to 'yes' (or 'no') to tag all active users.\n"
-                "- /listschedules: View all automated schedules.\n"
-                "- /delschedule <ID>: Removes a schedule.\n"
-                "- /announce <ChatID/all> , <Message>: Dispatches broadcasts.\n"
-                "- /editannounce <ID> , <New Message>: Updates active broadcasts.\n"
-                "- /delannounce <ID>: Drops broadcasts.\n"
-                "- /groupid: Retrieves current Group ID or lists tracked groups.\n"
-                "- /auditlog: Outputs a diagnostics audit report.\n"
-                "- /feedbacklist: Displays team feedback from the last 7 days.\n"
-                "- /analyze_feedback [MM/DD/YYYY | MM/DD/YYYY , MM/DD/YYYY]: Uses AI to summarize recent feedback backlog into brief Problem, Suggestion, Next steps.\n"
-                "- /alltimefeedback: Reviews archived historical feedback archives.\n\n"
-                "👑 SUPER OWNER COMMANDS (Super Owners Only):\n"
-                "- /addadmin <@username>: Promotes a user to Bot Admin.\n"
-                "- /deladmin <@username>: Demotes an Admin back to standard user.\n"
-                "- /listadmins: Lists all current administrators.\n"
-                "- /removemember <@username>: Offboards a member, moves metadata safely to graveyard, and archives records.\n"
-                "- /graveyard: Displays offboarded users.\n"
-                "- /botstatus: Displays global database records and tracked metrics.\n"
-                "- /pause: Puts the bot into maintenance mode.\n"
-                "- /restart: Restores bot functionality from maintenance mode.\n"
-                "- /super_reset <stars/tasks/library/events/away/birthdays/all>: Triggers structural factory wipe.\n\n"
-                "Answer the user clearly based on this complete manual.\n"
+                "- /addbday, /editbday, /delbday, /setbdaychannel, /setbdaytime, /bdayconfig, /listbdays\n"
+                "- /checkquota, /admin_stars, /setweeklyquota\n"
+                "- /checklimit, /admin_limit, /setweeklylimit\n"
+                "- /attendance, /forceback, /grouptasks, /cancelevent, /canceltask, /cancelpoll\n"
+                "- /schedule, /listschedules, /delschedule, /announce, /editannounce, /delannounce, /groupid, /auditlog\n"
+                "- /feedbacklist, /analyze_feedback, /alltimefeedback\n\n"
+                "👑 SUPER OWNER EXCLUSIVES (Super Owners Only):\n"
+                "- /addadmin, /deladmin, /listadmins, /removemember, /graveyard, /botstatus, /pause, /restart, /super_reset\n\n"
             )
-            if is_adm:
+            
+            # If standard Admin is talking, provide config editing capabilities.
+            if is_adm and not is_sup:
                 system_prompt += (
                     "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI limit), "
                     "output a JSON block at the very end of your response exactly like this:\n"
@@ -334,7 +299,35 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                     "```\n"
                     "Valid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.\n"
                 )
-            system_prompt += "User Question: " + prompt
+            
+            # ROOT MODE: If the Super Admin is asking, enable live modification powers!
+            if is_sup:
+                system_prompt += (
+                    "⚠️ ROOT LEVEL PRIVILEGES DETECTED ⚠️\n"
+                    "You are communicating with the Super Owner. You have authorization to hotpatch the runtime, write files, modify codes, and execute features dynamically.\n"
+                    "To modify, create, or rewrite a Python module file (such as cmd_user.py or cmd_admin.py), output a JSON list block containing the file writes:\n"
+                    "```json\n"
+                    "[\n"
+                    "  {\n"
+                    '    "action": "write_file",\n'
+                    '    "filepath": "cmd_user.py",\n'
+                    '    "content": "Full contents of the file as string..."\n'
+                    "  }\n"
+                    "]\n"
+                    "```\n"
+                    "To dynamically register a handler, run a command, or update live objects in memory without a container reboot, output a hotpatch:\n"
+                    "```json\n"
+                    "[\n"
+                    "  {\n"
+                    '    "action": "hotpatch",\n'
+                    '    "code": "from telegram.ext import CommandHandler\\nimport cmd_user\\napp.add_handler(CommandHandler(\'newcmd\', cmd_user.handler_func))"\n'
+                    "  }\n"
+                    "]\n"
+                    "```\n"
+                    "Provide a complete, cleanly written response explaining what changes were made. You are authorized to carry out any software requested."
+                )
+                
+            system_prompt += "\nUser Question: " + prompt
         else:
             system_prompt = prompt
             
@@ -345,19 +338,58 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         )
         reply = response.text
         
+        # --- 1. FILE WRITE & HOTPATCH INTERCEPTOR (ROOT ENGINE) ---
         config_msg = ""
-        if is_bot_query and is_adm:
+        if is_bot_query:
             match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
+                    applied_actions = []
+                    
                     async with pool.acquire() as conn:
                         for c in configs:
-                            await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
+                            action = c.get("action")
+                            
+                            # Standard configuration edit (available to Admins & Supers)
+                            if not action and "key" in c and is_adm:
+                                await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
+                                applied_actions.append(f"Config '{c['key']}' set to '{c['value']}'")
+                            
+                            # Hard-write to Filesystem (Super Admin only!)
+                            elif action == "write_file" and is_sup:
+                                filepath = c.get("filepath")
+                                content = c.get("content")
+                                if filepath and content:
+                                    with open(filepath, "w", encoding="utf-8") as f:
+                                        f.write(content)
+                                    # Dynamically reload module if already loaded in system memory
+                                    mod_name = filepath.replace(".py", "")
+                                    if mod_name in sys.modules:
+                                        importlib.reload(sys.modules[mod_name])
+                                    applied_actions.append(f"Written file '{filepath}' and reloaded module.")
+                            
+                            # Active process hotpatch (Super Admin only!)
+                            elif action == "hotpatch" and is_sup:
+                                code_str = c.get("code")
+                                if code_str:
+                                    # Run python payload on current bot runtime
+                                    local_vars = {
+                                        "update": update,
+                                        "context": context,
+                                        "pool": pool,
+                                        "bot": context.bot,
+                                        "app": context.application
+                                    }
+                                    exec(code_str, globals(), local_vars)
+                                    applied_actions.append("Active runtime hotpatch executed successfully.")
+                                    
                     reply = re.sub(r'```json\n(.*?)\n```', '', reply, flags=re.DOTALL).strip()
-                    config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
+                    if applied_actions:
+                        config_msg = "\n\n⚙️ **Super System Operations Executed:**\n" + "\n".join([f"• {a}" for a in applied_actions])
                 except Exception as e:
-                    logger.error(f"Config parse error: {e}")
+                    logger.error(f"Root operation error: {e}")
+                    config_msg = f"\n\n⚠️ **Root Operation Failure:** {e}"
         
         async with pool.acquire() as conn:
             dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
