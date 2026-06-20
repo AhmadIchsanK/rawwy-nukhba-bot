@@ -3,7 +3,7 @@ from google import genai
 from telegram import Update
 from telegram.ext import ContextTypes
 from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu
-import cmd_user  # Used to pull process_return for the global tracker
+import cmd_user 
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📚 *5/ Library*\n`/addlib Name , Content` - Save an asset.\n`/editlib Name , Content` - Edit your asset.\n`/dellib Name` - Delete your asset.\n`/getlib Name` - Pull an asset.\n`/library` - Browse everything.\n\n"
         "⚡ *6/ Tasks*\n`/assign @user , 60 , Task description` - Deadline in 60-480m.\n`/complete ID` - Close task.\n`/mytasks` - View your active tasks.\n\n"
         "🏖️ *7/ Away Mode*\n`/away Reason , MM/DD/YYYY HH.MM` - Set away status.\n`/back` - Return early and receive missed mentions.\n\n"
-        "🐛 *Extras*\n`/bugreport Your issue here`"
+        "💡 *Extras*\n`/feedback Your feedback or bug here`"
     )
 
     is_adm = await is_bot_admin(username, pool)
@@ -39,7 +39,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/delbday @user`\n`/setbdaychannel` (Run in target group)\n`/setbdaytime HH:MM`\n`/bdayconfig` | `/listbdays`\n`/addbday_batch` | `/delbday_batch`\n\n"
             "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n`/checkgeminiquota all` or `@user`\n`/admin_gemini @user , [set/add/sub] , Amount`\n`/setweeklylimit 30`\n\n"
             "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n`/addlib_batch` | `/dellib_batch`\n\n"
-            "📢 *System*\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now."
+            "📢 *System*\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now.\n`/analyze_feedback` - AI feedback analysis."
         )
         if await is_super(username):
             help_text += (
@@ -155,15 +155,15 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "System", "Error", f"Global tracker exception: {e}")
 
-async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = " ".join(context.args)
-    if not text: return await update.message.reply_text("❌ Please type: `/bugreport [explain issue here]`", parse_mode="Markdown")
+    if not text: return await update.message.reply_text("❌ Please type: `/feedback [explain issue or request]`", parse_mode="Markdown")
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     try:
         async with pool.acquire() as conn: await conn.execute("INSERT INTO bug_reports (username, report) VALUES ($1, $2)", username, text)
-        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Bug Report", "Success", f"Bug reported by @{username}")
-        await update.message.reply_text("✅ 🐛 Bug securely filed for review.")
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "Feedback", "Success", f"Feedback submitted by @{username}")
+        await update.message.reply_text("✅ 💡 Feedback securely filed for analysis.")
     except Exception as e:
         await update.message.reply_text(f"❌ System Error: {e}")
 
