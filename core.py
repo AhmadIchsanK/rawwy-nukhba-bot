@@ -65,7 +65,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         BotCommand("mytasks", "⚡ View your active tasks"),
         BotCommand("away", "🏖️ Set away status"),
         BotCommand("back", "🏖️ Return to available"),
-        BotCommand("bugreport", "🐛 Report an issue")
+        BotCommand("feedback", "💡 Submit Feedback")
     ]
     
     if is_adm:
@@ -97,9 +97,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("delannounce", "📢 Delete Broadcast"),
             BotCommand("groupid", "📢 Check Chat IDs"),
             BotCommand("auditlog", "📢 Pull diagnostics log"),
-            BotCommand("groupid", "📢 Check Chat IDs"),
-            BotCommand("auditlog", "📢 Pull diagnostics log"),
-            BotCommand("analyze_feedback", "🤖 AI Bug/Feature Analysis")
+            BotCommand("analyze_feedback", "🤖 AI Feedback Analysis")
         ])
     if is_sup:
         base_cmds.extend([
@@ -148,13 +146,14 @@ async def init_db(app: Application):
         await conn.execute('''CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
         await conn.execute('''CREATE TABLE IF NOT EXISTS announcement_messages (announcement_id INTEGER, chat_id BIGINT, message_id BIGINT);''')
         
-        # Split safety migrations so they don't block each other
-        try:
-            await conn.execute('''ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;''')
+        # Migrations
+        try: await conn.execute('''ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;''')
         except Exception: pass
         
-        try:
-            await conn.execute('''ALTER TABLE users ADD COLUMN gemini_quota INT DEFAULT 20;''')
+        try: await conn.execute('''ALTER TABLE users ADD COLUMN gemini_quota INT DEFAULT 20;''')
+        except Exception: pass
+        
+        try: await conn.execute('''ALTER TABLE bug_reports ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();''')
         except Exception: pass
 
     default_cmds = [
@@ -176,7 +175,8 @@ async def init_db(app: Application):
         BotCommand("complete", "⚡ Mark task complete"),
         BotCommand("mytasks", "⚡ View your active tasks"),
         BotCommand("away", "🏖️ Set away status"),
-        BotCommand("back", "🏖️ Return to available")
+        BotCommand("back", "🏖️ Return to available"),
+        BotCommand("feedback", "💡 Submit Feedback")
     ]
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
     await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllPrivateChats())
