@@ -36,40 +36,53 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
         except:
             pass
 
+# ----------------------------------------------------
+# 🛡️ DYNAMIC AUTODISCOVERY FALLBACK BRIDGES
+# ----------------------------------------------------
 async def dynamic_thanks_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely discovers and runs the stars handler under any varying function names inside cmd_user."""
     for attr in ['thanks_command', 'give_star', 'send_star', 'cmd_thanks', 'thanks']:
-        if hasattr(cmd_user, attr):
-            return await getattr(cmd_user, attr)(update, context)
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Star command handler configuration mismatch inside cmd_user module.")
 
 async def dynamic_quota_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely discovers and runs the star quota lookup under any varying function names inside cmd_user."""
     for attr in ['my_quota', 'check_my_quota', 'view_my_quota', 'view_quota', 'quota_command', 'quota']:
-        if hasattr(cmd_user, attr):
-            return await getattr(cmd_user, attr)(update, context)
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Quota command handler configuration mismatch inside cmd_user module.")
 
 async def dynamic_mystar_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely discovers and runs the monthly stars tally under any varying function names inside cmd_user."""
     for attr in ['my_stars', 'check_my_stars', 'view_my_stars', 'view_stars', 'stars_command', 'mystar', 'my_star']:
-        if hasattr(cmd_user, attr):
-            return await getattr(cmd_user, attr)(update, context)
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Monthly star status checker mismatch inside cmd_user module.")
 
 async def dynamic_totalstar_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely discovers and runs the all-time stars tally under any varying function names inside cmd_user."""
     for attr in ['total_stars', 'check_total_stars', 'view_total_stars', 'totalstar', 'total_star']:
-        if hasattr(cmd_user, attr):
-            return await getattr(cmd_user, attr)(update, context)
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ All-time star status checker mismatch inside cmd_user module.")
 
 async def dynamic_leaderboard_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Safely discovers and runs the leaderboard viewer under any varying function names inside cmd_user."""
     for attr in ['leaderboard', 'view_leaderboard', 'check_leaderboard', 'cmd_leaderboard']:
-        if hasattr(cmd_user, attr):
-            return await getattr(cmd_user, attr)(update, context)
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Leaderboard command handler configuration mismatch inside cmd_user module.")
+
+async def dynamic_addlib_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for attr in ['add_lib', 'add_library', 'save_library', 'cmd_addlib']:
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Library storage command configuration mismatch inside cmd_user module.")
+
+async def dynamic_editlib_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for attr in ['edit_lib', 'edit_library', 'modify_library', 'cmd_editlib']:
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Library modification command configuration mismatch inside cmd_user module.")
+
+async def dynamic_dellib_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for attr in ['del_lib', 'delete_lib', 'del_library', 'delete_library', 'cmd_dellib']:
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Library deletion command configuration mismatch inside cmd_user module.")
+
+async def dynamic_getlib_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for attr in ['get_lib', 'get_library', 'fetch_library', 'cmd_getlib']:
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Library asset retrieval configuration mismatch inside cmd_user module.")
 
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
@@ -117,13 +130,13 @@ def main():
     app.add_handler(CommandHandler("myquota", dynamic_quota_fallback))
     app.add_handler(CommandHandler("mystar", dynamic_mystar_fallback))
     app.add_handler(CommandHandler("totalstar", dynamic_totalstar_fallback))
-    # Secure fallback configuration mapping for /leaderboard
     app.add_handler(CommandHandler("leaderboard", dynamic_leaderboard_fallback))
     
-    app.add_handler(CommandHandler("addlib", cmd_user.add_library))
-    app.add_handler(CommandHandler("editlib", cmd_user.edit_library))
-    app.add_handler(CommandHandler("dellib", cmd_user.del_library))
-    app.add_handler(CommandHandler("getlib", cmd_user.get_library))
+    # Secure fallbacks for Team Asset library
+    app.add_handler(CommandHandler("addlib", dynamic_addlib_fallback))
+    app.add_handler(CommandHandler("editlib", dynamic_editlib_fallback))
+    app.add_handler(CommandHandler("dellib", dynamic_dellib_fallback))
+    app.add_handler(CommandHandler("getlib", dynamic_getlib_fallback))
     app.add_handler(CommandHandler("library", cmd_user.browse_library))
     
     app.add_handler(CommandHandler("assign", cmd_user.assign_task))
