@@ -7,6 +7,48 @@ import cmd_user
 
 logger = logging.getLogger(__name__)
 
+async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
+    """
+    Splits long messages into safe sizes (<4096 chars) and sends them sequentially,
+    safely handling markdown entity parse crashes chunk-by-chunk.
+    """
+    limit = 3800
+    full = f"{prefix}{text}{suffix}"
+    
+    # If the message is already within safe limits, send it directly
+    if len(full) <= limit:
+        try:
+            await bot.send_message(chat_id, full, parse_mode="Markdown")
+        except Exception:
+            await bot.send_message(chat_id, full)
+        return
+
+    # Split message into chunks safely
+    chunks = []
+    current_chunk = prefix
+    
+    for line in text.split('\n'):
+        if len(current_chunk) + len(line) + 1 > limit:
+            chunks.append(current_chunk)
+            current_chunk = line + "\n"
+        else:
+            current_chunk += line + "\n"
+            
+    if len(current_chunk) + len(suffix) > limit:
+        chunks.append(current_chunk)
+        chunks.append(suffix)
+    else:
+        current_chunk += suffix
+        chunks.append(current_chunk)
+
+    # Deliver each chunk sequentially
+    for chunk in chunks:
+        if chunk.strip():
+            try:
+                await bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            except Exception:
+                await bot.send_message(chat_id, chunk)
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -58,7 +100,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, help_text, parse_mode="Markdown")
         if update.effective_chat.type != "private":
             await update.message.reply_text("✅ I have securely sent the manual to your Direct Messages!")
-    except:
+    except Exception:
         if update.effective_chat.type != "private":
             await update.message.reply_text("❌ I cannot send you a DM yet. Please start a private chat with me first!")
 
@@ -87,19 +129,19 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
                 await context.bot.send_message(chat.id, "❌ **Access Denied.** I am a private enterprise system. Leaving chat.")
                 await context.bot.leave_chat(chat.id)
                 await log_action(pool, update.effective_user.id, chat.id, "Security", "Warning", f"Unauthorized invite by @{inviter}")
-            except: pass
+            except Exception: pass
             return
             
         async with pool.acquire() as conn:
             await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
         
         try: await context.bot.send_message(chat.id, "✅ **Authorization confirmed.** [RW] Nukhba Manager is locked in and syncing data.")
-        except: pass
+        except Exception: pass
         
         adm_msg = f"✅ **Bot Joined Group**\nGroup Name: {chat.title}\nGroup ID: `{chat.id}`\nTime: {now_str}"
         for uid in admin_ids:
             try: await context.bot.send_message(uid, adm_msg, parse_mode="Markdown")
-            except: pass
+            except Exception: pass
             
         await log_action(pool, update.effective_user.id, chat.id, "System", "Success", "Bot joined group successfully.")
         
@@ -110,7 +152,7 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
         adm_msg = f"⚠️ **Bot Left Group**\nGroup Name: {chat.title}\nGroup ID: `{chat.id}`\nTime: {now_str}"
         for uid in admin_ids:
             try: await context.bot.send_message(uid, adm_msg, parse_mode="Markdown")
-            except: pass
+            except Exception: pass
             
         await log_action(pool, update.effective_user.id, chat.id, "System", "Warning", "Bot left or was removed from group.")
 
@@ -142,7 +184,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
                     if uid: await context.bot.send_message(uid, f"✅ {recap_msg}", parse_mode="Markdown")
-                except: pass
+                except Exception: pass
             
             aways = await conn.fetch('SELECT username, reason, end_time, last_notified FROM away_status')
             for a in aways:
@@ -246,10 +288,10 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 "- /addbday_batch: Batch inputs multiple birthdays from a new-line separated list.\n"
                 "- /delbday_batch: Batch deletes multiple birthdays.\n"
                 "- /checkquota [all | @username]: Audits remaining Star Quotas.\n"
-                "- /admin_stars <@username> , [quota/monthly/total] , [set/add/sub] , <Amount>: Modifies user star records or quota.\n"
+                "- /admin_stars <@username> , [quota/monthly/total] , [set/add/sub] , Amount: Modifies user star records or quota.\n"
                 "- /setweeklyquota <Amount>: Sets the global default weekly Star Quota.\n"
                 "- /checklimit [all | @username]: Audits remaining weekly AI limit.\n"
-                "- /admin_limit <@username> , [set/add/sub] , <Amount>: Modifies a user's AI Limit.\n"
+                "- /admin_limit <@username> , [set/add/sub] , Amount: Modifies a user's AI Limit.\n"
                 "- /setweeklylimit <Amount>: Sets the global default weekly AI limit.\n"
                 "- /attendance: Displays a real-time list of all users currently Away and scheduled return times.\n"
                 "- /forceback <@username>: Forces a user to return from Away status early.\n"
@@ -328,37 +370,31 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         
         if len(final_reply) > dm_len and update.effective_chat.type != "private":
             try:
-                try: 
-                    await context.bot.send_message(update.effective_user.id, f"{prefix}{final_reply}", parse_mode="Markdown")
-                except: 
-                    await context.bot.send_message(update.effective_user.id, f"{prefix}{final_reply}") # Crash Fallback
-                
-                try: 
-                    await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{limit_msg}", parse_mode="Markdown")
-                except: 
-                    await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{limit_msg}") # Crash Fallback
-            except Exception as e:
+                await send_md_chunks(context.bot, update.effective_user.id, final_reply, prefix)
+                await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{limit_msg}", parse_mode="Markdown")
+            except Exception:
                 try: await temp.edit_text("❌ Please open a private chat with me first so I can DM you.")
-                except: pass
+                except Exception: pass
                 if not is_adm:
                     async with pool.acquire() as conn: 
                         await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
         else: 
-            try: 
-                await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{limit_msg}", parse_mode="Markdown")
-            except: 
-                await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{limit_msg}") # Crash Fallback
+            try:
+                await temp.delete()
+            except Exception:
+                pass
+            await send_md_chunks(context.bot, update.effective_chat.id, final_reply, inline_prefix, f"\n\n{limit_msg}")
                 
     except asyncio.TimeoutError:
         try: await temp.edit_text("❌ **AI Timeout:** I thought about it for 120 seconds but couldn't find an answer in time. Please try a simpler request.")
-        except: pass
+        except Exception: pass
         if not is_adm:
             async with pool.acquire() as conn: 
                 await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
     except Exception as e:
         if "429" in str(e).lower() or "quota" in str(e).lower():
             try: await temp.edit_text("❌ Gemini API credit limit depleted (429). Admins notified.")
-            except: pass
+            except Exception: pass
             async with pool.acquire() as conn:
                 admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
                 super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
@@ -366,10 +402,10 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             if super_id: admin_ids.add(super_id)
             for uid in admin_ids:
                 try: await context.bot.send_message(uid, "⚠️ **CRITICAL:** Gemini API limit depleted.", parse_mode="Markdown")
-                except: pass
+                except Exception: pass
         else: 
             try: await temp.edit_text(f"❌ AI Error: {e}")
-            except: pass
+            except Exception: pass
             
         if not is_adm:
             async with pool.acquire() as conn: 
