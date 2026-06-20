@@ -84,6 +84,11 @@ async def dynamic_getlib_fallback(update: Update, context: ContextTypes.DEFAULT_
         if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Library asset retrieval configuration mismatch inside cmd_user module.")
 
+async def dynamic_library_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    for attr in ['library', 'browse_library', 'list_library', 'view_library', 'cmd_library']:
+        if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
+    await update.message.reply_text("⚠️ Main library viewing layout configuration mismatch inside cmd_user module.")
+
 def main():
     """Application factory loop setting up handlers, jobs, and webhook routers."""
     if not BOT_TOKEN:
@@ -132,12 +137,12 @@ def main():
     app.add_handler(CommandHandler("totalstar", dynamic_totalstar_fallback))
     app.add_handler(CommandHandler("leaderboard", dynamic_leaderboard_fallback))
     
-    # Secure fallbacks for Team Asset library
     app.add_handler(CommandHandler("addlib", dynamic_addlib_fallback))
     app.add_handler(CommandHandler("editlib", dynamic_editlib_fallback))
     app.add_handler(CommandHandler("dellib", dynamic_dellib_fallback))
     app.add_handler(CommandHandler("getlib", dynamic_getlib_fallback))
-    app.add_handler(CommandHandler("library", cmd_user.browse_library))
+    # Secure auto-discovery mapping wrapper for /library
+    app.add_handler(CommandHandler("library", dynamic_library_fallback))
     
     app.add_handler(CommandHandler("assign", cmd_user.assign_task))
     app.add_handler(CommandHandler("complete", cmd_user.complete_task))
@@ -220,6 +225,7 @@ def main():
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(cmd_trivia.run_monthly_trivia_reset, time=datetime.time(hour=13, minute=0, tzinfo=WIB))
 
+    # Connect polling loops
     logger.info("🚀 [RW] Nukhba Manager initialized. Starting event polling loops...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
