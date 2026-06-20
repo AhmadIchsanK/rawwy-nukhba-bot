@@ -101,6 +101,7 @@ def main():
     app.add_handler(CommandHandler("admin_limit", cmd_admin.admin_limit))
     
     app.add_handler(CommandHandler("setweeklylimit", cmd_admin.set_weekly_limit))
+    app.add_handler(CommandHandler("setweeklyquota", cmd_admin.set_weekly_quota))
     app.add_handler(CommandHandler("announce", cmd_admin.announce))
     app.add_handler(CommandHandler("editannounce", cmd_admin.edit_announce))
     app.add_handler(CommandHandler("delannounce", cmd_admin.del_announce))
