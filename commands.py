@@ -1,176 +1,12 @@
-import logging, datetime, pytz, os, asyncpg
-from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters, ContextTypes
+import datetime, logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 
-# --- CONFIGURATION ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-DATABASE_URL = os.getenv("DATABASE_URL")
-SUPER_OWNER = os.getenv("SUPER_OWNER", "AdminUsername").replace("@", "").lower()
-WIB = pytz.timezone('Asia/Jakarta')
+# Import the necessary tools from your new modules
+from core import WIB, SUPER_OWNER, is_super, is_bot_admin, delete_cmd, log_action, update_user_menu
+from crons import generate_audit_report, schedule_bday_job
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# --- HELPERS & AUTH ---
-async def is_super(username: str) -> bool:
-    if not username: return False
-    return username.lower() == SUPER_OWNER
-
-async def is_bot_admin(username: str, pool) -> bool:
-    if await is_super(username): return True
-    if not username: return False
-    async with pool.acquire() as conn:
-        res = await conn.fetchrow('SELECT username FROM bot_admins WHERE username=$1', username.lower())
-        return bool(res)
-
-async def delete_cmd(update: Update):
-    if update.effective_chat.type != "private":
-        try: await update.message.delete()
-        except: pass
-
-async def log_action(pool, user_id: int, chat_id: int, action_type: str, status: str, text: str):
-    try:
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO audit_logs (user_id, chat_id, action_type, status, log_text) VALUES ($1, $2, $3, $4, $5)",
-                user_id, chat_id, action_type, status, text
-            )
-    except Exception as e:
-        logger.error(f"Failed to log action: {e}")
-
-# --- DYNAMIC MENU BUILDER ---
-async def update_user_menu(user_id: int, username: str, pool, bot):
-    is_adm = await is_bot_admin(username, pool)
-    is_sup = await is_super(username)
-    
-    base_cmds = [
-        BotCommand("help", "📖 View Nukhba Manual"),
-        BotCommand("newevent", "📅 Schedule an event"),
-        BotCommand("events", "📅 View upcoming events"),
-        BotCommand("poll", "📊 Interactive Team Poll"),
-        BotCommand("thanks", "🌟 Give a Star (Reply)"),
-        BotCommand("myquota", "🌟 Check Star Quota left"),
-        BotCommand("mystar", "🌟 Monthly Stars earned"),
-        BotCommand("totalstar", "🌟 All-time Stars earned"),
-        BotCommand("addlib", "📚 Save a library asset"),
-        BotCommand("editlib", "📚 Edit your asset"),
-        BotCommand("dellib", "📚 Delete your asset"),
-        BotCommand("getlib", "📚 Retrieve an asset"),
-        BotCommand("library", "📚 Browse the Library"),
-        BotCommand("assign", "⚡ Assign a task"),
-        BotCommand("complete", "⚡ Mark task complete"),
-        BotCommand("mytasks", "⚡ View your active tasks"),
-        BotCommand("away", "🏖️ Set away status"),
-        BotCommand("back", "🏖️ Return to available"),
-        BotCommand("bugreport", "🐛 Report an issue")
-    ]
-    
-    if is_adm:
-        base_cmds.extend([
-            BotCommand("addbday", "🎂 Add user birthday"),
-            BotCommand("editbday", "🎂 Edit user birthday"),
-            BotCommand("delbday", "🎂 Remove a birthday"),
-            BotCommand("addbday_batch", "🎂 Batch Add Birthdays"),
-            BotCommand("delbday_batch", "🎂 Batch Delete Birthdays"),
-            BotCommand("listbdays", "🎂 View all birthdays"),
-            BotCommand("setbdaychannel", "⚙️ Set Group for Bdays"),
-            BotCommand("setbdaytime", "⚙️ Set Alert Time (HH:MM)"),
-            BotCommand("bdayconfig", "⚙️ Check Bday Setup"),
-            BotCommand("attendance", "⚙️ View Away vs Available"),
-            BotCommand("forceback", "⚙️ Force stop user away status"),
-            BotCommand("checkquota", "⚙️ Audit user quotas"),
-            BotCommand("admin_stars", "⚙️ Modify user stars"),
-            BotCommand("grouptasks", "⚙️ View group tasks"),
-            BotCommand("cancelevent", "⚙️ Cancel Event"),
-            BotCommand("canceltask", "⚙️ Cancel Task"),
-            BotCommand("cancelpoll", "⚙️ Stop Poll (Reply)"),
-            BotCommand("addlib_batch", "⚙️ Batch Add Assets"),
-            BotCommand("dellib_batch", "⚙️ Batch Delete Assets"),
-            BotCommand("announce", "📢 Send Broadcast"),
-            BotCommand("editannounce", "📢 Edit Broadcast"),
-            BotCommand("delannounce", "📢 Delete Broadcast"),
-            BotCommand("groupid", "📢 Check Chat IDs"),
-            BotCommand("auditlog", "📢 Pull diagnostics log")
-        ])
-    if is_sup:
-        base_cmds.extend([
-            BotCommand("addadmin", "👑 Promote Admin"),
-            BotCommand("deladmin", "👑 Demote Admin"),
-            BotCommand("listadmins", "👑 View Admins"),
-            BotCommand("removemember", "🛑 Offboard User"),
-            BotCommand("graveyard", "🪦 View Graveyard"),
-            BotCommand("botstatus", "📈 Global DB Status"),
-            BotCommand("super_reset", "☢️ Factory Wipe Module")
-        ])
-        
-    try: 
-        await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
-        if is_adm:
-            async with pool.acquire() as conn:
-                groups = await conn.fetch("SELECT chat_id FROM active_groups")
-                for g in groups:
-                    try: await bot.set_my_commands(base_cmds, scope=BotCommandScopeChatMember(chat_id=g['chat_id'], user_id=user_id))
-                    except: pass
-    except: pass
-
-# --- DATABASE SETUP ---
-async def init_db(app: Application):
-    if not DATABASE_URL: return logger.error("DATABASE_URL missing!")
-    app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
-    
-    async with app.bot_data['db_pool'].acquire() as conn:
-        await conn.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, user_id BIGINT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS bot_admins (username TEXT PRIMARY KEY);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS kudos (username TEXT PRIMARY KEY, monthly_points INT DEFAULT 0, all_time_points INT DEFAULT 0, quota INT DEFAULT 3);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS library (name TEXT PRIMARY KEY, content TEXT NOT NULL, added_by TEXT, is_private BOOLEAN DEFAULT FALSE);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS events (id SERIAL PRIMARY KEY, title TEXT NOT NULL, event_time TIMESTAMP WITH TIME ZONE NOT NULL, created_by TEXT, chat_id BIGINT, msg_id BIGINT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS rsvps (event_id INTEGER REFERENCES events(id) ON DELETE CASCADE, username TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY (event_id, username));''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS tasks (id SERIAL PRIMARY KEY, assignee TEXT NOT NULL, task_desc TEXT, status TEXT DEFAULT 'Pending', deadline TIMESTAMP WITH TIME ZONE, assigned_by TEXT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS active_polls (chat_id BIGINT, user_id BIGINT, end_time TIMESTAMP WITH TIME ZONE, PRIMARY KEY(chat_id, user_id));''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS away_status (username TEXT PRIMARY KEY, reason TEXT, end_time TIMESTAMP WITH TIME ZONE, last_notified TIMESTAMP WITH TIME ZONE);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS away_mentions (id SERIAL PRIMARY KEY, away_username TEXT, mentioner TEXT, message TEXT, chat_title TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS birthdays (username TEXT PRIMARY KEY, bday TEXT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS active_groups (chat_id BIGINT PRIMARY KEY, title TEXT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS bot_stats (date DATE PRIMARY KEY, uses INT DEFAULT 0, errors INT DEFAULT 0);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS bug_reports (id SERIAL PRIMARY KEY, username TEXT, report TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS graveyard (username TEXT PRIMARY KEY, offboarded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(), data_dump TEXT);''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, log_text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());''')
-        await conn.execute('''CREATE TABLE IF NOT EXISTS announcement_messages (announcement_id INTEGER, chat_id BIGINT, message_id BIGINT);''')
-        
-        try:
-            await conn.execute('''ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;''')
-        except Exception:
-            pass
-
-    default_cmds = [
-        BotCommand("help", "📖 View Nukhba Manual"),
-        BotCommand("newevent", "📅 Schedule an event"),
-        BotCommand("events", "📅 View upcoming events"),
-        BotCommand("poll", "📊 Interactive Team Poll"),
-        BotCommand("thanks", "🌟 Give a Star (Reply)"),
-        BotCommand("myquota", "🌟 Check Star Quota left"),
-        BotCommand("mystar", "🌟 Monthly Stars earned"),
-        BotCommand("totalstar", "🌟 All-time Stars earned"),
-        BotCommand("addlib", "📚 Save a library asset"),
-        BotCommand("editlib", "📚 Edit your asset"),
-        BotCommand("dellib", "📚 Delete your asset"),
-        BotCommand("getlib", "📚 Retrieve an asset"),
-        BotCommand("library", "📚 Browse the Library"),
-        BotCommand("assign", "⚡ Assign a task"),
-        BotCommand("complete", "⚡ Mark task complete"),
-        BotCommand("mytasks", "⚡ View your active tasks"),
-        BotCommand("away", "🏖️ Set away status"),
-        BotCommand("back", "🏖️ Return to available")
-    ]
-    from telegram import BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
-    await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeDefault())
-    await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllPrivateChats())
-    await app.bot.set_my_commands(default_cmds, scope=BotCommandScopeAllGroupChats())
-    
-    await schedule_bday_job(app)
-    logger.info("✅ Enterprise Database & Scoped Menus Configured!")
 
 # --- CORE INTERFACE ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -224,117 +60,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ **Unknown Command.** Please type `/help` to see valid commands or check with your admin.", parse_mode="Markdown")
-
-# --- CRONS & LOGS ---
-async def generate_audit_report(pool, target_date: datetime.date) -> str:
-    now = datetime.datetime.now(WIB)
-    start_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.min))
-    end_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.max))
-    
-    async with pool.acquire() as conn:
-        active_groups = await conn.fetchval("SELECT COUNT(*) FROM active_groups")
-        away_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Away Status' AND status='Set' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        back_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Away Status' AND status='Removed' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        
-        events_created = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Event Created' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        events_updated = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Event Updated' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        rsvp_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='RSVP' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        
-        ann_sent = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Announcement' AND status='Success' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        ann_failed = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE action_type='Announcement' AND status='Failed' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        
-        sys_errors = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Error' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        sys_warns = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Warning' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
-        
-    msg = f"✅ 🌅 **Daily Diagnostic Audit Report**\nDate: {target_date.strftime('%d/%m/%Y')} | Time: {now.strftime('%H:%M')} WIB\n\n"
-    msg += f"**Groups:**\n• Total Active Groups: {active_groups}\n\n"
-    msg += f"**Users:**\n• Away Count: {away_count}\n• Back Count: {back_count}\n\n"
-    msg += f"**Events:**\n• Created: {events_created}\n• Updated: {events_updated}\n• RSVP Count: {rsvp_count}\n\n"
-    msg += f"**Announcements:**\n• Sent: {ann_sent}\n• Failed: {ann_failed}\n\n"
-    msg += f"**System:**\n• Errors: {sys_errors}\n• Warnings: {sys_warns}"
-    return msg
-
-async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
-    pool = context.bot_data.get('db_pool')
-    target_date = datetime.datetime.now(WIB).date()
-    try:
-        msg = await generate_audit_report(pool, target_date)
-        async with pool.acquire() as conn:
-            admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
-            super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
-        
-        admin_ids = {a['user_id'] for a in admins}
-        if super_id: admin_ids.add(super_id)
-        
-        for uid in admin_ids:
-            try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
-            except: pass
-    except Exception as e:
-        logger.error(f"Failed to run daily morning log: {e}")
-
-async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.datetime.now(WIB)
-    if now.day != 1: return 
-    
-    month_name = (now - datetime.timedelta(days=1)).strftime("%B")
-    pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        top_earner = await conn.fetchrow('SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 1')
-        groups = await conn.fetch('SELECT chat_id FROM active_groups')
-        
-        if top_earner:
-            msg = f"🏆 **Best star earner this month ({month_name}) is @{top_earner['username']}!** 🏆\n\nTotal **{top_earner['monthly_points']} RAWWY Stars** earned. Absolutely incredible work! 🌟 Keep up the amazing momentum, team!"
-            for g in groups:
-                try: await context.bot.send_message(g['chat_id'], msg, parse_mode="Markdown")
-                except: pass
-        await conn.execute("UPDATE kudos SET monthly_points = 0")
-
-async def weekly_quota_reset(context: ContextTypes.DEFAULT_TYPE):
-    pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn: await conn.execute("UPDATE kudos SET quota = 3")
-
-async def schedule_bday_job(app: Application):
-    pool = app.bot_data.get('db_pool')
-    try:
-        async with pool.acquire() as conn:
-            t_val = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'")
-        
-        hour, minute = 10, 0
-        if t_val:
-            try: hour, minute = map(int, t_val.split(':'))
-            except: pass
-            
-        for job in app.job_queue.get_jobs_by_name('bday_cron'):
-            job.schedule_removal()
-            
-        app.job_queue.run_daily(daily_bday_announcement, datetime.time(hour=hour, minute=minute, tzinfo=WIB), name='bday_cron')
-        logger.info(f"✅ Birthday alerts actively scheduled for {hour:02d}:{minute:02d} WIB.")
-    except Exception as e:
-        logger.error(f"Failed to schedule birthday job: {e}")
-
-async def daily_bday_announcement(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.datetime.now(WIB)
-    today_str = now.strftime("%m/%d")
-    pool = context.bot_data.get('db_pool')
-    
-    async with pool.acquire() as conn:
-        bday_users = await conn.fetch("SELECT username FROM birthdays WHERE bday=$1", today_str)
-        target_group = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'")
-        
-    if not bday_users or not target_group: return
-    
-    msg = "🎉🎂 **HAPPY BIRTHDAY!** 🎂🎉\n\n"
-    msg += "Please join me in sending the warmest wishes to our amazing team member(s):\n"
-    for u in bday_users: msg += f"🎈 @{u['username']}\n"
-    msg += "\nWe hope you have an incredible day filled with joy, and a fantastic year ahead!"
-    
-    try: await context.bot.send_message(int(target_group), msg, parse_mode="Markdown")
-    except: pass
-
-async def poll_cleanup(context: ContextTypes.DEFAULT_TYPE):
-    pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM active_polls WHERE end_time < NOW()")
 
 # --- FORTRESS SECURITY & GLOBAL TRACKER ---
 async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -443,16 +168,6 @@ async def report_bug(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ 🐛 Bug securely filed for review.")
     except Exception as e:
         await update.message.reply_text(f"❌ System Error: {e}")
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Exception handled:", exc_info=context.error)
-    pool = context.bot_data.get('db_pool')
-    if pool:
-        uid = update.effective_user.id if update and hasattr(update, 'effective_user') and update.effective_user else 0
-        cid = update.effective_chat.id if update and hasattr(update, 'effective_chat') and update.effective_chat else 0
-        await log_action(pool, uid, cid, "System Exception", "Error", str(context.error))
-        async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO bot_stats (date, errors) VALUES (CURRENT_DATE, 1) ON CONFLICT (date) DO UPDATE SET errors = bot_stats.errors + 1")
 
 # --- 1/ EVENTS ---
 async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1098,7 +813,6 @@ async def delbday_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday Delete Batch", "Success", f"Deleted {success}, failed {failed}")
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
-
 # --- 5/ TASKS ---
 async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
@@ -1630,7 +1344,6 @@ async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
 
 # --- SUPER ACTIONS ---
-
 async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
@@ -1744,91 +1457,3 @@ async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
-
-# --- RUNNER ---
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.post_init = init_db
-    app.add_error_handler(error_handler)
-
-    app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
-    app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=13, minute=0, tzinfo=WIB))
-    app.job_queue.run_daily(weekly_quota_reset, datetime.time(hour=0, minute=0, tzinfo=WIB), days=(0,))
-    app.job_queue.run_repeating(poll_cleanup, interval=3600)
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("bugreport", report_bug))
-    
-    app.add_handler(CommandHandler("addadmin", add_admin_req))
-    app.add_handler(CommandHandler("deladmin", del_admin_req))
-    app.add_handler(CommandHandler("listadmins", list_admins))
-    app.add_handler(CommandHandler("removemember", remove_member_req))
-    app.add_handler(CommandHandler("graveyard", graveyard))
-    app.add_handler(CommandHandler("super_reset", super_reset_req))
-    
-    app.add_handler(CommandHandler("announce", announce))
-    app.add_handler(CommandHandler("editannounce", edit_announce))
-    app.add_handler(CommandHandler("delannounce", del_announce))
-    app.add_handler(CommandHandler("admin_stars", admin_stars))
-    app.add_handler(CommandHandler("checkquota", check_quota))
-    
-    app.add_handler(CommandHandler("addbday", add_bday))
-    app.add_handler(CommandHandler("editbday", edit_bday))
-    app.add_handler(CommandHandler("delbday", del_bday))
-    app.add_handler(CommandHandler("listbdays", list_bdays))
-    app.add_handler(CommandHandler("setbdaychannel", set_bday_channel))
-    app.add_handler(CommandHandler("setbdaytime", set_bday_time))
-    app.add_handler(CommandHandler("bdayconfig", bday_config))
-    app.add_handler(CommandHandler("addbday_batch", addbday_batch))
-    app.add_handler(CommandHandler("delbday_batch", delbday_batch))
-    
-    app.add_handler(CommandHandler("cancelevent", cancel_event))
-    app.add_handler(CommandHandler("canceltask", cancel_task))
-    app.add_handler(CommandHandler("dellib", del_lib))
-    app.add_handler(CommandHandler("addlib_batch", addlib_batch))
-    app.add_handler(CommandHandler("dellib_batch", dellib_batch))
-    
-    app.add_handler(CommandHandler("attendance", attendance))
-    app.add_handler(CommandHandler("grouptasks", group_tasks))
-    app.add_handler(CommandHandler("groupid", check_group_id))
-    app.add_handler(CommandHandler("listgroups", check_group_id))
-    app.add_handler(CommandHandler("botstatus", bot_status))
-    app.add_handler(CommandHandler("auditlog", get_audit_log))
-    app.add_handler(CommandHandler("forceback", force_back))
-    
-    app.add_handler(CommandHandler("away", set_away))
-    app.add_handler(CommandHandler("back", set_back))
-    
-    app.add_handler(CommandHandler("thanks", give_thanks))
-    app.add_handler(CommandHandler("myquota", my_quota))
-    app.add_handler(CommandHandler("mystar", my_star))
-    app.add_handler(CommandHandler("totalstar", total_star))
-    
-    app.add_handler(CommandHandler("newevent", create_event))
-    app.add_handler(CommandHandler("editevent", edit_event))
-    app.add_handler(CommandHandler("events", list_events))
-    
-    app.add_handler(CommandHandler("assign", assign_task))
-    app.add_handler(CommandHandler("complete", complete_task))
-    app.add_handler(CommandHandler("mytasks", my_tasks))
-    
-    app.add_handler(CommandHandler("poll", create_poll))
-    app.add_handler(CommandHandler("cancelpoll", cancel_poll_admin))
-    app.add_handler(CommandHandler("addlib", add_lib))
-    app.add_handler(CommandHandler("editlib", edit_lib))
-    app.add_handler(CommandHandler("getlib", get_lib))
-    app.add_handler(CommandHandler("library", list_lib))
-
-    app.add_handler(CallbackQueryHandler(poll_callback, pattern="^pollst_"))
-    app.add_handler(CallbackQueryHandler(super_callback, pattern="^sup_"))
-    app.add_handler(CallbackQueryHandler(rsvp_callback, pattern="^rsvp_"))
-    app.add_handler(ChatMemberHandler(security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
-    app.add_handler(MessageHandler(filters.COMMAND, unknown_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, global_tracker))
-
-    logger.info("Starting Enterprise bot...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
