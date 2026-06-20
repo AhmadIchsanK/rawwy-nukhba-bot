@@ -864,3 +864,61 @@ async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: {e}")
+        # --- AI ANALYTICS ---
+async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    
+    if not await is_bot_admin(username, pool): return
+    if not GEMINI_API_KEY:
+        return await context.bot.send_message(update.effective_user.id, "❌ System Error: GEMINI_API_KEY is not configured.")
+
+    try:
+        async with pool.acquire() as conn:
+            reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports ORDER BY created_at ASC")
+            
+        if not reports:
+            return await context.bot.send_message(update.effective_user.id, "✅ 🎉 Your backlog is completely clean! There are zero bug reports or feature requests to analyze.")
+            
+        temp_msg = await context.bot.send_message(update.effective_user.id, "⏳ Compiling data and booting up Gemini for analysis... This might take a few seconds.")
+        
+        # Format the raw database data into a clean text block for the AI to read
+        raw_data = ""
+        for r in reports:
+            date_str = r['created_at'].astimezone(WIB).strftime('%Y-%m-%d')
+            raw_data += f"[{date_str}] @{r['username']} reported: {r['report']}\n"
+            
+        # The System Prompt guiding Gemini on how to behave
+        ai_prompt = (
+            "You are a Senior Product Manager and Lead Software Engineer for an enterprise Telegram bot. "
+            "Analyze the following raw user feedback and bug reports. Please provide a highly structured Markdown report with the following sections:\n"
+            "1. 🚨 **Critical Bugs**: Identify actual broken features. Suggest technical solutions or code-level fixes to resolve them.\n"
+            "2. 💡 **Feature Requests**: Group user requests into actionable new features. Rank them by perceived impact.\n"
+            "3. 🔄 **Duplicates**: Point out if multiple users are asking for the same thing.\n\n"
+            f"Here is the raw data:\n\n{raw_data}"
+        )
+        
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=ai_prompt
+        )
+        
+        reply_text = f"✅ 🤖 **Gemini AI Product Analysis**\n\n{response.text}"
+        
+        # Telegram has a 4096 character limit per message. If the AI writes a massive report, we split it.
+        if len(reply_text) > 4000:
+            await temp_msg.delete()
+            # Chunk the message safely
+            chunks = [reply_text[i:i+4000] for i in range(0, len(reply_text), 4000)]
+            for chunk in chunks:
+                await context.bot.send_message(update.effective_user.id, chunk, parse_mode="Markdown")
+        else:
+            await temp_msg.edit_text(reply_text, parse_mode="Markdown")
+            
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "AI Analytics", "Success", f"@{username} ran bug report analysis.")
+        
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ AI Execution Error: {e}")
+        await log_action(pool, update.effective_user.id, update.effective_chat.id, "AI Analytics", "Error", str(e))
