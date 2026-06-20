@@ -38,6 +38,7 @@ def main():
     app.add_handler(ChatMemberHandler(commands.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
     
     # User Commands
+    app.add_handler(CommandHandler("gemini", commands.ask_gemini))
     app.add_handler(CommandHandler("thanks", commands.give_thanks))
     app.add_handler(CommandHandler("myquota", commands.my_quota))
     app.add_handler(CommandHandler("mystar", commands.my_star))
@@ -57,6 +58,7 @@ def main():
     app.add_handler(CommandHandler("back", commands.set_back))
 
     # Admin Commands
+    app.add_handler(CommandHandler("setgeminiquota", commands.set_gemini_quota))
     app.add_handler(CommandHandler("announce", commands.announce))
     app.add_handler(CommandHandler("editannounce", commands.edit_announce))
     app.add_handler(CommandHandler("delannounce", commands.del_announce))
