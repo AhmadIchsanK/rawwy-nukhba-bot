@@ -2,7 +2,6 @@ import os, logging, pytz, asyncpg
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember
 from telegram.ext import Application
 
-# --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 DATABASE_URL = os.getenv("DATABASE_URL")
 SUPER_OWNER = os.getenv("SUPER_OWNER", "AdminUsername").replace("@", "").lower()
@@ -12,7 +11,6 @@ WIB = pytz.timezone('Asia/Jakarta')
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- HELPERS & AUTH ---
 async def is_super(username: str) -> bool:
     if not username: return False
     return username.lower() == SUPER_OWNER
@@ -32,21 +30,16 @@ async def delete_cmd(update):
 async def log_action(pool, user_id: int, chat_id: int, action_type: str, status: str, text: str):
     try:
         async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO audit_logs (user_id, chat_id, action_type, status, log_text) VALUES ($1, $2, $3, $4, $5)",
-                user_id, chat_id, action_type, status, text
-            )
-    except Exception as e:
-        logger.error(f"Failed to log action: {e}")
+            await conn.execute("INSERT INTO audit_logs (user_id, chat_id, action_type, status, log_text) VALUES ($1, $2, $3, $4, $5)", user_id, chat_id, action_type, status, text)
+    except Exception as e: logger.error(f"Failed to log action: {e}")
 
-# --- DYNAMIC MENU BUILDER ---
 async def update_user_menu(user_id: int, username: str, pool, bot):
     is_adm = await is_bot_admin(username, pool)
     is_sup = await is_super(username)
-    
     base_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("gemini", "🤖 Ask Gemini AI"),
+        BotCommand("ask", "🤖 Ask about Nukhba Bot"),
         BotCommand("newevent", "📅 Schedule an event"),
         BotCommand("events", "📅 View upcoming events"),
         BotCommand("poll", "📊 Interactive Team Poll"),
@@ -67,7 +60,6 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
         BotCommand("back", "🏖️ Return to available"),
         BotCommand("feedback", "💡 Submit Feedback")
     ]
-    
     if is_adm:
         base_cmds.extend([
             BotCommand("addbday", "🎂 Add user birthday"),
@@ -116,12 +108,9 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("restart", "▶️ Resume Bot Services"),
             BotCommand("super_reset", "☢️ Factory Wipe Module")
         ])
-        
-    try: 
-        await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
+    try: await bot.set_my_commands(base_cmds, scope=BotCommandScopeChat(chat_id=user_id))
     except: pass
 
-# --- DATABASE SETUP ---
 async def init_db(app: Application):
     if not DATABASE_URL: return
     app.bot_data['db_pool'] = await asyncpg.create_pool(DATABASE_URL)
@@ -146,7 +135,6 @@ async def init_db(app: Application):
         await conn.execute('CREATE TABLE IF NOT EXISTS announcements (id SERIAL PRIMARY KEY, text TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW());')
         await conn.execute('CREATE TABLE IF NOT EXISTS announcement_messages (announcement_id INTEGER, chat_id BIGINT, message_id BIGINT);')
         await conn.execute('CREATE TABLE IF NOT EXISTS scheduled_announcements (id SERIAL PRIMARY KEY, chat_id TEXT, frequency TEXT, run_time TEXT, mention BOOLEAN DEFAULT FALSE, message TEXT, created_by TEXT, last_run TIMESTAMP WITH TIME ZONE);')
-        
         try: await conn.execute('ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;')
         except: pass
         try: await conn.execute('ALTER TABLE users ADD COLUMN gemini_quota INT DEFAULT 20;')
@@ -157,6 +145,7 @@ async def init_db(app: Application):
     default_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
         BotCommand("gemini", "🤖 Ask Gemini AI"),
+        BotCommand("ask", "🤖 Ask about Nukhba Bot"),
         BotCommand("newevent", "📅 Schedule an event"),
         BotCommand("events", "📅 View upcoming events"),
         BotCommand("poll", "📊 Interactive Team Poll"),
