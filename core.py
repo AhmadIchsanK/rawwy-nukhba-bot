@@ -1,5 +1,6 @@
 import os, logging, pytz, asyncpg
 from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember
+from telegram.ext import Application  # Restored missing import
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
