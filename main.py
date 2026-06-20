@@ -77,6 +77,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("grouptasks", "⚙️ View group tasks"),
             BotCommand("cancelevent", "⚙️ Cancel Event"),
             BotCommand("canceltask", "⚙️ Cancel Task"),
+            BotCommand("cancelpoll", "⚙️ Stop Poll (Reply)"),
             BotCommand("dellib", "⚙️ Delete Asset"),
             BotCommand("announce", "📢 Send Broadcast"),
             BotCommand("editannounce", "📢 Edit Broadcast"),
@@ -193,7 +194,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "\n\n🔐 *[RW] NUKHBA ADMIN SUITE*\n\n"
             "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/setbdaychannel` (Run in target group)\n`/listbdays`\n\n"
             "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n\n"
-            "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/dellib Name`\n\n"
+            "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n`/dellib Name`\n\n"
             "📢 *System*\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now."
         )
         if await is_super(username):
@@ -217,6 +218,7 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- CRONS & LOGS ---
 async def generate_audit_report(pool, target_date: datetime.date) -> str:
+    now = datetime.datetime.now(WIB)
     start_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.min))
     end_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.max))
     
@@ -235,7 +237,7 @@ async def generate_audit_report(pool, target_date: datetime.date) -> str:
         sys_errors = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Error' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
         sys_warns = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Warning' AND created_at >= $1 AND created_at <= $2", start_dt, end_dt)
         
-    msg = f"🌅 **Daily Diagnostic Audit Report**\nDate: {target_date.strftime('%d/%m/%Y')}\n\n"
+    msg = f"✅ 🌅 **Daily Diagnostic Audit Report**\nDate: {target_date.strftime('%d/%m/%Y')} | Time: {now.strftime('%H:%M')} WIB\n\n"
     msg += f"**Groups:**\n• Total Active Groups: {active_groups}\n\n"
     msg += f"**Users:**\n• Away Count: {away_count}\n• Back Count: {back_count}\n\n"
     msg += f"**Events:**\n• Created: {events_created}\n• Updated: {events_updated}\n• RSVP Count: {rsvp_count}\n\n"
@@ -380,11 +382,10 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
                 recap_msg = await process_return(username, pool, context.bot)
                 await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} auto-returned via chat")
-                try: await update.message.reply_text(f"✅ Welcome back @{username}! Your Away status was automatically removed because you sent a message.\n\nI have gathered your missed mentions.", parse_mode="Markdown")
-                except: pass
+                
                 try:
                     uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
-                    if uid: await context.bot.send_message(uid, recap_msg, parse_mode="Markdown")
+                    if uid: await context.bot.send_message(uid, f"✅ {recap_msg}", parse_mode="Markdown")
                 except: pass
             
             aways = await conn.fetch('SELECT username, reason, end_time, last_notified FROM away_status')
@@ -553,18 +554,18 @@ async def cancel_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- 2/ POLLS ---
 def get_poll_kb(draft, pid):
-    anon_str = "🟢 Anonymous: ON" if draft['anon'] else "🔴 Anonymous: OFF"
-    multi_str = "🟢 Multi-Choice: ON" if draft['multi'] else "🔴 Multi-Choice: OFF"
-    quiz_str = f"🧠 Quiz (Answer: {draft['quiz_idx']+1})" if draft['quiz_idx'] >= 0 else "🧠 Quiz Mode: OFF"
-    hrs_str = f"⏳ Duration: {draft['hours']} Hours"
+    anon_str = "👻 Anonymous: ON" if draft['anon'] else "👻 Anonymous: OFF"
+    multi_str = "☑️ Multiple Options" if draft['multi'] else "☑️ Single Option"
+    quiz_str = f"🧠 Quiz (Ans: {draft['quiz_idx']+1})" if draft['quiz_idx'] >= 0 else "🧠 Quiz Mode: OFF"
+    hrs_str = f"⏳ Duration: {draft['hours']}h"
 
     kb = [
         [InlineKeyboardButton(anon_str, callback_data=f"pollst_{pid}_anon"),
          InlineKeyboardButton(multi_str, callback_data=f"pollst_{pid}_multi")],
         [InlineKeyboardButton(quiz_str, callback_data=f"pollst_{pid}_quiz"),
          InlineKeyboardButton(hrs_str, callback_data=f"pollst_{pid}_hrs")],
-        [InlineKeyboardButton("✅ Launch Poll Now", callback_data=f"pollst_{pid}_send")],
-        [InlineKeyboardButton("❌ Cancel Setup", callback_data=f"pollst_{pid}_cancel")]
+        [InlineKeyboardButton("🚀 Finish Now", callback_data=f"pollst_{pid}_send")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"pollst_{pid}_cancel")]
     ]
     return InlineKeyboardMarkup(kb)
 
@@ -575,7 +576,7 @@ async def create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = [p.strip() for p in " ".join(context.args).split(",") if p.strip()]
         if len(parts) < 3: raise ValueError
         question = parts[0]
-        options = parts[1:11] # Max 10 options in Telegram
+        options = parts[1:11] 
     except Exception as e:
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "Poll Create", "Error", str(e))
         return await update.message.reply_text("❌ Format error. Use: `/poll Question , Option 1 , Option 2 , ...`")
@@ -592,7 +593,7 @@ async def create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     opts_str = "\n".join([f"{i+1}. {o}" for i, o in enumerate(options)])
-    text = f"📊 **Interactive Poll Setup**\n\n**Question:** {question}\n\n**Options:**\n{opts_str}\n\n_Configure settings below and click Launch._"
+    text = f"📊 **Interactive Poll Setup**\n\n**Question:** {question}\n\n**Options:**\n{opts_str}\n\n_Configure settings below and click Finish Now._"
 
     await update.message.reply_text(text, reply_markup=get_poll_kb(context.chat_data[f"poll_{pid}"], pid), parse_mode="Markdown")
 
@@ -626,7 +627,7 @@ async def poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif action == "cancel":
         del context.chat_data[f"poll_{pid}"]
         await q.message.delete()
-        return await q.answer("✅ Poll cancelled.")
+        return await q.answer("✅ Poll setup cancelled.")
     elif action == "send":
         pool = context.bot_data.get('db_pool')
         async with pool.acquire() as conn:
@@ -662,6 +663,21 @@ async def poll_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await q.edit_message_reply_markup(reply_markup=get_poll_kb(draft, pid))
     await q.answer()
+
+async def cancel_poll_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(username, pool): return
+    
+    if not update.message.reply_to_message or not update.message.reply_to_message.poll:
+        return await context.bot.send_message(update.effective_user.id, "❌ Please reply to a live poll message with `/cancelpoll`.")
+    
+    try:
+        await context.bot.stop_poll(update.effective_chat.id, update.message.reply_to_message.message_id)
+        await context.bot.send_message(update.effective_user.id, "✅ Poll successfully stopped.")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ Failed to stop poll: {e}")
 
 async def poll_reminder(context: ContextTypes.DEFAULT_TYPE):
     try: await context.bot.send_message(context.job.data['chat_id'], f"⏳ **Attention team!** The poll '{context.job.data['q']}' is ending in 15 minutes! Please get your votes in.", reply_to_message_id=context.job.data['msg_id'], parse_mode="Markdown")
@@ -1014,13 +1030,14 @@ async def process_return(username, pool, bot):
         await conn.execute('DELETE FROM away_status WHERE username=$1', username)
         await conn.execute('DELETE FROM away_mentions WHERE away_username=$1', username)
         
-    msg = f"🎉 **A warm welcome back, @{username}!** You are now marked as **🟢 Available**.\n\n"
+    msg = f"✅ 🎉 A warm welcome back, @{username}! You are now marked as 🟢 Available.\n\n"
     if mentions:
         msg += "Here is your Away Mentions Recap:\n\n"
         for m in mentions:
             t_str = m['created_at'].astimezone(WIB).strftime('%m/%d %H:%M WIB')
             msg += f"🔹 [{t_str}] in **{m['chat_title']}**\n**@{m['mentioner']}**: \"{m['message']}\"\n\n"
-    else: msg += "It was quiet! You had absolutely zero mentions while you were away."
+    else: 
+        msg += "It was quiet! You had absolutely zero mentions while you were away."
     return msg
 
 async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1057,20 +1074,28 @@ async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ System Error: {e}")
 
 async def set_back(update: Update, context: ContextTypes.DEFAULT_TYPE): 
+    await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     try:
         async with pool.acquire() as conn:
             status = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', username)
-            if not status: return await update.message.reply_text("❌ You are not currently marked as Away. Your status is already Available 🟢.")
+            uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", username)
+            if not status:
+                if uid: 
+                    try: await context.bot.send_message(uid, "❌ You are not currently marked as Away. Your status is already Available 🟢.", parse_mode="Markdown")
+                    except: pass
+                return
         
         for j in context.job_queue.get_jobs_by_name(f"away_{username}"): j.schedule_removal()
         msg = await process_return(username, pool, context.bot)
         
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Removed", f"@{username} manually returned")
-        await update.message.reply_text(f"✅ {msg}", parse_mode="Markdown")
+        if uid:
+            try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+            except: pass
     except Exception as e:
-        await update.message.reply_text(f"❌ System Error: {e}")
+        logger.error(f"Set back error: {e}")
 
 async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1113,7 +1138,6 @@ async def auto_return_away(context: ContextTypes.DEFAULT_TYPE):
         await log_action(pool, uid or 0, context.job.data['chat_id'], "Away Status", "Removed", f"@{username} auto-returned")
         try: 
             if uid: await context.bot.send_message(uid, msg, parse_mode="Markdown")
-            await context.bot.send_message(context.job.data['chat_id'], f"✅ ⏰ @{username}'s Away timer has expired. They are now 🟢 Available.")
         except: pass
     except: pass
 
@@ -1257,7 +1281,7 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         target_date = datetime.datetime.now(WIB).date()
         msg = await generate_audit_report(pool, target_date)
-        await context.bot.send_message(update.effective_user.id, f"✅ {msg}", parse_mode="Markdown")
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
     except Exception as e:
         await context.bot.send_message(update.effective_user.id, f"❌ System Error: `{e}`", parse_mode="Markdown")
 
@@ -1517,6 +1541,7 @@ def main():
     app.add_handler(CommandHandler("mytasks", my_tasks))
     
     app.add_handler(CommandHandler("poll", create_poll))
+    app.add_handler(CommandHandler("cancelpoll", cancel_poll_admin))
     app.add_handler(CommandHandler("addlib", add_lib))
     app.add_handler(CommandHandler("editlib", edit_lib))
     app.add_handler(CommandHandler("getlib", get_lib))
