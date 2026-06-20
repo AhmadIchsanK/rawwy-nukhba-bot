@@ -1,11 +1,13 @@
 import os, logging, pytz, asyncpg
-from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from telegram import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, BotCommandScopeChatMember
 from telegram.ext import Application
+from telegram import BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 
 # --- CONFIGURATION ---
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 DATABASE_URL = os.getenv("DATABASE_URL")
 SUPER_OWNER = os.getenv("SUPER_OWNER", "AdminUsername").replace("@", "").lower()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 WIB = pytz.timezone('Asia/Jakarta')
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -45,6 +47,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
     
     base_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
+        BotCommand("gemini", "🤖 Ask Gemini AI"),
         BotCommand("newevent", "📅 Schedule an event"),
         BotCommand("events", "📅 View upcoming events"),
         BotCommand("poll", "📊 Interactive Team Poll"),
@@ -80,6 +83,7 @@ async def update_user_menu(user_id: int, username: str, pool, bot):
             BotCommand("forceback", "⚙️ Force stop user away status"),
             BotCommand("checkquota", "⚙️ Audit user quotas"),
             BotCommand("admin_stars", "⚙️ Modify user stars"),
+            BotCommand("setgeminiquota", "⚙️ Modify user AI quota"),
             BotCommand("grouptasks", "⚙️ View group tasks"),
             BotCommand("cancelevent", "⚙️ Cancel Event"),
             BotCommand("canceltask", "⚙️ Cancel Task"),
@@ -141,11 +145,13 @@ async def init_db(app: Application):
         
         try:
             await conn.execute('''ALTER TABLE audit_logs ADD COLUMN user_id BIGINT, ADD COLUMN chat_id BIGINT, ADD COLUMN action_type TEXT, ADD COLUMN status TEXT;''')
+            await conn.execute('''ALTER TABLE users ADD COLUMN gemini_quota INT DEFAULT 20;''')
         except Exception:
             pass
 
     default_cmds = [
         BotCommand("help", "📖 View Nukhba Manual"),
+        BotCommand("gemini", "🤖 Ask Gemini AI"),
         BotCommand("newevent", "📅 Schedule an event"),
         BotCommand("events", "📅 View upcoming events"),
         BotCommand("poll", "📊 Interactive Team Poll"),
