@@ -1,5 +1,5 @@
 import datetime, logging
-from telegram.ext import Application, ContextTypes
+from telegram.ext import ContextTypes, Application
 from core import WIB, SUPER_OWNER
 
 logger = logging.getLogger(__name__)
@@ -66,7 +66,9 @@ async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
 
 async def weekly_quota_reset(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn: await conn.execute("UPDATE kudos SET quota = 3")
+    async with pool.acquire() as conn: 
+        await conn.execute("UPDATE kudos SET quota = 3")
+        await conn.execute("UPDATE users SET gemini_quota = 20")
 
 async def schedule_bday_job(app: Application):
     pool = app.bot_data.get('db_pool')
