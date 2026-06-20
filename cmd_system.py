@@ -37,7 +37,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         help_text += (
             "\n\n🔐 *[RW] NUKHBA ADMIN SUITE*\n\n"
             "🎂 *Birthdays*\n`/addbday @user , MM/DD`\n`/editbday @user , MM/DD`\n`/delbday @user`\n`/setbdaychannel` (Run in target group)\n`/setbdaytime HH:MM`\n`/bdayconfig` | `/listbdays`\n`/addbday_batch` | `/delbday_batch`\n\n"
-            "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n`/checkgeminiquota all` or `@user`\n`/admin_gemini @user , [set/add/sub] , Amount`\n`/setweeklylimit 30`\n\n"
+            "🌟 *Stars & Quotas*\n`/checkquota all` or `@user`\n`/admin_stars @user , [quota/monthly/total] , [set/add/sub] , Amount`\n`/checklimit all` or `@user`\n`/admin_limit @user , [set/add/sub] , Amount`\n`/setweeklylimit 30`\n\n"
             "⚙️ *Management*\n`/attendance` - See who is Away in this group.\n`/forceback @user` - Force stop user away status.\n`/grouptasks` - See pending tasks in the database.\n`/cancelevent ID` | `/canceltask ID` | `/cancelpoll` (Reply)\n`/addlib_batch` | `/dellib_batch`\n\n"
             "📢 *System & Broadcasts*\n`/schedule [ChatID/all] , [once/daily/weekly] , [Time] , [yes/no] , [Message]`\n`/listschedules` | `/delschedule ID`\n`/announce [ChatID/All] , Message`\n`/editannounce ID , New Msg` | `/delannounce ID`\n`/groupid` - Check current group or all groups.\n`/auditlog` - Pull diagnostics log now.\n\n"
             "🤖 *AI Insight*\n`/feedbacklist` - View last 7 days of feedback.\n`/analyze_feedback` - Standard (7 days) or custom parameters.\n`/alltimefeedback` - Review historical database archives."
@@ -77,7 +77,6 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
     
     admin_ids = {a['user_id'] for a in admins if a['user_id']}
     if super_id: admin_ids.add(super_id)
-    
     now_str = datetime.datetime.now(WIB).strftime('%Y-%m-%d %H:%M:%S WIB')
     
     if status in ['member', 'administrator']:
@@ -169,7 +168,8 @@ async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     try:
-        async with pool.acquire() as conn: await conn.execute("INSERT INTO bug_reports (username, report) VALUES ($1, $2)", username, text)
+        async with pool.acquire() as conn:
+            await conn.execute("INSERT INTO bug_reports (username, report) VALUES ($1, $2)", username, text)
         await log_action(pool, update.effective_user.id, update.effective_chat.id, "Feedback", "Success", f"Feedback submitted by @{username}")
         await update.message.reply_text("✅ 💡 Feedback securely filed for analysis.")
     except Exception as e:
@@ -193,13 +193,13 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             await conn.execute("INSERT INTO users (username, user_id, gemini_quota) VALUES ($1, $2, $3) ON CONFLICT (username) DO NOTHING", username, update.effective_user.id, limit)
             
             if not is_adm:
-                quota = await conn.fetchval("SELECT gemini_quota FROM users WHERE username=$1", username)
-                if quota <= 0: 
-                    return await update.message.reply_text(f"❌ AI quota depleted ({limit}/{limit}).")
+                limit_left = await conn.fetchval("SELECT gemini_quota FROM users WHERE username=$1", username)
+                if limit_left <= 0: 
+                    return await update.message.reply_text(f"❌ AI limit depleted ({limit}/{limit}).")
                 await conn.execute("UPDATE users SET gemini_quota = gemini_quota - 1 WHERE username=$1", username)
-                quota_msg = f"_(Quota left: {quota - 1})_"
+                limit_msg = f"_(Limit left: {limit_left - 1})_"
             else:
-                quota_msg = "_(Admin: Unlimited)_"
+                limit_msg = "_(Admin: No Limit)_"
     except Exception as e: 
         return await update.message.reply_text(f"❌ DB Error: {e}")
 
@@ -210,17 +210,20 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         if is_bot_query:
             system_prompt = "You are Nukhba Manager, an enterprise Telegram bot. Your features: Gemini AI (/gemini), Events (/newevent, /events), Polls (/poll), RAWWY Stars (/thanks, /leaderboard), Library (/addlib, /getlib), Tasks (/assign, /complete), Away mode (/away, /back), and Feedback (/feedback). Answer the user clearly.\n"
             if is_adm:
-                system_prompt += """If the admin asks to configure or change a hidden setting (DM length, star quota, or AI quota), output a JSON block at the very end of your response exactly like this:
-```json
-[{"key": "dm_length", "value": "800"}, {"key": "star_quota", "value": "5"}]
-```
-Valid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.
-"""
+                # Using explicit string concatenation inside parentheses to avoid syntax errors on long lines
+                system_prompt += (
+                    "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI quota), "
+                    "output a JSON block at the very end of your response exactly like this:\n"
+                    "```json\n"
+                    '[{"key": "dm_length", "value": "800"}, {"key": "star_quota", "value": "5"}]\n'
+                    "```\n"
+                    "Valid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.\n"
+                )
             system_prompt += "User Question: " + prompt
         else:
             system_prompt = prompt
             
-        # 120-Second Timeout Thread Lock
+        # 120-Second Timeout Thread Lock for Gemini AI Generation
         response = await asyncio.wait_for(
             asyncio.to_thread(client.models.generate_content, model='gemini-2.5-flash', contents=system_prompt),
             timeout=120.0
@@ -258,9 +261,9 @@ Valid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.
                     await context.bot.send_message(update.effective_user.id, f"{prefix}{final_reply}") # Crash Fallback
                 
                 try: 
-                    await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{quota_msg}", parse_mode="Markdown")
+                    await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{limit_msg}", parse_mode="Markdown")
                 except: 
-                    await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{quota_msg}") # Crash Fallback
+                    await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{limit_msg}") # Crash Fallback
             except Exception as e:
                 try: await temp.edit_text("❌ Please open a private chat with me first so I can DM you.")
                 except: pass
@@ -269,9 +272,9 @@ Valid keys: `dm_length`, `star_quota`, `gemini_weekly_limit`.
                         await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
         else: 
             try: 
-                await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{quota_msg}", parse_mode="Markdown")
+                await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{limit_msg}", parse_mode="Markdown")
             except: 
-                await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{quota_msg}") # Crash Fallback
+                await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{limit_msg}") # Crash Fallback
                 
     except asyncio.TimeoutError:
         try: await temp.edit_text("❌ **AI Timeout:** I thought about it for 120 seconds but couldn't find an answer in time. Please try a simpler request.")
