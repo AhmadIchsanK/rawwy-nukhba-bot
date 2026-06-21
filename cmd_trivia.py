@@ -75,7 +75,7 @@ async def generate_trivia_question(is_super: bool, theme: str, num_options: int)
     )
     
     if is_super:
-        system_instruction += "Special Override: This is a Weekly Super Quiz. Make the topic highly advanced, extremely tricky, and covering deep scientific, astronomical, historical, or technological domains."
+        system_instruction += "Special Override: This is a Weekly Super Quiz. Make the topic highly advanced, extremely tricky, and covering deep scientific, astronomical, historical, or technological concepts."
     
     prompt = (
         "Respond strictly with a JSON object format. Avoid code wrappers, quotes, or formatting artificial syntax. Example structure:\n"
@@ -139,8 +139,7 @@ async def deploy_trivia_round(bot, chat_id: int, is_super: bool, pool):
     buttons = []
     current_row = []
     for idx, opt in enumerate(trivia_data['options']):
-        # Use callback prefix 'triv_' so it matches the CallbackQueryHandler pattern registered in main.py
-        current_row.append(InlineKeyboardButton(opt, callback_data=f"triv_{idx}"))
+        current_row.append(InlineKeyboardButton(opt, callback_data=f"trivans_{idx}"))
         if len(current_row) == 2:
             buttons.append(current_row)
             current_row = []
@@ -295,72 +294,200 @@ async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
         
         await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('last_run_date', $1) ON CONFLICT (key) DO UPDATE SET value=$1", current_date)
         
-297|     is_super_day = (day_name == 'sunday')
-298|     context.application.create_task(deploy_trivia_round(context.bot, target_chat_id, is_super_day, pool))
-299| 
-300| async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
-301|     pool = context.bot_data.get('db_pool')
-302|     if not pool: return
-303|     async with pool.acquire() as conn:
-304|         target_chat_str = await conn.fetchval("SELECT value FROM trivia_config WHERE key='target_chat_id'") or ''
-305|         if not target_chat_str: return
-306|         target_chat_id = int(target_chat_str)
-307|         
-308|         top_minds = await conn.fetch('''
-309|             SELECT username, monthly_kp FROM trivia_scores 
-310|             WHERE monthly_kp > 0 ORDER BY monthly_kp DESC LIMIT 3
-311|         ''')
-312|         await conn.execute("UPDATE trivia_scores SET monthly_kp = 0")
-313|         
-314|     if not top_minds: return
-315|     announcement = "🏆 **NUKHBA TRIVIA MONTHLY CHAMPIONS** 🏆\n\nCongratulations to our top minds this month! Your brilliance shines supreme:\n\n"
-314|     podiums = ["🥇", "🥈", "🥉"]
-315|     for idx, user in enumerate(top_minds):
-316|         announcement += f"{podiums[idx]} **@{user['username']}** — {user['monthly_kp']} Knowledge Points (KP) earned!\n"
-317|     announcement += "\n🔄 *Monthly leaderboard stats have been reset! All-time stats remain captured. Let the races begin again!*"
-318|     try:
-319|         await context.bot.send_message(target_chat_id, announcement, parse_mode="Markdown")
-320|     except Exception as e:
-321|         logger.error(f"Failed to announce monthly reset: {e}")
-322| 
-323| # --- 8/ USER LEVEL CONTROLS ---
-324| async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
-325|     """Sends current monthly and all-time user points privately to DM."""
-326|     username = update.effective_user.username or str(update.effective_user.id)
-327|     pool = context.bot_data.get('db_pool')
-328|     async with pool.acquire() as conn:
-329|         scores = await conn.fetchrow("SELECT monthly_kp, all_time_kp FROM trivia_scores WHERE username=$1", username)
-330|         
-331|     monthly = scores['monthly_kp'] if scores else 0
-332|     all_time = scores['all_time_kp'] if scores else 0
-333|     text = (
-334|         f"🧠 **Nukhba Knowledge Point Status** 🧠\n\n"
-335|         f"🔹 **Monthly KP:** `{monthly}`\n"
-336|         f"🔹 **All-Time KP:** `{all_time}`\n\n"
-337|         "Keep exercising your mind in daily challenges!"
-338|     )
-339|     try:
-340|         await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
-341|         if update.effective_chat.type != "private":
-342|             await update.message.reply_text("✅ Your knowledge scores have been delivered privately to your DMs!")
-343|     except:
-344|         await update.message.reply_text("❌ Failed to message you privately! Please initiate a DM chat with me first.")
-345| 
-346| # --- 9/ ADMINISTRATIVE MANAGEMENT COMMANDS ---
-347| async def set_trivia_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-348|     pool = context.bot_data.get('db_pool')
-349|     if not await is_bot_admin(update.effective_user.username, pool): return
-350|     chat_id = update.effective_chat.id
-351|     async with pool.acquire() as conn:
-352|         await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('target_chat_id', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(chat_id))
-353|     await update.message.reply_text(f"✅ Trivia channel destination successfully locked to this group! ID: `{chat_id}`", parse_mode="Markdown")
-354| 
-355| async def set_trivia_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
-356|     pool = context.bot_data.get('db_pool')
-357|     if not await is_bot_admin(update.effective_user.username, pool): return
-358|     theme = " ".join(context.args).strip()
-359|     if not theme: return await update.message.reply_text("❌ Usage: `/settriviatheme [topic_name | random]`")
-360|     async with pool.acquire() as conn:
-361|         await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('theme', $1) ON CONFLICT (key) DO UPDATE SET value=$1", theme)
-362|     await update.message.reply_text(f"✅ Automatic trivia theme updated to: **{theme}**", parse_mode="Markdown")
+    is_super_day = (day_name == 'sunday')
+    context.application.create_task(deploy_trivia_round(context.bot, target_chat_id, is_super_day, pool))
 
+async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not pool: return
+    async with pool.acquire() as conn:
+        target_chat_str = await conn.fetchval("SELECT value FROM trivia_config WHERE key='target_chat_id'") or ''
+        if not target_chat_str: return
+        target_chat_id = int(target_chat_str)
+        
+        top_minds = await conn.fetch('''
+            SELECT username, monthly_kp FROM trivia_scores 
+            WHERE monthly_kp > 0 ORDER BY monthly_kp DESC LIMIT 3
+        ''')
+        await conn.execute("UPDATE trivia_scores SET monthly_kp = 0")
+        
+    if not top_minds: return
+    announcement = "🏆 **NUKHBA TRIVIA MONTHLY CHAMPIONS** 🏆\n\nCongratulations to our top minds this month! Your brilliance shines supreme:\n\n"
+    podiums = ["🥇", "🥈", "🥉"]
+    for idx, user in enumerate(top_minds):
+        announcement += f"{podiums[idx]} **@{user['username']}** — {user['monthly_kp']} Knowledge Points (KP) earned!\n"
+    announcement += "\n🔄 *Monthly leaderboard stats have been reset! All-time stats remain captured. Let the races begin again!*"
+    try:
+        await context.bot.send_message(target_chat_id, announcement, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"Failed to announce monthly reset: {e}")
+
+# --- 8/ USER LEVEL CONTROLS ---
+async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Sends current monthly and all-time user points privately to DM."""
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        scores = await conn.fetchrow("SELECT monthly_kp, all_time_kp FROM trivia_scores WHERE username=$1", username)
+        
+    monthly = scores['monthly_kp'] if scores else 0
+    all_time = scores['all_time_kp'] if scores else 0
+    text = (
+        f"🧠 **Nukhba Knowledge Point Status** 🧠\n\n"
+        f"🔹 **Monthly KP:** `{monthly}`\n"
+        f"🔹 **All-Time KP:** `{all_time}`\n\n"
+        "Keep exercising your mind in daily challenges!"
+    )
+    try:
+        await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("✅ Your knowledge scores have been delivered privately to your DMs!")
+    except:
+        await update.message.reply_text("❌ Failed to message you privately! Please initiate a DM chat with me first.")
+
+# --- 9/ ADMINISTRATIVE MANAGEMENT COMMANDS ---
+async def set_trivia_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    chat_id = update.effective_chat.id
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('target_chat_id', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(chat_id))
+    await update.message.reply_text(f"✅ Trivia channel destination successfully locked to this group! ID: `{chat_id}`", parse_mode="Markdown")
+
+async def set_trivia_theme(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    theme = " ".join(context.args).strip()
+    if not theme: return await update.message.reply_text("❌ Usage: `/settriviatheme [topic_name | random]`")
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('theme', $1) ON CONFLICT (key) DO UPDATE SET value=$1", theme)
+    await update.message.reply_text(f"✅ Automatic trivia theme updated to: **{theme}**", parse_mode="Markdown")
+
+async def set_trivia_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    time_str = " ".join(context.args).strip()
+    if not re.match(r'^\d{2}:\d{2}$', time_str):
+        return await update.message.reply_text("❌ Incorrect Time Format! Must match `HH:MM` (using a 24-hour cycle layout).")
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('run_time', $1) ON CONFLICT (key) DO UPDATE SET value=$1", time_str)
+    await update.message.reply_text(f"✅ Automatic Daily deployment clock set to: **{time_str} WIB**", parse_mode="Markdown")
+
+async def set_trivia_days(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    days = " ".join(context.args).lower().strip()
+    if days not in ['all', 'weekday', 'weekend']:
+        return await update.message.reply_text("❌ Invalid days configuration! Select `all`, `weekday`, or `weekend`.")
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('days_mode', $1) ON CONFLICT (key) DO UPDATE SET value=$1", days)
+    await update.message.reply_text(f"✅ Automatic trivia scheduler days updated to: **{days}**", parse_mode="Markdown")
+
+async def set_trivia_opts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    try:
+        val = int(context.args[0])
+        if val < 4 or val > 6: raise ValueError
+    except:
+        return await update.message.reply_text("❌ Invalid settings! Number of options must fall within `4` and `6`.")
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('num_options', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(val))
+    await update.message.reply_text(f"✅ Options layout dynamically config-locked to: **{val} choices**", parse_mode="Markdown")
+
+async def set_trivia_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    try:
+        val = int(context.args[0])
+        if val < 30: raise ValueError
+    except:
+        return await update.message.reply_text("❌ Minimum timeout threshold limit is 30 seconds.")
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('regular_timeout', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(val))
+    await update.message.reply_text(f"✅ Regular daily timeout parameters updated to: **{val} seconds**", parse_mode="Markdown")
+
+async def set_super_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    try:
+        val = int(context.args[0])
+        if val < 30: raise ValueError
+    except:
+        return await update.message.reply_text("❌ Minimum timeout threshold limit is 30 seconds.")
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('super_timeout', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(val))
+    await update.message.reply_text(f"✅ Weekly super quiz timeout parameters set to: **{val} seconds**", parse_mode="Markdown")
+
+async def pause_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('status', 'paused') ON CONFLICT (key) DO UPDATE SET value='paused'")
+    await update.message.reply_text("⏸️ Automatic daily trivia scheduler system **PAUSED**.")
+
+async def resume_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO trivia_config (key, value) VALUES ('status', 'active') ON CONFLICT (key) DO UPDATE SET value='active'")
+    await update.message.reply_text("▶️ Automatic daily trivia scheduler system **RESUMED**.")
+
+async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    await update.message.reply_text("⏳ Generating Daily Trivia question...")
+    await deploy_trivia_round(context.bot, update.effective_chat.id, False, pool)
+
+async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    await update.message.reply_text("⏳ Compiling Super Trivia parameters...")
+    await deploy_trivia_round(context.bot, update.effective_chat.id, True, pool)
+
+async def cancel_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    chat_id = update.effective_chat.id
+    async with pool.acquire() as conn:
+        room = await conn.fetchrow("SELECT * FROM active_trivia WHERE chat_id=$1", chat_id)
+        if not room: return await update.message.reply_text("❌ No active running trivia found in this group.")
+        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+    try: await context.bot.edit_message_text(chat_id=chat_id, message_id=room['message_id'], text="❌ **Trivia Round Cancelled by Admin.**")
+    except: pass
+    await update.message.reply_text("✅ Ongoing active running trivia round dropped immediately.")
+
+async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    try:
+        raw = " ".join(context.args)
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        user = parts[0].replace("@", "")
+        op = parts[1].lower()
+        amount = int(parts[2])
+        if op not in ['set', 'add', 'sub']: raise ValueError
+    except:
+        return await update.message.reply_text("❌ Usage Format: `/admin_kp @username , [set|add|sub] , amount`", parse_mode="Markdown")
+        
+    async with pool.acquire() as conn:
+        if op == 'set':
+            await conn.execute('''
+                INSERT INTO trivia_scores (username, monthly_kp, all_time_kp)
+                VALUES ($1, $2, $2) ON CONFLICT (username)
+                DO UPDATE SET monthly_kp = $2, all_time_kp = $2
+            ''', user, amount)
+        elif op == 'add':
+            await conn.execute('''
+                INSERT INTO trivia_scores (username, monthly_kp, all_time_kp)
+                VALUES ($1, $2, $2) ON CONFLICT (username)
+                DO UPDATE SET monthly_kp = trivia_scores.monthly_kp + $2, all_time_kp = trivia_scores.all_time_kp + $2
+            ''', user, amount)
+        elif op == 'sub':
+            await conn.execute('''
+                INSERT INTO trivia_scores (username, monthly_kp, all_time_kp)
+                VALUES ($1, 0, 0) ON CONFLICT (username)
+                DO UPDATE SET monthly_kp = GREATEST(0, trivia_scores.monthly_kp - $2), all_time_kp = GREATEST(0, trivia_scores.all_time_kp - $2)
+            ''', user, amount)
+        scores = await conn.fetchrow("SELECT monthly_kp, all_time_kp FROM trivia_scores WHERE username=$1", user)
+    await update.message.reply_text(f"✅ Modified scores for **@{user}**! Monthly score: `{scores['monthly_kp']}` KP | All-time: `{scores['all_time_kp']}` KP.", parse_mode="Markdown")
