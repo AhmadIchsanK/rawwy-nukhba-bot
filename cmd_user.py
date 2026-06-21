@@ -7,142 +7,6 @@ from core import WIB, delete_cmd, is_bot_admin
 
 logger = logging.getLogger(__name__)
 
-async def events_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    user = update.effective_user.username or str(update.effective_user.id)
-    
-    async with pool.acquire() as conn:
-        events = await conn.fetch("SELECT id, title, event_time FROM events WHERE created_by=$1 AND event_time > NOW() ORDER BY event_time ASC", user)
-    
-    if not events:
-        return await update.message.reply_text("🪹 You have no active events scheduled.")
-        
-    context.user_data['ev_owner'] = update.effective_user.id
-    
-    kb = []
-    for e in events:
-        kb.append([InlineKeyboardButton(f"📅 {e['title'][:30]}", callback_data=f"ev_sel_{e['id']}")])
-    kb.append([InlineKeyboardButton("❌ Close", callback_data="ev_close")])
-    
-    msg = await update.message.reply_text("🗓️ **Your Event Dashboard**\nSelect an event to manage:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-    context.user_data['inline_msg_id'] = msg.message_id
-
-async def render_ev_menu(update, context, from_custom_input=False):
-    d = context.user_data.get('ev_draft')
-    if not d:
-        return
-        
-    text = f"🗓️ **Managing Event: {d['title']}**\n\n⏰ Time: `{d['time'].strftime('%m/%d/%Y %H:%M WIB')}`\n\n*(Changes require ✅ Save)*"
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("✏️ Edit Title", callback_data="ev_title"), InlineKeyboardButton("⏰ Edit Time", callback_data="ev_time")],
-        [InlineKeyboardButton("🗑️ Delete Event", callback_data="ev_del")],
-        [InlineKeyboardButton("✅ Save Changes", callback_data="ev_save"), InlineKeyboardButton("❌ Cancel", callback_data="ev_close")]
-    ])
-    
-    if from_custom_input:
-        msg_id = context.user_data.get('inline_msg_id')
-        try:
-            await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=msg_id, text=text, reply_markup=kb, parse_mode="Markdown")
-        except Exception:
-            pass
-    elif update.callback_query:
-        try:
-            await update.callback_query.edit_message_text(text=text, reply_markup=kb, parse_mode="Markdown")
-        except Exception:
-            pass
-
-async def events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    owner = context.user_data.get('ev_owner')
-    if owner and q.from_user.id != owner:
-        return await q.answer("Unauthorized.", show_alert=True)
-        
-    act = q.data.split("_", 1)[1]
-    pool = context.bot_data.get('db_pool')
-    d = context.user_data.get('ev_draft')
-    
-    if act == "close":
-        context.user_data.pop('ev_draft', None)
-        return await q.edit_message_text("❌ Event Manager Closed.")
-        
-    if act.startswith("sel_"):
-        e_id = int(act.split("_")[1])
-        async with pool.acquire() as conn:
-            ev = await conn.fetchrow("SELECT id, title, event_time FROM events WHERE id=$1", e_id)
-        if not ev:
-            return await q.answer("Event not found.", show_alert=True)
-        context.user_data['ev_draft'] = {'id': ev['id'], 'title': ev['title'], 'time': ev['event_time']}
-        return await render_ev_menu(update, context)
-        
-    if not d:
-        return await q.answer("Draft expired.", show_alert=True)
-        
-    if act == "title":
-        context.user_data['inline_step'] = 'ev_title'
-        context.user_data['inline_owner'] = owner
-        return await q.edit_message_text("✏️ Please type the new Event Title:")
-        
-    elif act == "time":
-        context.user_data['inline_step'] = 'ev_time'
-        context.user_data['inline_owner'] = owner
-        return await q.edit_message_text("✏️ Please type the exact new time (MM/DD/YYYY HH:MM):")
-        
-    elif act == "del":
-        async with pool.acquire() as conn:
-            await conn.execute("DELETE FROM events WHERE id=$1", d['id'])
-        context.user_data.pop('ev_draft', None)
-        return await q.edit_message_text("🗑️ Event Deleted.")
-        
-    elif act == "save":
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE events SET title=$1, event_time=$2 WHERE id=$3", d['title'], d['time'], d['id'])
-        context.user_data.pop('ev_draft', None)
-        return await q.edit_message_text("✅ **Event Updated!**", parse_mode="Markdown")
-        
-    await q.answer()
-
-async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    now = datetime.datetime.now(WIB)
-    pool = context.bot_data.get('db_pool')
-    
-    async with pool.acquire() as conn:
-        tasks = await conn.fetch("SELECT id, task_desc, deadline FROM tasks WHERE status='Pending' AND assignee=$1 ORDER BY deadline", username)
-        
-    if not tasks:
-        return await update.message.reply_text("✅ No pending tasks.")
-        
-    context.user_data['tk_owner'] = update.effective_user.id
-    
-    kb = []
-    for t in tasks:
-        kb.append([InlineKeyboardButton(f"✅ Complete: {t['task_desc'][:20]}", callback_data=f"tk_complete_{t['id']}")])
-    kb.append([InlineKeyboardButton("❌ Close", callback_data="tk_close")])
-    
-    msg = await update.message.reply_text("📋 **Your Active Tasks**\nClick a task to mark it completed:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
-    context.user_data['inline_msg_id'] = msg.message_id
-
-async def tasks_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    owner = context.user_data.get('tk_owner')
-    if owner and q.from_user.id != owner:
-        return await q.answer("Unauthorized.", show_alert=True)
-        
-    act = q.data.split("_", 1)[1]
-    
-    if act == "close":
-        return await q.edit_message_text("❌ Task Manager Closed.")
-        
-    if act.startswith("complete_"):
-        t_id = int(act.split("_")[1])
-        pool = context.bot_data.get('db_pool')
-        async with pool.acquire() as conn:
-            await conn.execute("UPDATE tasks SET status='Completed' WHERE id=$1", t_id)
-        return await q.edit_message_text(f"✅ **Task Completed!**", parse_mode="Markdown")
-
 async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -212,6 +76,20 @@ async def edit_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.job_queue.run_once(event_reminder, when=e_time - datetime.timedelta(minutes=rem), chat_id=update.effective_chat.id, data={"id": e_id, "title": title}, name=f"event_rem_{e_id}")
     await update.message.reply_text(f"✅ Event `{e_id}` updated.", parse_mode="Markdown")
 
+async def list_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        events = await conn.fetch('SELECT id, title, event_time FROM events WHERE event_time > NOW() ORDER BY event_time ASC LIMIT 5')
+        
+    if not events:
+        return await update.message.reply_text("❌ No upcoming events scheduled.")
+        
+    msg = "✅ 📅 **Upcoming Events**\n\n"
+    for e in events:
+        msg += f"🔹 **{e['title']}** (ID: `{e['id']}`)\n🕒 {e['event_time'].astimezone(WIB).strftime('%m/%d/%Y %H:%M')} WIB\n\n"
+        
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 async def rsvp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q.data.startswith("rsvp_temp"):
@@ -229,7 +107,10 @@ async def rsvp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not event:
         return await q.answer("Event deleted.")
         
-    text = f"📅 **{event['title']}**\n🕒 {event['event_time'].astimezone(WIB).strftime('%b %d at %H:%M WIB')}\n\n*Attendance:*\n" + "".join([f"{'✅' if r['status']=='Going' else '❌'} @{r['username']}\n" for r in all_rsvps])
+    text = f"📅 **{event['title']}**\n🕒 {event['event_time'].astimezone(WIB).strftime('%b %d at %H:%M WIB')}\n\n*Attendance:*\n"
+    for r in all_rsvps:
+        text += f"{'✅' if r['status']=='Going' else '❌'} @{r['username']}\n"
+        
     await q.edit_message_text(text, reply_markup=q.message.reply_markup, parse_mode="Markdown")
     await q.answer(status)
 
@@ -261,7 +142,10 @@ async def create_poll(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO poll_drafts (pid, owner, q, opts, anon, multi, quiz_idx, hours) VALUES ($1, $2, $3, $4, False, False, -1, 24)", pid, update.effective_user.id, q, json.dumps(opts))
     
-    opts_str = "\n".join([f"{i+1}. {o}" for i, o in enumerate(opts)])
+    opts_str = ""
+    for i, o in enumerate(opts):
+        opts_str += f"{i+1}. {o}\n"
+        
     kb = await get_poll_kb(pid, pool)
     if kb:
         await update.message.reply_text(f"📊 **Poll Setup**\n\n**Q:** {q}\n\n{opts_str}", reply_markup=kb, parse_mode="Markdown")
@@ -364,17 +248,31 @@ async def total_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ All-Time Stars: **{pts or 0}**", parse_mode="Markdown")
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn:
         monthly = await conn.fetch("SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 5")
         all_time = await conn.fetch("SELECT username, all_time_points FROM kudos WHERE all_time_points > 0 ORDER BY all_time_points DESC LIMIT 5")
     
-    msg = "🏆 **RAWWY Stars Leaderboard** 🏆\n\n📅 **This Month's Top Stars:**\n" + ("".join([f"{i+1}. @{r['username']} - {r['monthly_points']}\n" for i, r in enumerate(monthly)]) if monthly else "None.\n")
-    msg += "\n🌟 **All-Time Top Stars:**\n" + ("".join([f"{i+1}. @{r['username']} - {r['all_time_points']}\n" for i, r in enumerate(all_time)]) if all_time else "None.\n")
+    msg = "🏆 **RAWWY Stars Leaderboard** 🏆\n\n📅 **This Month's Top Stars:**\n"
+    if monthly:
+        for i, r in enumerate(monthly):
+            msg += f"{i+1}. @{r['username']} - {r['monthly_points']}\n"
+    else:
+        msg += "None.\n"
+        
+    msg += "\n🌟 **All-Time Top Stars:**\n"
+    if all_time:
+        for i, r in enumerate(all_time):
+            msg += f"{i+1}. @{r['username']} - {r['all_time_points']}\n"
+    else:
+        msg += "None.\n"
+        
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 async def add_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     raw = " ".join(context.args)
     if not raw:
         return await update.message.reply_text("❌ Format: `/addlib [Name] , [Content]`", parse_mode="Markdown")
@@ -426,6 +324,7 @@ async def edit_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Updated **'{name}'**.", parse_mode="Markdown")
 
 async def get_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     try:
         name = context.args[0].lower().strip()
     except Exception:
@@ -458,7 +357,11 @@ async def list_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not recs:
         return await update.message.reply_text("❌ Empty.")
         
-    msg = "✅ 📚 **Library**\n" + "".join([f"• {'🔒' if r['is_private'] else '📂'} `{r['name']}`\n" for r in recs if not r['is_private'] or r['added_by'] == username])
+    msg = "✅ 📚 **Library**\n"
+    for r in recs:
+        if not r['is_private'] or r['added_by'] == username:
+            msg += f"• {'🔒' if r['is_private'] else '📂'} `{r['name']}`\n"
+            
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -490,6 +393,46 @@ async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.job_queue.run_once(task_reminder, when=dl - datetime.timedelta(minutes=10), data={"assignee": a, "assigner": assigner, "id": t_id, "desc": d}, chat_id=update.effective_chat.id)
     await update.message.reply_text(f"✅ Task `{t_id}` assigned to @{a}.\n📝 {d}\n⏳ Due: {dl.strftime('%H:%M WIB')}", parse_mode="Markdown")
 
+async def complete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    try:
+        t_id = int(context.args[0])
+    except Exception:
+        return await update.message.reply_text("❌ Format: `/complete [ID]`", parse_mode="Markdown")
+        
+    async with pool.acquire() as conn:
+        task = await conn.fetchrow('SELECT assignee, status FROM tasks WHERE id=$1', t_id)
+        if not task:
+            return await update.message.reply_text("❌ Not found.")
+        if task['status'] == 'Completed':
+            return await update.message.reply_text("❌ Already done.")
+        if task['assignee'] != username:
+            return await update.message.reply_text("❌ Only assignee can complete.")
+        await conn.execute("UPDATE tasks SET status='Completed' WHERE id=$1", t_id)
+        
+    await update.message.reply_text(f"✅ Task `{t_id}` marked complete.", parse_mode="Markdown")
+
+async def my_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.username or str(update.effective_user.id)
+    now = datetime.datetime.now(WIB)
+    pool = context.bot_data.get('db_pool')
+    
+    async with pool.acquire() as conn:
+        tasks = await conn.fetch("SELECT id, task_desc, deadline FROM tasks WHERE status='Pending' AND assignee=$1 ORDER BY deadline", username)
+        
+    if not tasks:
+        return await update.message.reply_text("✅ No pending tasks.")
+        
+    msg = "✅ 📋 **Your Active Tasks**\n\n"
+    for t in tasks:
+        msg += f"🔹 `{t['id']}` | {t['task_desc']} | ⏳ {int((t['deadline'] - now).total_seconds() / 60)}m\n"
+        
+    try:
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception:
+        await update.message.reply_text("❌ Please DM me first.")
+
 async def process_return(username, pool, bot):
     async with pool.acquire() as conn:
         mentions = await conn.fetch('SELECT mentioner, message, chat_title, created_at FROM away_mentions WHERE away_username=$1 ORDER BY created_at ASC', username)
@@ -498,7 +441,9 @@ async def process_return(username, pool, bot):
         
     msg = f"✅ 🎉 Welcome back, @{username}! Status: 🟢 Available.\n\n"
     if mentions:
-        msg += "Away Mentions:\n\n" + "".join([f"🔹 [{m['created_at'].astimezone(WIB).strftime('%m/%d %H:%M')}] in {m['chat_title']}\n@{m['mentioner']}: \"{m['message']}\"\n\n" for m in mentions])
+        msg += "Away Mentions:\n\n"
+        for m in mentions:
+            msg += f"🔹 [{m['created_at'].astimezone(WIB).strftime('%m/%d %H:%M')}] in {m['chat_title']}\n@{m['mentioner']}: \"{m['message']}\"\n\n"
     else:
         msg += "No mentions while away."
     return msg
