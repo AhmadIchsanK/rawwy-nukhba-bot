@@ -123,6 +123,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Global tracker error: {e}")
 
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type == "private":
         return await update.message.reply_text("❌ This command must be used in a group.")
@@ -147,7 +148,7 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp = await update.message.reply_text("⏳ Generating your missed activity recap... sending to DM shortly.")
     
     raw_text = "\n".join([f"[{h['created_at'].strftime('%H:%M')}] @{h['username']}: {h['message']}" for h in history])
-    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, events, and notable activity. Do not output a raw message dump. Be conversational.\n\n{raw_text[:25000]}"
+    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, announcements, events mentioned, polls, trivia, and notable activity. Do not output a raw message dump. Be conversational and highly readable.\n\n{raw_text[:25000]}"
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
