@@ -183,6 +183,35 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.job_queue.run_once(event_reminder, when=e_time - datetime.timedelta(minutes=rem), chat_id=update.effective_chat.id, data={"id": e_id, "title": title}, name=f"event_rem_{e_id}")
     context.job_queue.run_once(unpin_event, when=e_time, data={"chat_id": update.effective_chat.id, "msg_id": msg.message_id}, name=f"event_unpin_{e_id}")
 
+async def edit_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    try:
+        parts = " ".join(context.args).split(",", 1)
+        e_id = int(parts[0].strip())
+        title, time_str, rem_str = [p.strip() for p in parts[1].rsplit(",", 2)]
+        e_time = WIB.localize(datetime.datetime.strptime(time_str, "%m/%d/%Y %H:%M"))
+        rem = int(rem_str)
+    except Exception:
+        return await update.message.reply_text("❌ Format: `/editevent [ID] , [Title] , [MM/DD/YYYY HH:MM] , [RemMins]`", parse_mode="Markdown")
+    
+    async with pool.acquire() as conn:
+        ev = await conn.fetchrow('SELECT created_by FROM events WHERE id=$1', e_id)
+        if not ev:
+            return await update.message.reply_text("❌ Event not found.")
+        if ev['created_by'] != username and not await is_bot_admin(username, pool):
+            return await update.message.reply_text("❌ Unauthorized.")
+        await conn.execute('UPDATE events SET title=$1, event_time=$2 WHERE id=$3', title, e_time, e_id)
+        
+    for job in context.job_queue.get_jobs_by_name(f"event_rem_{e_id}"):
+        job.schedule_removal()
+    for job in context.job_queue.get_jobs_by_name(f"event_unpin_{e_id}"):
+        job.schedule_removal()
+        
+    from cmd_admin import event_reminder
+    context.job_queue.run_once(event_reminder, when=e_time - datetime.timedelta(minutes=rem), chat_id=update.effective_chat.id, data={"id": e_id, "title": title}, name=f"event_rem_{e_id}")
+    await update.message.reply_text(f"✅ Event `{e_id}` updated.", parse_mode="Markdown")
+
 async def rsvp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     if q.data.startswith("rsvp_temp"):
@@ -376,6 +405,26 @@ async def add_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
+async def edit_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",", 1)]
+        name = parts[0].lower()
+        content = parts[1]
+    except Exception:
+        return await update.message.reply_text("❌ Format error.")
+        
+    async with pool.acquire() as conn:
+        asset = await conn.fetchrow('SELECT added_by FROM library WHERE name=$1', name)
+        if not asset:
+            return await update.message.reply_text("❌ Not found.")
+        if asset['added_by'] != username and not await is_bot_admin(username, pool):
+            return await update.message.reply_text("❌ Unauthorized.")
+        await conn.execute('UPDATE library SET content=$1 WHERE name=$2', content, name)
+        
+    await update.message.reply_text(f"✅ Updated **'{name}'**.", parse_mode="Markdown")
+
 async def get_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         name = context.args[0].lower().strip()
@@ -501,12 +550,3 @@ async def set_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(uid, msg, parse_mode="Markdown")
         except Exception:
             pass
-
-async def show_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        log = await conn.fetchrow("SELECT version, changes, created_at FROM changelogs ORDER BY created_at DESC LIMIT 1")
-    if not log:
-        return await update.message.reply_text("No versions logged yet.")
-    msg = f"🚀 **Nukhba Manager v{log['version']}**\n📅 {log['created_at'].strftime('%B %d, %Y')}\n\n**Changelog:**\n{log['changes']}"
-    await update.message.reply_text(msg, parse_mode="Markdown")
