@@ -109,27 +109,27 @@ async def schedule_bday_job(app: Application):
         logger.info(f"✅ Birthday alerts actively scheduled for {hour:02d}:{minute:02d} WIB.")
     except Exception as e:
         logger.error(f"Failed to schedule birthday job: {e}")
-
-async def daily_bday_announcement(context: ContextTypes.DEFAULT_TYPE):
-    now = datetime.datetime.now(WIB)
-    today_str = now.strftime("%m/%d")
+async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
-    
-    async with pool.acquire() as conn:
-        bday_users = await conn.fetch("SELECT username FROM birthdays WHERE bday=$1", today_str)
-        target_group = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'")
-        
-    if not bday_users or not target_group:
+    if not pool:
         return
-    
-    msg = "🎉🎂 **HAPPY BIRTHDAY!** 🎂🎉\n\n"
-    msg += "Please join me in sending the warmest wishes to our amazing team member(s):\n"
-    for u in bday_users:
-        msg += f"🎈 @{u['username']}\n"
-    msg += "\nWe hope you have an incredible day filled with joy, and a fantastic year ahead!"
-    
+    async with pool.acquire() as conn:
+        target_chat_str = await conn.fetchval("SELECT value FROM trivia_config WHERE key='target_chat_id'") or ''
+        if not target_chat_str:
+            return
+        
+        top_minds = await conn.fetch("SELECT username, monthly_kp FROM trivia_scores WHERE monthly_kp > 0 ORDER BY monthly_kp DESC LIMIT 3")
+        await conn.execute("UPDATE trivia_scores SET monthly_kp = 0")
+        
+    if not top_minds:
+        return
+    announcement = "🏆 **NUKHBA TRIVIA MONTHLY CHAMPIONS** 🏆\n\nCongratulations to our top minds this month! Your brilliance shines supreme:\n\n"
+    podiums = ["🥇", "🥈", "🥉"]
+    for idx, user in enumerate(top_minds):
+        announcement += f"{podiums[idx]} **@{user['username']}** — {user['monthly_kp']} Knowledge Points earned!\n"
+    announcement += "\n🔄 *Monthly leaderboard stats have been reset! All-time stats remain captured.*"
     try:
-        await context.bot.send_message(int(target_group), msg, parse_mode="Markdown")
+        await context.bot.send_message(int(target_chat_str), announcement, parse_mode="Markdown")
     except Exception:
         pass
 
