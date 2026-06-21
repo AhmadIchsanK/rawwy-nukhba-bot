@@ -85,6 +85,13 @@ async def init_db(app: Application):
                     text TEXT
                 )
             ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS changelogs (
+                    version VARCHAR(50) PRIMARY KEY,
+                    changes TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            ''')
             
         import cmd_trivia
         import cmd_cheer
