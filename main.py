@@ -1,7 +1,6 @@
 import logging
 import datetime
-import asyncio
-from telegram import Update, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from telegram import Update, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommand
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from core import BOT_TOKEN, DATABASE_URL, WIB, init_db, log_action
 import cmd_system
@@ -16,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 async def post_init_wrapper(application: Application):
     await init_db(application)
-    system_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
+    system_hints = [BotCommand(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
     try:
         await application.bot.set_my_commands(system_hints, scope=BotCommandScopeDefault())
         await application.bot.set_my_commands(system_hints, scope=BotCommandScopeAllPrivateChats())
@@ -24,12 +23,6 @@ async def post_init_wrapper(application: Application):
         logger.info("✅ Menu correctly synced to commands_manifest.py absolute truth across all scopes.")
     except Exception as e:
         logger.error(f"Failed to push menu updates: {e}")
-        
-    try:
-        from crons import schedule_audit_job
-        await schedule_audit_job(application)
-    except Exception as e:
-        logger.error(f"Failed to boot audit job: {e}")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("⚠️ Exception encountered during runtime processing:", exc_info=context.error)
@@ -204,7 +197,7 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
-    app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=1)
+    app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=3)
     app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
     app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
     
