@@ -170,7 +170,10 @@ def main():
     
     app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
     app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
+    app.add_handler(CommandHandler("alltimefeedback", cmd_admin.all_time_feedback))
+    app.add_handler(CommandHandler("audittime", cmd_admin.set_audit_time))
 
+    # Super Owner Scope Handlers
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
     app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
     app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
@@ -200,9 +203,11 @@ def main():
     app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
     
     try:
-        from crons import daily_morning_log, poll_cleanup
+        from crons import daily_morning_log, poll_cleanup, schedule_audit_job
         app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
         app.job_queue.run_repeating(poll_cleanup, interval=3600)
+        # Initialize the audit log scheduler dynamically based on DB setting
+        app.post_init = lambda app: asyncio.gather(post_init_wrapper(app), schedule_audit_job(app))
     except ImportError:
         pass
         
