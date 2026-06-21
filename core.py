@@ -111,7 +111,8 @@ async def is_super(username: str) -> bool:
 
 async def delete_cmd(update: Update):
     try:
-        if update.message:
+        # ONLY delete the command if it was sent in a Group/Supergroup. Keep DMs intact.
+        if update.message and update.effective_chat.type != "private":
             await update.message.delete()
     except Exception:
         pass
