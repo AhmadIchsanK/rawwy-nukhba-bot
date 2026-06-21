@@ -171,33 +171,91 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         return
     
+    # ⚠️ FIXED: High-Performance Database Caching & Batching System
     try:
-        async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO users (username, user_id) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET user_id=$2", username, update.effective_user.id)
-            await conn.execute("INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, 1, 0) ON CONFLICT (date) DO UPDATE SET uses = bot_stats.uses + 1")
-            
-            if chat.type in ['group', 'supergroup']:
-                await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
-                await conn.execute('INSERT INTO chat_history (chat_id, username, message) VALUES ($1, $2, $3)', chat.id, username, text)
+        bot_data = context.bot_data
+        
+        # Initialize Memory Buffers
+        bot_data.setdefault('chat_buffer', [])
+        bot_data.setdefault('seen_users', set())
+        bot_data.setdefault('seen_groups', set())
+        bot_data.setdefault('away_cache', {'time': 0, 'data': []})
+        bot_data.setdefault('stats_uses', 0)
+        
+        bot_data['stats_uses'] += 1
+
+        # Evaluate if DB insert is necessary
+        needs_user_update = username not in bot_data['seen_users']
+        needs_group_update = chat.type in ['group', 'supergroup'] and chat.id not in bot_data['seen_groups']
+
+        # Away Status TTL Cache (Fetches once every 60 seconds instead of every message)
+        now_ts = now.timestamp()
+        if now_ts - bot_data['away_cache']['time'] > 60:
+            async with pool.acquire() as conn:
+                bot_data['away_cache']['data'] = await conn.fetch('SELECT username, reason, end_time, last_notified FROM away_status')
+                bot_data['away_cache']['time'] = now_ts
                 
-            is_away = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', username)
-            if is_away:
-                for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
-                    j.schedule_removal()
-                import cmd_user
-                recap_msg = await cmd_user.process_return(username, pool, context.bot)
-                try:
-                    await context.bot.send_message(update.effective_user.id, f"✅ {recap_msg}", parse_mode="Markdown")
-                except Exception:
-                    pass
-            
-            aways = await conn.fetch('SELECT username, reason, end_time, last_notified FROM away_status')
-            for a in aways:
-                if f"@{a['username']}" in text:
-                    await conn.execute('INSERT INTO away_mentions (away_username, mentioner, message, chat_title) VALUES ($1, $2, $3, $4)', a['username'], username, text, chat.title or "DM")
-                    if not a['last_notified'] or (now - a['last_notified']).total_seconds() > 3600:
-                        await update.message.reply_text(f"Just a heads up, @{a['username']} is away.\n(Reason: {a['reason']})")
-                        await conn.execute('UPDATE away_status SET last_notified=$1 WHERE username=$2', now, a['username'])
+        aways = bot_data['away_cache']['data']
+        mentions_to_log = []
+        is_returning = False
+
+        for a in aways:
+            if a['username'] == username:
+                is_returning = True
+            if f"@{a['username']}" in text:
+                mentions_to_log.append(a)
+
+        # Buffer the text to memory first
+        if chat.type in ['group', 'supergroup']:
+            bot_data['chat_buffer'].append((chat.id, username, text))
+
+        # Check if flush threshold is met (15 messages)
+        buffer_ready = len(bot_data['chat_buffer']) >= 15
+        
+        if needs_user_update or needs_group_update or is_returning or mentions_to_log or buffer_ready:
+            async with pool.acquire() as conn:
+                
+                if needs_user_update:
+                    await conn.execute("INSERT INTO users (username, user_id) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET user_id=$2", username, update.effective_user.id)
+                    bot_data['seen_users'].add(username)
+                    
+                if needs_group_update:
+                    await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
+                    bot_data['seen_groups'].add(chat.id)
+
+                # Batch write 15 messages simultaneously
+                if bot_data['chat_buffer']:
+                    buffer_copy = bot_data['chat_buffer'][:]
+                    bot_data['chat_buffer'].clear()
+                    await conn.executemany('INSERT INTO chat_history (chat_id, username, message) VALUES ($1, $2, $3)', buffer_copy)
+
+                # Batch write bot interactions
+                if bot_data['stats_uses'] > 0:
+                    uses_to_log = bot_data['stats_uses']
+                    bot_data['stats_uses'] = 0
+                    await conn.execute("INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, $1, 0) ON CONFLICT (date) DO UPDATE SET uses = bot_stats.uses + $1", uses_to_log)
+
+                if is_returning:
+                    for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
+                        j.schedule_removal()
+                    import cmd_user
+                    recap_msg = await cmd_user.process_return(username, pool, context.bot)
+                    try:
+                        await context.bot.send_message(update.effective_user.id, f"✅ {recap_msg}", parse_mode="Markdown")
+                    except Exception:
+                        pass
+                    bot_data['away_cache']['time'] = 0 # Invalidate cache to force refresh
+
+                if mentions_to_log:
+                    for a in mentions_to_log:
+                        await conn.execute('INSERT INTO away_mentions (away_username, mentioner, message, chat_title) VALUES ($1, $2, $3, $4)', a['username'], username, text, chat.title or "DM")
+                        
+                        last_notified = a['last_notified']
+                        if not last_notified or (now - last_notified.astimezone(WIB)).total_seconds() > 3600:
+                            await update.message.reply_text(f"Just a heads up, @{a['username']} is away.\n(Reason: {a['reason']})")
+                            await conn.execute('UPDATE away_status SET last_notified=$1 WHERE username=$2', now, a['username'])
+                            bot_data['away_cache']['time'] = 0 # Invalidate cache to force refresh
+
     except Exception as e:
         logger.error(f"Global tracker error: {e}")
 
