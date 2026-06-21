@@ -8,7 +8,7 @@ import importlib
 from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu
 import cmd_user 
 import cmd_system_help
 
@@ -19,13 +19,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     if update.effective_chat.type == "private":
         await update_user_menu(update.effective_user.id, username, pool, context.bot)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ **Hello! [RW] Nukhba Manager is fully operational.** Type `/help` to see the command manual.", parse_mode="Markdown")
+    await update.message.reply_text("✅ **Hello! [RW] Nukhba Manager is fully operational.** Type `/help` to see the command manual.", parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_system_help.help_command(update, context)
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="❓ **Unknown Command.** Please type `/help` to see valid commands.", parse_mode="Markdown")
+    await update.message.reply_text("❓ **Unknown Command.** Please type `/help` to see valid commands.", parse_mode="Markdown")
 
 async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.my_chat_member
@@ -67,7 +67,6 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 import cmd_trivia
                 await cmd_trivia.render_tcfg_menu(update, context, True)
-                await update.message.delete()
             except Exception:
                 pass
         return
@@ -79,11 +78,10 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 import cmd_trivia
                 await cmd_trivia.render_tcfg_menu(update, context, True)
-                await update.message.delete()
             except Exception:
                 pass
         else:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Invalid Time Format. Configuration reset.")
+            await update.message.reply_text("❌ Invalid Time Format. Run /triviaconfig again.")
         return
 
     if context.user_data.get('editing_feedback') and chat.type == "private":
@@ -117,15 +115,16 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if f"@{a['username']}" in text:
                     await conn.execute('INSERT INTO away_mentions (away_username, mentioner, message, chat_title) VALUES ($1, $2, $3, $4)', a['username'], username, text, chat.title or "DM")
                     if not a['last_notified'] or (now - a['last_notified']).total_seconds() > 3600:
-                        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"Just a heads up, @{a['username']} is away.\n(Reason: {a['reason']})")
+                        await update.message.reply_text(f"Just a heads up, @{a['username']} is away.\n(Reason: {a['reason']})")
                         await conn.execute('UPDATE away_status SET last_notified=$1 WHERE username=$2', now, a['username'])
     except Exception as e:
         logger.error(f"Global tracker error: {e}")
 
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type == "private":
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ This command must be used in a group.")
+        return await update.message.reply_text("❌ This command must be used in a group.")
         
     pool = context.bot_data.get('db_pool')
     username = update.effective_user.username or str(update.effective_user.id)
@@ -141,13 +140,13 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(update.effective_user.id, "✅ You haven't missed any messages in this group recently!")
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Please start a DM with me first to receive your recap.")
+            await update.message.reply_text("❌ Please start a DM with me first to receive your recap.")
         return
         
-    temp = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ Generating your missed activity recap... sending to DM shortly.")
+    temp = await update.message.reply_text("⏳ Generating your missed activity recap... sending to DM shortly.")
     
     raw_text = "\n".join([f"[{h['created_at'].strftime('%H:%M')}] @{h['username']}: {h['message']}" for h in history])
-    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, events, and notable activity. Do not output a raw message dump. Be conversational.\n\n{raw_text[:25000]}"
+    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, events, polls, trivia, and notable activity. Do not output a raw message dump. Be highly readable.\n\n{raw_text[:25000]}"
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
@@ -155,20 +154,21 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, f"📝 **What You Missed in {update.effective_chat.title}:**\n\n{resp.text}", parse_mode="Markdown")
         await temp.delete()
     except Exception:
-        await temp.edit_text("❌ Failed to generate recap. Please DM me first.")
+        await temp.edit_text(f"❌ Failed to generate recap. Please DM me first.")
 
 async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type != "private":
         try:
             await context.bot.send_message(update.effective_user.id, "💡 Please type `/feedback [your suggestion]` here to submit it privately.", parse_mode="Markdown")
         except Exception:
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Please DM me first to submit feedback securely.")
+            await update.message.reply_text("❌ Please DM me first to submit feedback securely.")
         return
         
     text = " ".join(context.args)
     if not text:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Usage: `/feedback [explain issue or request here]`", parse_mode="Markdown")
+        return await update.message.reply_text("❌ Usage: `/feedback [explain issue or request here]`", parse_mode="Markdown")
         
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn:
@@ -210,9 +210,9 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, is_bot_query: bool = False):
     if not prompt:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Please provide a prompt.")
+        return await update.message.reply_text("❌ Please provide a prompt.")
     if not GEMINI_API_KEY:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ GEMINI_API_KEY unconfigured.")
+        return await update.message.reply_text("❌ GEMINI_API_KEY unconfigured.")
     
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -228,7 +228,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             if not is_adm:
                 limit_left = await conn.fetchval("SELECT gemini_quota FROM users WHERE username=$1", username)
                 if limit_left <= 0:
-                    return await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ AI limit depleted ({limit}/{limit}).")
+                    return await update.message.reply_text(f"❌ AI limit depleted ({limit}/{limit}).")
                 await conn.execute("UPDATE users SET gemini_quota = gemini_quota - 1 WHERE username=$1", username)
                 quota_msg = f"_(Limit left: {limit_left - 1})_"
             else:
@@ -238,9 +238,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             config_dict = {c['key']: c['value'] for c in configs}
             
     except Exception as e:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ DB Error: {e}")
+        return await update.message.reply_text(f"❌ DB Error: {e}")
 
-    temp = await context.bot.send_message(chat_id=update.effective_chat.id, text="⏳ Thinking...")
+    temp = await update.message.reply_text("⏳ Thinking...")
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
@@ -255,9 +255,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 f"- Weekly Gemini Limit: {config_dict.get('gemini_weekly_limit', 20)}\n"
                 f"- Default Star Quota: {config_dict.get('star_quota', 3)}\n"
                 f"- Max Tasks per User: {config_dict.get('max_tasks', 4)}\n"
-                f"- Max Events per User: {config_dict.get('max_events', 5)}\n"
                 f"- Max Away Days: {config_dict.get('max_away_days', 14)}\n\n"
-                f"- Trivia timeout: {config_dict.get('trivia_reg_to', 60)}s\n\n"
             )
             
             if is_adm:
@@ -294,14 +292,14 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         
         config_msg = ""
         if is_bot_query and is_adm:
-            match = re.search(r"```json\s*\n(.*?)\n\s*```", reply, re.DOTALL)
+            match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
                     async with pool.acquire() as conn:
                         for c in configs:
                             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
-                    reply = re.sub(r"```json\s*\n(.*?)\n\s*```", "", reply, flags=re.DOTALL).strip()
+                    reply = re.sub(r'```json\n(.*?)\n```', '', reply, flags=re.DOTALL).strip()
                     config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
                 except Exception as e:
                     logger.error(f"Config parse error: {e}")
