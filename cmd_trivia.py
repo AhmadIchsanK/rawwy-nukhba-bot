@@ -757,10 +757,12 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
 
     title  = "🚨 **WEEKLY SUPER TRIVIA** 🚨" if is_super_round else "🧠 **DAILY TRIVIA** 🧠"
     footer = "⚡ *Super Trivia: −5 KP for wrong answers!*\n" if is_super_round else ""
+    
+    # ⚠️ FIXED: Removed the live countdown promise. It now just states the limit.
     msg_text = (
         f"{title}\n\n"
         f"❓ {data['question']}\n\n"
-        f"⏱️ **Time Remaining:** `{timeout}s`\n"
+        f"⏱️ **Time Limit:** `{timeout}s`\n"
         f"{footer}"
         f"🔒 *Answers lock instantly. No second chances!*"
     )
@@ -847,7 +849,8 @@ async def close_trivia_round(bot, chat_id: int, reason: str, pool):
 # ─────────────────────────────────────────────
 
 async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
-    """Runs every 3 seconds. Updates countdown timer and closes expired rounds."""
+    """Runs every 3 seconds to check for and close expired rounds."""
+    # ⚠️ FIXED: The API Rate Limit loop (FloodWait) is completely removed!
     pool = context.bot_data.get('db_pool')
     if not pool:
         return
@@ -863,59 +866,6 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
         if rem <= 0:
             await close_trivia_round(context.bot, r['chat_id'], "⏱️ Time Limit Reached", pool)
             continue
-
-        # Update the countdown on the message
-        opts    = json.loads(r['options'])
-        winners = json.loads(r['winners'])
-        is_super_round = r['is_super']
-
-        def safe_label(text, idx):
-            prefix = f"{['A','B','C','D','E','F'][idx]}. "
-            max_len = 60 - len(prefix)
-            label = text[:max_len] + "…" if len(text) > max_len else text
-            return prefix + label
-
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(safe_label(opt, idx), callback_data=f"trivans_{idx}")]
-            for idx, opt in enumerate(opts)
-        ])
-
-        title  = "🚨 **WEEKLY SUPER TRIVIA** 🚨" if is_super_round else "🧠 **DAILY TRIVIA** 🧠"
-        footer = "⚡ *Super Trivia: −5 KP for wrong answers!*\n" if is_super_round else ""
-
-        # Build timer bar
-        total_secs = int((expires - (now - datetime.timedelta(seconds=rem + 3))).total_seconds()) or 1
-        filled = max(0, min(10, int((rem / max(total_secs, 1)) * 10)))
-        timer_bar = "▓" * filled + "░" * (10 - filled)
-
-        updated_text = (
-            f"{title}\n\n"
-            f"❓ {r['question']}\n\n"
-            f"⏱️ **Time Remaining:** `{rem}s` [{timer_bar}]\n"
-            f"✅ Correct so far: {len(winners)}/3\n"
-            f"{footer}"
-            f"🔒 *Answers lock instantly. No second chances!*"
-        )
-
-        try:
-            await context.bot.edit_message_text(
-                chat_id=r['chat_id'],
-                message_id=r['message_id'],
-                text=updated_text,
-                reply_markup=kb,
-                parse_mode="Markdown"
-            )
-        except BadRequest as e:
-            if "Message is not modified" in str(e):
-                pass  # Ignore — content was identical, no real error
-            elif "Message to edit not found" in str(e):
-                # Message was deleted externally; clean up DB
-                async with pool.acquire() as conn:
-                    await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", r['chat_id'])
-            else:
-                logger.warning(f"Sweeper edit error for chat {r['chat_id']}: {e}")
-        except Exception as e:
-            logger.warning(f"Sweeper unexpected error: {e}")
 
 
 async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
