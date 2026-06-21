@@ -10,6 +10,12 @@ from core import WIB, GEMINI_API_KEY, is_bot_admin, is_super, delete_cmd
 
 logger = logging.getLogger(__name__)
 
+def escape_html(text):
+    """Helper to escape HTML special characters to prevent parse errors."""
+    if not text:
+        return ""
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 THEME_MAP = {
     "0": "Random", "1": "Movies & TV Shows", "2": "Gaming", "3": "Sports & Esports",
     "4": "Music", "5": "Geography", "6": "General Knowledge", "7": "History",
@@ -497,6 +503,28 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Called from cmd_system.py global_tracker or message handler in main.py
 # ─────────────────────────────────────────────
 
+async def _tcfg_refresh_from_input(update, context, d):
+    """Helper to refresh the UI after valid text input."""
+    chat_id = update.effective_chat.id
+    msg_id  = context.user_data.get('tcfg_msg_id')
+    try:
+        if msg_id:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_id,
+                text=_tcfg_text(d),
+                reply_markup=_tcfg_kb(),
+                parse_mode="Markdown"
+            )
+        else:
+            msg = await update.message.reply_text(
+                _tcfg_text(d), reply_markup=_tcfg_kb(), parse_mode="Markdown"
+            )
+            context.user_data['tcfg_msg_id'] = msg.message_id
+    except Exception as e:
+        logger.warning(f"tcfg refresh error: {e}")
+
+
 async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Processes any pending trivia config text input.
@@ -512,9 +540,47 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
         return False
 
     d = context.user_data.get('tcfg_draft')
-    text = update.message.text.strip() if update.message and update.message.text else ""
+    if not d:
+        return False
 
-    if not text or not d:
+    # ── Custom Target Chat ──
+    if context.user_data.get('awaiting_tcfg_target'):
+        context.user_data.pop('awaiting_tcfg_target')
+        
+        chat_id = None
+        if update.message.forward_origin:
+            if hasattr(update.message.forward_origin, 'chat'):
+                chat_id = str(update.message.forward_origin.chat.id)
+            elif hasattr(update.message.forward_origin, 'sender_user'):
+                chat_id = str(update.message.forward_origin.sender_user.id)
+        elif update.message.forward_from_chat:
+            chat_id = str(update.message.forward_from_chat.id)
+        
+        if not chat_id and update.message.text:
+            text = update.message.text.strip()
+            try:
+                int(text)
+                chat_id = text
+            except ValueError:
+                pass
+        
+        if chat_id:
+            d['target'] = chat_id
+        else:
+            await update.message.reply_text("❌ Invalid chat ID or forward. Please try again.")
+            context.user_data['awaiting_tcfg_target'] = True
+            return True
+            
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        
+        await _tcfg_refresh_from_input(update, context, d)
+        return True
+
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    if not text:
         return False
 
     # ── Custom Theme ──
@@ -525,24 +591,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             await update.message.delete()
         except Exception:
             pass
-        try:
-            chat_id = update.effective_chat.id
-            msg_id  = context.user_data.get('tcfg_msg_id')
-            if msg_id:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    text=_tcfg_text(d),
-                    reply_markup=_tcfg_kb(),
-                    parse_mode="Markdown"
-                )
-            else:
-                msg = await update.message.reply_text(
-                    _tcfg_text(d), reply_markup=_tcfg_kb(), parse_mode="Markdown"
-                )
-                context.user_data['tcfg_msg_id'] = msg.message_id
-        except Exception as e:
-            logger.warning(f"tcfg theme refresh error: {e}")
+        await _tcfg_refresh_from_input(update, context, d)
         return True
 
     # ── Custom Time ──
@@ -565,68 +614,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             await update.message.delete()
         except Exception:
             pass
-        try:
-            chat_id = update.effective_chat.id
-            msg_id  = context.user_data.get('tcfg_msg_id')
-            if msg_id:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    text=_tcfg_text(d),
-                    reply_markup=_tcfg_kb(),
-                    parse_mode="Markdown"
-                )
-            else:
-                msg = await update.message.reply_text(
-                    _tcfg_text(d), reply_markup=_tcfg_kb(), parse_mode="Markdown"
-                )
-                context.user_data['tcfg_msg_id'] = msg.message_id
-        except Exception as e:
-            logger.warning(f"tcfg time refresh error: {e}")
-        return True
-
-    # ── Custom Target Chat ──
-    if context.user_data.get('awaiting_tcfg_target'):
-        context.user_data.pop('awaiting_tcfg_target')
-        # Accept forwarded message (grab chat_id) or raw typed ID
-        if update.message.forward_origin or update.message.forward_from_chat:
-            fwd_chat = getattr(update.message.forward_from_chat, 'id', None)
-            if fwd_chat:
-                d['target'] = str(fwd_chat)
-            else:
-                await update.message.reply_text("❌ Could not read chat ID from forwarded message.")
-                context.user_data['awaiting_tcfg_target'] = True
-                return True
-        else:
-            try:
-                int(text)  # validate it's a number
-                d['target'] = text
-            except ValueError:
-                await update.message.reply_text("❌ Invalid chat ID. Must be a number like `-1001234567890`")
-                context.user_data['awaiting_tcfg_target'] = True
-                return True
-        try:
-            await update.message.delete()
-        except Exception:
-            pass
-        try:
-            chat_id = update.effective_chat.id
-            msg_id  = context.user_data.get('tcfg_msg_id')
-            if msg_id:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=msg_id,
-                    text=_tcfg_text(d),
-                    reply_markup=_tcfg_kb(),
-                    parse_mode="Markdown"
-                )
-            else:
-                msg = await update.message.reply_text(
-                    _tcfg_text(d), reply_markup=_tcfg_kb(), parse_mode="Markdown"
-                )
-                context.user_data['tcfg_msg_id'] = msg.message_id
-        except Exception as e:
-            logger.warning(f"tcfg target refresh error: {e}")
+        await _tcfg_refresh_from_input(update, context, d)
         return True
 
     # ── Regular Timeout ──
@@ -645,16 +633,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             await update.message.delete()
         except Exception:
             pass
-        try:
-            chat_id = update.effective_chat.id
-            msg_id  = context.user_data.get('tcfg_msg_id')
-            if msg_id:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id, message_id=msg_id,
-                    text=_tcfg_text(d), reply_markup=_tcfg_kb(), parse_mode="Markdown"
-                )
-        except Exception:
-            pass
+        await _tcfg_refresh_from_input(update, context, d)
         return True
 
     # ── Super Timeout ──
@@ -673,16 +652,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             await update.message.delete()
         except Exception:
             pass
-        try:
-            chat_id = update.effective_chat.id
-            msg_id  = context.user_data.get('tcfg_msg_id')
-            if msg_id:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id, message_id=msg_id,
-                    text=_tcfg_text(d), reply_markup=_tcfg_kb(), parse_mode="Markdown"
-                )
-        except Exception:
-            pass
+        await _tcfg_refresh_from_input(update, context, d)
         return True
 
     return False
@@ -727,399 +697,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
             config={'response_mime_type': 'application/json'}
         )
         raw = resp.text.strip()
-        # Strip any accidental markdown fences
-        if raw.startswith("```"):
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        data = json.loads(raw.strip())
-    except Exception as e:
-        logger.error(f"Trivia AI generation failed: {e}")
-        try:
-            await bot.send_message(chat_id, "⚠️ Trivia generation failed. Please try again.")
-        except Exception:
-            pass
-        return
-
-    expires_at = datetime.datetime.now(WIB) + datetime.timedelta(seconds=timeout)
-
-    # Build answer keyboard — truncate long options safely
-    def safe_label(text, idx):
-        prefix = f"{['A','B','C','D','E','F'][idx]}. "
-        max_len = 60 - len(prefix)
-        label = text[:max_len] + "…" if len(text) > max_len else text
-        return prefix + label
-
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton(safe_label(opt, idx), callback_data=f"trivans_{idx}")]
-        for idx, opt in enumerate(data['options'])
-    ])
-
-    title  = "🚨 **WEEKLY SUPER TRIVIA** 🚨" if is_super_round else "🧠 **DAILY TRIVIA** 🧠"
-    footer = "⚡ *Super Trivia: −5 KP for wrong answers!*\n" if is_super_round else ""
-    
-    # ⚠️ FIXED: Removed the live countdown promise. It now just states the limit.
-    msg_text = (
-        f"{title}\n\n"
-        f"❓ {data['question']}\n\n"
-        f"⏱️ **Time Limit:** `{timeout}s`\n"
-        f"{footer}"
-        f"🔒 *Answers lock instantly. No second chances!*"
-    )
-
-    try:
-        sent = await bot.send_message(chat_id, msg_text, reply_markup=kb, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Failed to send trivia message: {e}")
-        return
-
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-        await conn.execute(
-            "INSERT INTO active_trivia "
-            "(chat_id, message_id, question, options, correct_index, explanation, is_super, expires_at) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-            chat_id, sent.message_id,
-            data['question'], json.dumps(data['options']),
-            data['correct_index'], data['explanation'],
-            is_super_round, expires_at
-        )
-
-
-# ─────────────────────────────────────────────
-# TRIVIA CLOSE / END ROUND
-# ─────────────────────────────────────────────
-
-async def close_trivia_round(bot, chat_id: int, reason: str, pool):
-    """End a trivia round, post results and explanation."""
-    async with pool.acquire() as conn:
-        room = await conn.fetchrow("SELECT * FROM active_trivia WHERE chat_id=$1", chat_id)
-        if not room:
-            return
-        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-
-    opts    = json.loads(room['options'])
-    correct = opts[room['correct_index']]
-    winners = json.loads(room['winners'])
-
-    podiums = ["🥇", "🥈", "🥉"]
-    if winners:
-        board = "🏆 **Top Winners:**\n" + "".join(
-            f"{podiums[i]} @{w['username']} — +{w['pts']} Knowledge Points\n"
-            for i, w in enumerate(winners)
-        )
-    else:
-        board = "📭 *No one answered correctly this round.*"
-
-    result_text = (
-        f"🏁 **TRIVIA CLOSED** — {reason}\n"
-        "──────────────────────────────\n"
-        f"❓ *{room['question']}*\n\n"
-        f"✅ **Correct Answer:** {correct}\n\n"
-        f"💡 **Explanation:**\n{room['explanation']}\n\n"
-        f"{board}"
-    )
-
-    # Try editing original message first; fall back to new message
-    try:
-        await bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=room['message_id'],
-            text=result_text,
-            parse_mode="Markdown"
-        )
-    except BadRequest as e:
-        if "Message to edit not found" in str(e) or "too old" in str(e).lower() or "can't be edited" in str(e).lower():
-            try:
-                await bot.send_message(chat_id, result_text, parse_mode="Markdown")
-            except Exception as send_err:
-                logger.error(f"Failed to send trivia result: {send_err}")
-        elif "Message is not modified" not in str(e):
-            logger.warning(f"close_trivia_round edit error: {e}")
-    except Exception as e:
-        logger.error(f"close_trivia_round unexpected error: {e}")
-        try:
-            await bot.send_message(chat_id, result_text, parse_mode="Markdown")
-        except Exception:
-            pass
-
-
-# ─────────────────────────────────────────────
-# CRON JOBS
-# ─────────────────────────────────────────────
-
-async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
-    """Runs every 3 seconds to check for and close expired rounds."""
-    # ⚠️ FIXED: The API Rate Limit loop (FloodWait) is completely removed!
-    pool = context.bot_data.get('db_pool')
-    if not pool:
-        return
-    now = datetime.datetime.now(WIB)
-
-    async with pool.acquire() as conn:
-        rooms = await conn.fetch("SELECT * FROM active_trivia")
-
-    for r in rooms:
-        expires = r['expires_at'].astimezone(WIB)
-        rem = int((expires - now).total_seconds())
-
-        if rem <= 0:
-            await close_trivia_round(context.bot, r['chat_id'], "⏱️ Time Limit Reached", pool)
-            continue
-
-
-async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
-    """Runs every 60 seconds. Fires daily/weekly trivia at the configured time."""
-    pool = context.bot_data.get('db_pool')
-    if not pool:
-        return
-
-    now          = datetime.datetime.now(WIB)
-    current_date = now.strftime('%Y-%m-%d')
-    day_name     = now.strftime('%A').lower()
-    is_weekend   = day_name in ['saturday', 'sunday']
-
-    async with pool.acquire() as conn:
-        status = await conn.fetchval("SELECT value FROM config WHERE key='status'") or 'active'
-        if status != 'active':
-            return
-
-        last_run     = await conn.fetchval("SELECT value FROM config WHERE key='last_run_date'") or ''
-        if last_run == current_date:
-            return
-
-        run_time_str  = await conn.fetchval("SELECT value FROM config WHERE key='trivia_time'") or '12:00'
-        target_raw    = await conn.fetchval("SELECT value FROM trivia_config WHERE key='target_chat_id'") or ''
-        days_mode     = await conn.fetchval("SELECT value FROM config WHERE key='trivia_days'") or 'all'
-
-    if not target_raw:
-        return
-    try:
-        target_chat_id = int(target_raw)
-    except ValueError:
-        return
-
-    if days_mode == 'weekday' and is_weekend:
-        return
-    if days_mode == 'weekend' and not is_weekend:
-        return
-    if now.strftime('%H:%M') != run_time_str:
-        return
-
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO config (key, value) VALUES ('last_run_date', $1) "
-            "ON CONFLICT (key) DO UPDATE SET value=$1",
-            current_date
-        )
-
-    is_super_day = (day_name == 'sunday')
-    context.application.create_task(
-        deploy_trivia(context.bot, target_chat_id, is_super_day, pool)
-    )
-
-
-async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
-    """Runs on the 1st of each month. Posts leaderboard and resets monthly KP."""
-    pool = context.bot_data.get('db_pool')
-    if not pool:
-        return
-
-    async with pool.acquire() as conn:
-        target_raw = await conn.fetchval("SELECT value FROM trivia_config WHERE key='target_chat_id'") or ''
-        if not target_raw:
-            return
-        top_minds = await conn.fetch(
-            "SELECT username, monthly_kp FROM trivia_scores WHERE monthly_kp > 0 "
-            "ORDER BY monthly_kp DESC LIMIT 3"
-        )
-        await conn.execute("UPDATE trivia_scores SET monthly_kp = 0")
-
-    try:
-        target_chat_id = int(target_raw)
-    except ValueError:
-        return
-
-    if not top_minds:
-        return
-
-    podiums      = ["🥇", "🥈", "🥉"]
-    announcement = (
-        "🏆 **NUKHBA TRIVIA — MONTHLY CHAMPIONS** 🏆\n"
-        "──────────────────────────────\n"
-        "Congratulations to our top minds this month!\n\n"
-    )
-    for idx, user in enumerate(top_minds):
-        announcement += f"{podiums[idx]} **@{user['username']}** — {user['monthly_kp']} Knowledge Points\n"
-    announcement += "\n🔄 *Monthly stats reset. All-time stats preserved!*"
-
-    try:
-        await context.bot.send_message(target_chat_id, announcement, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Monthly trivia reset announcement failed: {e}")
-
-
-# ─────────────────────────────────────────────
-# ADMIN COMMANDS
-# ─────────────────────────────────────────────
-
-async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return await update.message.reply_text("❌ Admins only.")
-    await deploy_trivia(context.bot, update.effective_chat.id, False, pool)
-
-
-async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return await update.message.reply_text("❌ Admins only.")
-    await deploy_trivia(context.bot, update.effective_chat.id, True, pool)
-
-
-async def cancel_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return await update.message.reply_text("❌ Admins only.")
-
-    async with pool.acquire() as conn:
-        room = await conn.fetchrow("SELECT chat_id FROM active_trivia WHERE chat_id=$1", update.effective_chat.id)
-
-    if not room:
-        return await update.message.reply_text("ℹ️ No active trivia round in this chat.")
-
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔄 Retry Round", callback_data="tcancel_retry"),
-        InlineKeyboardButton("❌ Confirm Cancel", callback_data="tcancel_confirm")
-    ]])
-    await update.message.reply_text(
-        "⚠️ **Cancel Active Trivia?**\n\n"
-        "This will end the round immediately with **no Knowledge Points awarded**.\n\n"
-        "Choose an option:",
-        reply_markup=kb,
-        parse_mode="Markdown"
-    )
-
-
-async def end_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Force-end trivia immediately and show results. Admin only."""
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return await update.message.reply_text("❌ Admins only.")
-
-    chat_id = update.effective_chat.id
-    async with pool.acquire() as conn:
-        room = await conn.fetchrow("SELECT chat_id FROM active_trivia WHERE chat_id=$1", chat_id)
-
-    if not room:
-        return await update.message.reply_text("ℹ️ No active trivia round in this chat.")
-
-    await close_trivia_round(context.bot, chat_id, "🛑 Ended by Admin", pool)
-
-
-async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manually adjust a user's Knowledge Points. Admin only."""
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return await update.message.reply_text("❌ Admins only.")
-
-    try:
-        raw   = " ".join(context.args)
-        parts = [p.strip() for p in raw.split(",") if p.strip()]
-        user   = parts[0].replace("@", "")
-        op     = parts[1].lower()
-        amount = int(parts[2])
-    except Exception:
-        return await update.message.reply_text(
-            "❌ **Usage:**\n"
-            "`` /admin_kp @username , set|add|sub , amount ``",
-            parse_mode="Markdown"
-        )
-
-    async with pool.acquire() as conn:
-        if op == 'set':
-            await conn.execute(
-                "INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, $2, $2) "
-                "ON CONFLICT (username) DO UPDATE SET monthly_kp=$2, all_time_kp=$2",
-                user, amount
-            )
-        elif op == 'add':
-            await conn.execute(
-                "INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, $2, $2) "
-                "ON CONFLICT (username) DO UPDATE SET "
-                "monthly_kp=trivia_scores.monthly_kp+$2, all_time_kp=trivia_scores.all_time_kp+$2",
-                user, amount
-            )
-        elif op == 'sub':
-            await conn.execute(
-                "INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, 0, 0) "
-                "ON CONFLICT (username) DO UPDATE SET "
-                "monthly_kp=GREATEST(0, trivia_scores.monthly_kp-$2), "
-                "all_time_kp=GREATEST(0, trivia_scores.all_time_kp-$2)",
-                user, amount
-            )
-        else:
-            return await update.message.reply_text("❌ Op must be `set`, `add`, or `sub`", parse_mode="Markdown")
-
-    await update.message.reply_text(
-        f"✅ Knowledge Points updated for **@{user}** (`{op}` {amount} KP).",
-        parse_mode="Markdown"
-    )
-
-
-# ─────────────────────────────────────────────
-# USER COMMANDS
-# ─────────────────────────────────────────────
-
-async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    username = update.effective_user.username or str(update.effective_user.id)
-    pool     = context.bot_data.get('db_pool')
-
-    async with pool.acquire() as conn:
-        scores = await conn.fetchrow(
-            "SELECT monthly_kp, all_time_kp FROM trivia_scores WHERE username=$1", username
-        )
-
-    monthly  = scores['monthly_kp']  if scores else 0
-    all_time = scores['all_time_kp'] if scores else 0
-
-    text = (
-        "🧠 **Your Knowledge Point Summary**\n"
-        "──────────────────────────────\n"
-        f"📅 Monthly KP:  `{monthly}`\n"
-        f"🏆 All-Time KP: `{all_time}`\n\n"
-        "Keep exercising your mind — trivia runs daily! 💡"
-    )
-
-    try:
-        await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
-        if update.effective_chat.type != "private":
-            await update.message.reply_text("✅ Your Knowledge Points have been sent to your DMs!")
-    except Exception:
-        await update.message.reply_text(
-            "❌ Couldn't DM you. Please start a chat with me first, then try again."
-        )
-
-
-# ─────────────────────────────────────────────
-# LEGACY FALLBACKS (prevent import crashes)
-# ─────────────────────────────────────────────
-
-async def _legacy_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ℹ️ Please use the unified `/triviaconfig` panel instead.")
-
-set_trivia_channel  = _legacy_redirect
-set_trivia_theme    = _legacy_redirect
-set_trivia_time     = _legacy_redirect
-set_trivia_days     = _legacy_redirect
-set_trivia_opts     = _legacy_redirect
-set_trivia_timeout  = _legacy_redirect
-set_super_timeout   = _legacy_redirect
-pause_trivia        = _legacy_redirect
-resume_trivia       = _legacy_redirect
+        
+        import re
+        match = re.search(r"
+http://googleusercontent.com/immersive_entry_chip/0
