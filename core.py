@@ -20,7 +20,6 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 SUPER_OWNER = os.getenv("SUPER_OWNER", "superadmin")
 
-# --- CENTRALIZED DATABASE CONNECTIVITY INITIALIZER ---
 async def init_db(app: Application):
     if not DATABASE_URL:
         logger.critical("❌ CRITICAL: DATABASE_URL variable is missing from environment variables setup!")
@@ -111,8 +110,8 @@ async def is_super(username: str) -> bool:
 
 async def delete_cmd(update: Update):
     try:
-        # ONLY delete the command if it was sent in a Group/Supergroup. Keep DMs intact.
-        if update.message and update.effective_chat.type != "private":
+        # Ensures that commands typed in Private DMs are NEVER deleted
+        if update.message and update.effective_chat.type != 'private':
             await update.message.delete()
     except Exception:
         pass
