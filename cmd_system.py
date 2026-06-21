@@ -271,11 +271,13 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
+        # We use bt to bypass Markdown parsers when rendering literal JSON instructions
+        bt = "`" * 3
+        
         if is_bot_query:
             from commands_manifest import COMMANDS
             cmd_list = "\n".join([f"- /{c['name']}: {c['desc']}" for c in COMMANDS])
             
-            # Note: We keep the system prompt string literal formatted cleanly so it copies perfectly
             system_prompt = (
                 "You are Nukhba Manager, an advanced Telegram bot. "
                 "You have absolute knowledge of all your capabilities.\n\n"
@@ -287,57 +289,64 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 f"- Max Events per User: {config_dict.get('max_events', 5)}\n"
                 f"- Max Away Days: {config_dict.get('max_away_days', 14)}\n\n"
                 f"- Trivia timeout: {config_dict.get('trivia_reg_to', 60)}s\n\n"
+                "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters.\n"
             )
             
             if is_adm:
                 system_prompt += (
                     "If the admin asks to configure or change a hidden setting, "
                     "output a JSON block exactly like this:\n"
-                    "```json\n"
-                    '[{"key": "dm_length", "value": "800"}, {"key": "star_quota", "value": "5"}]\n'
-                    "```\n"
+                    f"{bt}json\n"
+                    '[{"key": "dm_length", "value": "1000"}, {"key": "star_quota", "value": "5"}]\n'
+                    f"{bt}\n"
                 )
                 
             if is_sup:
                 system_prompt += (
                     "⚠️ ROOT PRIVILEGES: To modify python code, output a hotpatch:\n"
-                    "```json\n"
+                    f"{bt}json\n"
                     "[\n"
                     "  {\n"
                     '    "action": "hotpatch",\n'
                     '    "code": "print(\'hi\')"\n'
                     "  }\n"
                     "]\n"
-                    "```\n"
+                    f"{bt}\n"
                 )
             
             system_prompt += "\nUser Question: " + prompt
         else:
-            system_prompt = prompt
+            system_prompt = "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters. Be concise.\n\nUser Prompt: " + prompt
             
         response = await asyncio.wait_for(
             asyncio.to_thread(client.models.generate_content, model='gemini-2.5-flash', contents=system_prompt),
             timeout=120.0
         )
+        
         reply = response.text
         
+        # Hard truncate response to guarantee it never exceeds 3000 chars
+        if len(reply) > 3000:
+            reply = reply[:2997] + "..."
+            
         config_msg = ""
         if is_bot_query and is_adm:
-            match = re.search(r"```json\s*\n(.*?)\n\s*```", reply, re.DOTALL)
+            match = re.search(r"`{3}json\s*\n(.*?)\n\s*`{3}", reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
                     async with pool.acquire() as conn:
                         for c in configs:
                             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
-                    reply = re.sub(r"```json\s*\n(.*?)\n\s*```", "", reply, flags=re.DOTALL).strip()
+                    reply = re.sub(r"`{3}json\s*\n(.*?)\n\s*`{3}", "", reply, flags=re.DOTALL).strip()
                     config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
                 except Exception as e:
                     logger.error(f"Config parse error: {e}")
         
         async with pool.acquire() as conn:
             dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
-            dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 500
+            # Set default DM threshold to 1000
+            dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 1000
 
         prefix = "🤖 **About Me:**\n\n" if is_bot_query else "🤖 **Gemini AI Response:**\n\n"
         inline_prefix = "🤖 **Nukhba Manager:** " if is_bot_query else "🤖 **Gemini:** "
