@@ -86,6 +86,12 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def post_init_wrapper(application: Application):
     await init_db(application)
+    async def post_stop_wrapper(application: Application):
+    """Gracefully close the database pool when the bot shuts down."""
+    pool = application.bot_data.get('db_pool')
+    if pool:
+        await pool.close()
+        logger.info("🛑 PostgreSQL database connection pool closed gracefully.")
 
     public_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
     try:
@@ -121,6 +127,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
+    app.post_stop = post_stop_wrapper
 
     # ─────────────────────────────────────────
     # 💬 GENERAL / SYSTEM COMMANDS
