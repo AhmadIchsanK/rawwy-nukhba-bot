@@ -32,12 +32,13 @@ async def ensure_trivia_database(pool):
             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", k, v)
 
 async def trivia_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return
     if update.effective_chat.type != "private":
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ For security, please run `/triviaconfig` in my Direct Messages.")
+        return await update.message.reply_text("❌ For security, please run `/triviaconfig` in my Direct Messages.")
     
     async with pool.acquire() as conn:
         theme = await conn.fetchval("SELECT value FROM config WHERE key='trivia_theme'") or 'Random'
@@ -69,19 +70,22 @@ async def render_tcfg_menu(update, context, is_edit=False):
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🧠 Theme", callback_data="tcfg_seltheme"), InlineKeyboardButton("📅 Toggle Days", callback_data="tcfg_days")],
-        [InlineKeyboardButton("⏱️ +1h", callback_data="tcfg_tadd"), InlineKeyboardButton("⏱️ -1h", callback_data="tcfg_tsub"), InlineKeyboardButton("⏱️ Custom Time", callback_data="tcfg_tcus")],
-        [InlineKeyboardButton("🎯 Options Count", callback_data="tcfg_opts"), InlineKeyboardButton("⏳ Expiry (+10s)", callback_data="tcfg_expiry")],
+        [InlineKeyboardButton("⏱️ Custom Time", callback_data="tcfg_tcus"), InlineKeyboardButton("🎯 Options Count", callback_data="tcfg_opts")],
+        [InlineKeyboardButton("⏳ Expiry Set", callback_data="tcfg_expiry_menu")],
         [InlineKeyboardButton("✅ Finish / Save", callback_data="tcfg_save")]
     ])
     
     if is_edit:
         try:
-            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+            if update.callback_query:
+                await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+            else:
+                await context.bot.edit_message_text(text, chat_id=update.effective_chat.id, message_id=context.user_data['tcfg_msg_id'], reply_markup=kb, parse_mode="Markdown")
         except Exception:
             pass
     else:
         try:
-            msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
+            msg = await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         except Exception:
             msg = await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         context.user_data['tcfg_msg_id'] = msg.message_id
@@ -93,7 +97,7 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data.startswith("tcfg_"):
         if not await is_bot_admin(q.from_user.username, pool):
             return await q.answer("Unauthorized", show_alert=True)
-        act = q.data.split("_")[1]
+        act = q.data.split("_", 1)[1]
         d = context.user_data.get('tcfg_draft')
         if not d and act != "save":
             return await q.answer("Draft expired. Run /triviaconfig again.", show_alert=True)
@@ -115,12 +119,6 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 d['theme'] = THEME_MAP.get(val, "Random")
                 return await render_tcfg_menu(update, context, True)
                 
-        elif act == "tadd":
-            h, m = map(int, d['run_time'].split(":"))
-            d['run_time'] = f"{(h+1)%24:02d}:{m:02d}"
-        elif act == "tsub":
-            h, m = map(int, d['run_time'].split(":"))
-            d['run_time'] = f"{(h-1)%24:02d}:{m:02d}"
         elif act == "tcus":
             context.user_data['awaiting_tcfg_time'] = True
             return await q.edit_message_text("✏️ Please type exact time (HH:MM format, 24-hr):")
@@ -130,9 +128,18 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif act == "opts":
             curr = int(d['opts'])
             d['opts'] = str(4 if curr >= 6 else curr + 1)
-        elif act == "expiry":
-            curr = int(d['reg_to'])
-            d['reg_to'] = str(60 if curr >= 120 else curr + 10)
+        elif act == "expiry_menu":
+            buttons = [
+                [InlineKeyboardButton("60s", callback_data="tcfg_exp_60"), InlineKeyboardButton("70s", callback_data="tcfg_exp_70"), InlineKeyboardButton("80s", callback_data="tcfg_exp_80")],
+                [InlineKeyboardButton("90s", callback_data="tcfg_exp_90"), InlineKeyboardButton("100s", callback_data="tcfg_exp_100"), InlineKeyboardButton("110s", callback_data="tcfg_exp_110")],
+                [InlineKeyboardButton("120s", callback_data="tcfg_exp_120")],
+                [InlineKeyboardButton("🔙 Back", callback_data="tcfg_back")]
+            ]
+            return await q.edit_message_text("Select Expiry Time:", reply_markup=InlineKeyboardMarkup(buttons))
+        elif act.startswith("exp_"):
+            val = q.data.split("_", 2)[2]
+            d['reg_to'] = val
+            return await render_tcfg_menu(update, context, True)
         elif act == "back":
             return await render_tcfg_menu(update, context, True)
         elif act == "save":
@@ -273,6 +280,7 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -280,6 +288,7 @@ async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await deploy_trivia(context.bot, update.effective_chat.id, False, pool)
 
 async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -287,14 +296,16 @@ async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await deploy_trivia(context.bot, update.effective_chat.id, True, pool)
 
 async def cancel_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Resume/Retry", callback_data="tcancel_retry"), InlineKeyboardButton("❌ Confirm Cancel", callback_data="tcancel_confirm")]])
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Active trivia detected. Are you sure you want to cancel with no Knowledge Points awarded?", reply_markup=kb)
+    await update.message.reply_text("Active trivia detected. Are you sure you want to cancel with no Knowledge Points awarded?", reply_markup=kb)
 
 async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -306,7 +317,7 @@ async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         op = parts[1].lower()
         amount = int(parts[2])
     except Exception:
-        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Usage Format: `/admin_kp [@username] , [set|add|sub] , [amount]`", parse_mode="Markdown")
+        return await update.message.reply_text("❌ Usage Format: `/admin_kp [@username] , [set|add|sub] , [amount]`", parse_mode="Markdown")
         
     async with pool.acquire() as conn:
         if op == 'set':
@@ -315,9 +326,10 @@ async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await conn.execute("INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, $2, $2) ON CONFLICT (username) DO UPDATE SET monthly_kp = trivia_scores.monthly_kp + $2, all_time_kp = trivia_scores.all_time_kp + $2", user, amount)
         elif op == 'sub':
             await conn.execute("INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, 0, 0) ON CONFLICT (username) DO UPDATE SET monthly_kp = GREATEST(0, trivia_scores.monthly_kp - $2), all_time_kp = GREATEST(0, trivia_scores.all_time_kp - $2)", user, amount)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Modified Knowledge Points for **@{user}**!", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Modified Knowledge Points for **@{user}**!", parse_mode="Markdown")
 
 async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -327,9 +339,9 @@ async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
         if update.effective_chat.type != "private":
-            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ Your knowledge scores have been delivered privately to your DMs!")
+            await update.message.reply_text("✅ Your knowledge scores have been delivered privately to your DMs!")
     except Exception:
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Failed to message you privately! Please initiate a DM chat with me first.")
+        await update.message.reply_text("❌ Failed to message you privately! Please initiate a DM chat with me first.")
 
 async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
