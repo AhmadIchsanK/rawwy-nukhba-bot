@@ -1,8 +1,14 @@
-import datetime, logging, json, re, asyncio, sys, importlib
+import datetime
+import logging
+import json
+import re
+import asyncio
+import sys
+import importlib
 from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
 import cmd_user 
 import cmd_system_help
 
@@ -54,7 +60,32 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     text = update.message.text
     
-    # Handle Feedback Edit Flow
+    if context.user_data.get('awaiting_tcfg_theme') and chat.type == "private":
+        context.user_data['awaiting_tcfg_theme'] = False
+        if 'tcfg_draft' in context.user_data:
+            context.user_data['tcfg_draft']['theme'] = text[:50]
+            try:
+                import cmd_trivia
+                await cmd_trivia.render_tcfg_menu(update, context, True)
+                await update.message.delete()
+            except Exception:
+                pass
+        return
+        
+    if context.user_data.get('awaiting_tcfg_time') and chat.type == "private":
+        context.user_data['awaiting_tcfg_time'] = False
+        if re.match(r'^\d{2}:\d{2}$', text) and 'tcfg_draft' in context.user_data:
+            context.user_data['tcfg_draft']['run_time'] = text
+            try:
+                import cmd_trivia
+                await cmd_trivia.render_tcfg_menu(update, context, True)
+                await update.message.delete()
+            except Exception:
+                pass
+        else:
+            await update.message.reply_text("❌ Invalid Time Format. Configuration reset.")
+        return
+
     if context.user_data.get('editing_feedback') and chat.type == "private":
         context.user_data['editing_feedback'] = False
         async with pool.acquire() as conn:
@@ -92,7 +123,6 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Global tracker error: {e}")
 
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type == "private":
         return await update.message.reply_text("❌ This command must be used in a group.")
@@ -117,7 +147,7 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp = await update.message.reply_text("⏳ Generating your missed activity recap... sending to DM shortly.")
     
     raw_text = "\n".join([f"[{h['created_at'].strftime('%H:%M')}] @{h['username']}: {h['message']}" for h in history])
-    prompt = f"Summarize this group chat history concisely. Focus ONLY on main topics discussed, events, and notable activity. Do not output a raw message dump.\n\n{raw_text[:25000]}"
+    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, events, and notable activity. Do not output a raw message dump. Be conversational.\n\n{raw_text[:25000]}"
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
@@ -128,7 +158,6 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await temp.edit_text(f"❌ Failed to generate recap. Please DM me first.")
 
 async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type != "private":
         try:
@@ -170,7 +199,14 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await q.edit_message_text("❌ Draft expired.")
             await conn.execute("INSERT INTO bug_reports (username, report) VALUES ($1, $2)", username, text)
             await conn.execute("DELETE FROM feedback_drafts WHERE user_id=$1", q.from_user.id)
+            
+            feedback_channel = await conn.fetchval("SELECT value FROM config WHERE key='feedback_channel'")
         await q.edit_message_text(f"✅ **Feedback Recorded Successfully:**\n\n_{text}_", parse_mode="Markdown")
+        if feedback_channel:
+            try:
+                await context.bot.send_message(int(feedback_channel), f"💡 **New Feedback from @{username}:**\n\n{text}")
+            except Exception:
+                pass
 
 async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, is_bot_query: bool = False):
     if not prompt:
@@ -198,7 +234,6 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             else:
                 quota_msg = "_(Admin: No Limit)_"
             
-            # Fetch Bot Knowledge Configuration
             configs = await conn.fetch("SELECT key, value FROM config")
             config_dict = {c['key']: c['value'] for c in configs}
             
@@ -220,13 +255,15 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 f"- Weekly Gemini Limit: {config_dict.get('gemini_weekly_limit', 20)}\n"
                 f"- Default Star Quota: {config_dict.get('star_quota', 3)}\n"
                 f"- Max Tasks per User: {config_dict.get('max_tasks', 4)}\n"
+                f"- Max Events per User: {config_dict.get('max_events', 5)}\n"
                 f"- Max Away Days: {config_dict.get('max_away_days', 14)}\n\n"
+                f"- Trivia timeout: {config_dict.get('trivia_reg_to', 60)}s\n\n"
             )
             
             if is_adm:
                 system_prompt += (
-                    "If the admin asks to configure or change a hidden setting (DM length, star quota, or AI limit), "
-                    "output a JSON block at the very end of your response exactly like this:\n"
+                    "If the admin asks to configure or change a hidden setting, "
+                    "output a JSON block exactly like this:\n"
                     "```json\n"
                     '[{"key": "dm_length", "value": "800"}, {"key": "star_quota", "value": "5"}]\n'
                     "```\n"
@@ -235,28 +272,15 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 
             if is_sup:
                 system_prompt += (
-                    "⚠️ ROOT LEVEL PRIVILEGES DETECTED ⚠️\n"
-                    "You are communicating with the Super Owner. You have authorization to hotpatch the runtime, write files, modify codes, and execute features dynamically.\n"
-                    "To modify, create, or rewrite any Python module file, output a JSON list block containing the file writes:\n"
-                    "```json\n"
-                    "[\n"
-                    "  {\n"
-                    '    "action": "write_file",\n'
-                    '    "filepath": "cmd_user.py",\n'
-                    '    "content": "Full contents of the file..."\n'
-                    "  }\n"
-                    "]\n"
-                    "```\n"
-                    "To dynamically register a handler, run a command, or update live objects in memory without a container reboot, output a hotpatch:\n"
+                    "⚠️ ROOT PRIVILEGES: To modify python code, output a hotpatch:\n"
                     "```json\n"
                     "[\n"
                     "  {\n"
                     '    "action": "hotpatch",\n'
-                    '    "code": "from telegram.ext import CommandHandler\\nimport cmd_user\\napp.add_handler(CommandHandler(\'newcmd\', cmd_user.handler_func))"\n'
+                    '    "code": "print(\'hi\')"\n'
                     "  }\n"
                     "]\n"
                     "```\n"
-                    "Provide a complete, cleanly written response explaining what changes were made. You are authorized to carry out any software requested."
                 )
             
             system_prompt += "\nUser Question: " + prompt
@@ -295,14 +319,14 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         
         if len(final_reply) > dm_len and update.effective_chat.type != "private":
             try:
-                try: 
+                try:
                     await context.bot.send_message(update.effective_user.id, f"{prefix}{final_reply}", parse_mode="Markdown")
-                except Exception: 
+                except Exception:
                     await context.bot.send_message(update.effective_user.id, f"{prefix}{final_reply}")
                 
-                try: 
+                try:
                     await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{quota_msg}", parse_mode="Markdown")
-                except Exception: 
+                except Exception:
                     await temp.edit_text(f"✅ It's a bit long, so I sent the answer to your DMs!\n\n{quota_msg}")
             except Exception:
                 try:
@@ -313,9 +337,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                     async with pool.acquire() as conn:
                         await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
         else: 
-            try: 
+            try:
                 await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{quota_msg}", parse_mode="Markdown")
-            except Exception: 
+            except Exception:
                 await temp.edit_text(f"{inline_prefix}{final_reply}\n\n{quota_msg}")
                 
     except asyncio.TimeoutError:
@@ -356,7 +380,6 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
 async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
     limit = 3800
     full = f"{prefix}{text}{suffix}"
-    
     if len(full) <= limit:
         try:
             await bot.send_message(chat_id, full, parse_mode="Markdown")
@@ -366,7 +389,6 @@ async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
 
     chunks = []
     current_chunk = prefix
-    
     for line in text.split('\n'):
         if len(current_chunk) + len(line) + 1 > limit:
             chunks.append(current_chunk)
