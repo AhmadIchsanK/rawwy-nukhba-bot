@@ -8,7 +8,7 @@ import importlib
 from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
 import cmd_user 
 import cmd_system_help
 
@@ -67,6 +67,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 import cmd_trivia
                 await cmd_trivia.render_tcfg_menu(update, context, True)
+                await update.message.delete()
             except Exception:
                 pass
         return
@@ -78,10 +79,11 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 import cmd_trivia
                 await cmd_trivia.render_tcfg_menu(update, context, True)
+                await update.message.delete()
             except Exception:
                 pass
         else:
-            await update.message.reply_text("❌ Invalid Time Format. Run /triviaconfig again.")
+            await update.message.reply_text("❌ Invalid Time Format. Configuration reset.")
         return
 
     if context.user_data.get('editing_feedback') and chat.type == "private":
@@ -146,7 +148,7 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     temp = await update.message.reply_text("⏳ Generating your missed activity recap... sending to DM shortly.")
     
     raw_text = "\n".join([f"[{h['created_at'].strftime('%H:%M')}] @{h['username']}: {h['message']}" for h in history])
-    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, events, polls, trivia, and notable activity. Do not output a raw message dump. Be highly readable.\n\n{raw_text[:25000]}"
+    prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, announcements, events mentioned, polls, trivia, and notable activity. Do not output a raw message dump. Be conversational and highly readable.\n\n{raw_text[:25000]}"
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
@@ -255,7 +257,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 f"- Weekly Gemini Limit: {config_dict.get('gemini_weekly_limit', 20)}\n"
                 f"- Default Star Quota: {config_dict.get('star_quota', 3)}\n"
                 f"- Max Tasks per User: {config_dict.get('max_tasks', 4)}\n"
+                f"- Max Events per User: {config_dict.get('max_events', 5)}\n"
                 f"- Max Away Days: {config_dict.get('max_away_days', 14)}\n\n"
+                f"- Trivia timeout: {config_dict.get('trivia_reg_to', 60)}s\n\n"
             )
             
             if is_adm:
@@ -292,14 +296,14 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         
         config_msg = ""
         if is_bot_query and is_adm:
-            match = re.search(r'```json\n(.*?)\n```', reply, re.DOTALL)
+            match = re.search(r"```json\s*\n(.*?)\n\s*```", reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
                     async with pool.acquire() as conn:
                         for c in configs:
                             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
-                    reply = re.sub(r'```json\n(.*?)\n```', '', reply, flags=re.DOTALL).strip()
+                    reply = re.sub(r"```json\s*\n(.*?)\n\s*```", "", reply, flags=re.DOTALL).strip()
                     config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
                 except Exception as e:
                     logger.error(f"Config parse error: {e}")
