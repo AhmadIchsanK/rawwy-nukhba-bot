@@ -11,7 +11,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     superc = [c for c in COMMANDS if c.get('super')]
 
     text = "📖 **[RW] Nukhba Manager Manual**\n\n"
-    text += "*(If your / menu looks outdated, try logging out of Telegram or clearing your app cache — Telegram caches command lists locally!)*\n\n"
+    text += "*(If your / menu or slash command list looks outdated, try logging out of Telegram and back in, or clear the app cache — Telegram caches command lists locally!)*\n\n"
     
     text += "🟢 **USER COMMANDS**\n"
     current_cat = ""
@@ -21,7 +21,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"\n*{current_cat}*\n"
         text += f"{c.get('emoji', '🔹')} `/{c['name']}` — {c['desc']}\n"
         if 'format' in c:
-            text += f"   └ Format: {c['format']}\n"
+            text += f"   └ Format: {c['format']}\n\n"
+        else:
+            text += "\n"
             
     if admin:
         text += "\n🔐 **ADMINISTRATOR SUITE**\n"
@@ -32,14 +34,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"\n*{current_cat}*\n"
             text += f"{c.get('emoji', '🔹')} `/{c['name']}` — {c['desc']}\n"
             if 'format' in c:
-                text += f"   └ Format: {c['format']}\n"
+                text += f"   └ Format: {c['format']}\n\n"
+            else:
+                text += "\n"
                 
     if superc:
         text += "\n👑 **SUPER OWNER EXCLUSIVES**\n"
         for c in superc:
             text += f"{c.get('emoji', '🔹')} `/{c['name']}` — {c['desc']}\n"
             if 'format' in c:
-                text += f"   └ Format: {c['format']}\n"
+                text += f"   └ Format: {c['format']}\n\n"
+            else:
+                text += "\n"
                 
     try:
         await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
