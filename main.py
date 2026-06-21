@@ -134,7 +134,6 @@ def main():
     # ─────────────────────────────────────────
     app.add_handler(CommandHandler("start",    safe_cmd(cmd_system, "start")))
     app.add_handler(CommandHandler("help",     safe_cmd(cmd_system_help, "help_command")))
-    app.add_handler(CommandHandler("about",    safe_cmd(cmd_system, "about_command")))
     app.add_handler(CommandHandler("wdim",     safe_cmd(cmd_system, "what_did_i_miss")))
     app.add_handler(CommandHandler("feedback", safe_cmd(cmd_system, "submit_feedback")))
     app.add_handler(CommandHandler("ask",      safe_cmd(cmd_system, "ask_bot")))
