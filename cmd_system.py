@@ -551,3 +551,39 @@ async def ask_gemini(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_gemini_request(update, context, " ".join(context.args), True)
+    # ─────────────────────────────────────────────
+# BACKGROUND BUFFER FLUSHER
+# ─────────────────────────────────────────────
+async def flush_chat_buffer(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 30 seconds to ensure slow chats are saved to the database."""
+    pool = context.bot_data.get('db_pool')
+    if not pool:
+        return
+        
+    buffer = context.bot_data.get('chat_buffer', [])
+    stats_uses = context.bot_data.get('stats_uses', 0)
+    
+    if not buffer and stats_uses == 0:
+        return # Nothing to save
+
+    try:
+        async with pool.acquire() as conn:
+            # Flush Chat History
+            if buffer:
+                buffer_copy = buffer[:]
+                context.bot_data['chat_buffer'].clear()
+                await conn.executemany(
+                    'INSERT INTO chat_history (chat_id, username, message) VALUES ($1, $2, $3)', 
+                    buffer_copy
+                )
+                
+            # Flush Bot Stats
+            if stats_uses > 0:
+                context.bot_data['stats_uses'] = 0
+                await conn.execute(
+                    "INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, $1, 0) "
+                    "ON CONFLICT (date) DO UPDATE SET uses = bot_stats.uses + $1", 
+                    stats_uses
+                )
+    except Exception as e:
+        logger.error(f"Failed to auto-flush memory buffer: {e}")
