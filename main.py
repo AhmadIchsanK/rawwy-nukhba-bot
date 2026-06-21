@@ -86,12 +86,6 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def post_init_wrapper(application: Application):
     await init_db(application)
-    async def post_stop_wrapper(application: Application):
-    """Gracefully close the database pool when the bot shuts down."""
-    pool = application.bot_data.get('db_pool')
-    if pool:
-        await pool.close()
-        logger.info("🛑 PostgreSQL database connection pool closed gracefully.")
 
     public_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
     try:
@@ -104,6 +98,12 @@ async def post_init_wrapper(application: Application):
 
     logger.info("🚀 Nukhba Manager Bot is online and ready.")
 
+async def post_stop_wrapper(application: Application):
+    """Gracefully close the database pool when the bot shuts down."""
+    pool = application.bot_data.get('db_pool')
+    if pool:
+        await pool.close()
+        logger.info("🛑 PostgreSQL database connection pool closed gracefully.")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("⚠️ Unhandled exception during update processing:", exc_info=context.error)
@@ -126,8 +126,8 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
     app.post_init = post_init_wrapper
-    app.add_error_handler(error_handler)
     app.post_stop = post_stop_wrapper
+    app.add_error_handler(error_handler)
 
     # ─────────────────────────────────────────
     # 💬 GENERAL / SYSTEM COMMANDS
@@ -143,7 +143,7 @@ def main():
     # ─────────────────────────────────────────
     # 🔄 VERSION & UPDATE LOG
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("updateinfo",   safe_cmd(cmd_admin, "update_info")))
+    app.add_handler(CommandHandler("update",       safe_cmd(cmd_admin, "update_info"))) # Mapped from updateinfo to update
     app.add_handler(CommandHandler("pushupdate",   safe_cmd(cmd_admin, "push_update")))
     app.add_handler(CommandHandler("updatechange", safe_cmd(cmd_admin, "update_change")))
 
@@ -309,9 +309,6 @@ def main():
 
     if hasattr(cmd_admin, 'process_schedules'):
         app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
-        # Auto-flush database memory buffers — runs every 30 seconds
-    if hasattr(cmd_system, 'flush_chat_buffer'):
-        app.job_queue.run_repeating(cmd_system.flush_chat_buffer, interval=30)
 
     if hasattr(cmd_trivia, 'run_monthly_trivia_reset'):
         app.job_queue.run_daily(
@@ -331,6 +328,10 @@ def main():
         app.job_queue.run_repeating(poll_cleanup, interval=3600)
     except ImportError:
         logger.warning("Optional crons.py not found — skipping daily logs and poll cleanup.")
+
+    # Auto-flush database memory buffers — runs every 30 seconds
+    if hasattr(cmd_system, 'flush_chat_buffer'):
+        app.job_queue.run_repeating(cmd_system.flush_chat_buffer, interval=30)
 
     # 🚀 GO
     logger.info("🚀 Starting Nukhba Manager Bot polling...")
