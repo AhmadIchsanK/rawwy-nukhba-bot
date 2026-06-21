@@ -302,6 +302,9 @@ def main():
 
     if hasattr(cmd_admin, 'process_schedules'):
         app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
+        # Auto-flush database memory buffers — runs every 30 seconds
+    if hasattr(cmd_system, 'flush_chat_buffer'):
+        app.job_queue.run_repeating(cmd_system.flush_chat_buffer, interval=30)
 
     if hasattr(cmd_trivia, 'run_monthly_trivia_reset'):
         app.job_queue.run_daily(
