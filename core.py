@@ -26,35 +26,14 @@ async def init_db(app: Application):
         logger.info("✅ PostgreSQL global database connection pool created successfully.")
         
         async with app.bot_data['db_pool'].acquire() as conn:
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS config (key VARCHAR(100) PRIMARY KEY, value TEXT)
-            ''')
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS bot_stats (date DATE PRIMARY KEY, uses INT DEFAULT 0, errors INT DEFAULT 0)
-            ''')
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS active_groups (chat_id BIGINT PRIMARY KEY, title TEXT)
-            ''')
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS bug_reports (
-                    id SERIAL PRIMARY KEY, username VARCHAR(100), report TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            ''')
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS chat_history (
-                    id SERIAL PRIMARY KEY, chat_id BIGINT, username VARCHAR(100), message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                )
-            ''')
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS poll_drafts (
-                    pid BIGINT PRIMARY KEY, owner BIGINT, q TEXT, opts TEXT, anon BOOLEAN, multi BOOLEAN, quiz_idx INT, hours INT
-                )
-            ''')
-            await conn.execute('''
-                CREATE TABLE IF NOT EXISTS feedback_drafts (
-                    user_id BIGINT PRIMARY KEY, text TEXT
-                )
-            ''')
+            await conn.execute('''CREATE TABLE IF NOT EXISTS config (key VARCHAR(100) PRIMARY KEY, value TEXT)''')
+            await conn.execute('''CREATE TABLE IF NOT EXISTS bot_stats (date DATE PRIMARY KEY, uses INT DEFAULT 0, errors INT DEFAULT 0)''')
+            await conn.execute('''CREATE TABLE IF NOT EXISTS active_groups (chat_id BIGINT PRIMARY KEY, title TEXT)''')
+            await conn.execute('''CREATE TABLE IF NOT EXISTS bug_reports (id SERIAL PRIMARY KEY, username VARCHAR(100), report TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())''')
+            # Fix for memory leaks & /wdim
+            await conn.execute('''CREATE TABLE IF NOT EXISTS chat_history (id SERIAL PRIMARY KEY, chat_id BIGINT, username VARCHAR(100), message TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW())''')
+            await conn.execute('''CREATE TABLE IF NOT EXISTS poll_drafts (pid BIGINT PRIMARY KEY, owner BIGINT, q TEXT, opts TEXT, anon BOOLEAN, multi BOOLEAN, quiz_idx INT, hours INT)''')
+            await conn.execute('''CREATE TABLE IF NOT EXISTS feedback_drafts (user_id BIGINT PRIMARY KEY, text TEXT)''')
             
         import cmd_trivia
         await cmd_trivia.ensure_trivia_database(app.bot_data['db_pool'])
