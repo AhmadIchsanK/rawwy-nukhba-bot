@@ -7,7 +7,7 @@ import cmd_system
 import cmd_user
 import cmd_admin
 import cmd_trivia
-import cmd_cheer
+import cmd_cheers
 from commands_manifest import COMMANDS
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
@@ -181,8 +181,8 @@ def main():
     app.add_handler(CommandHandler("restart", cmd_admin.restart_bot))
     app.add_handler(CommandHandler("super_reset", cmd_admin.super_reset_req))
     
-    app.add_handler(CommandHandler("cheerme", cmd_cheer.cheer_me))
-    app.add_handler(CommandHandler("setcheer", cmd_cheer.set_cheer))
+    app.add_handler(CommandHandler("cheerme", cmd_cheers.cheer_me))
+    app.add_handler(CommandHandler("setcheer", cmd_cheers.set_cheer))
 
     app.add_handler(CallbackQueryHandler(cmd_user.rsvp_callback, pattern="^rsvp_"))
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
@@ -195,7 +195,8 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
-    app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=5)
+    # Real-time decrementing visible countdown relies on frequent sweep updates
+    app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=3)
     app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
     app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
     
