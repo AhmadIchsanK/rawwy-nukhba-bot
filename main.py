@@ -181,8 +181,20 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
-    # Background Jobs
+    # Background Jobs & Automated Tasks
     app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=5)
+    app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
+    app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
+    
+    try:
+        from crons import daily_morning_log, poll_cleanup
+        app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
+        app.job_queue.run_repeating(poll_cleanup, interval=3600)
+    except ImportError:
+        pass
+        
+    app.job_queue.run_daily(cmd_trivia.run_monthly_trivia_reset, time=datetime.time(hour=13, minute=0, tzinfo=WIB))
+
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
