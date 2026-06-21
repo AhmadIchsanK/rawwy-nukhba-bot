@@ -3,11 +3,32 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from core import delete_cmd
 
+async def send_md_chunks(bot, chat_id, text):
+    limit = 3800
+    chunks = []
+    current_chunk = ""
+    for line in text.split('\n'):
+        if len(current_chunk) + len(line) + 1 > limit:
+            chunks.append(current_chunk)
+            current_chunk = line + "\n"
+        else:
+            current_chunk += line + "\n"
+            
+    if current_chunk.strip():
+        chunks.append(current_chunk)
+
+    for chunk in chunks:
+        if chunk.strip():
+            try:
+                await bot.send_message(chat_id, chunk, parse_mode="Markdown")
+            except Exception:
+                await bot.send_message(chat_id, chunk)
+
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     
     public = [c for c in COMMANDS if c.get('public')]
-    admin = [c for c in COMMANDS if c.get('admin')]
+    admin = [c for c in COMMANDS if c.get('admin') and not c.get('super')]
     superc = [c for c in COMMANDS if c.get('super')]
 
     text = "📖 **[RW] Nukhba Manager Manual**\n\n"
@@ -42,7 +63,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text += f"   └ Format: {c['format']}\n"
                 
     try:
-        await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
+        await send_md_chunks(context.bot, update.effective_user.id, text)
         if update.effective_chat.type != "private":
             await update.message.reply_text("✅ I have securely sent the structured manual to your Direct Messages!")
     except Exception:
