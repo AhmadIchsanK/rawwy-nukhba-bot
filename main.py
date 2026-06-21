@@ -1,7 +1,8 @@
 import logging
 import datetime
+import os
 from telegram import Update, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, PicklePersistence
 
 # Core imports
 from core import BOT_TOKEN, WIB, init_db
@@ -30,7 +31,6 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # 🛡️ DYNAMIC ANTI-CRASH BINDING SYSTEM 🛡️
 # ==========================================
-# If a function is missing from a module, binds a safe fallback instead of crashing.
 
 def safe_cmd(module, func_name):
     if module and hasattr(module, func_name):
@@ -64,20 +64,18 @@ def safe_cb(module, func_name):
 # ==========================================
 # 🌐 GLOBAL TEXT INPUT ROUTER 🌐
 # ==========================================
-# Routes plain-text messages to whichever feature is currently awaiting input.
-# Priority order: trivia config → system (feedback, wdim, etc.) → general tracker.
 
 async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # 1. Trivia config custom input (theme, time, target, timeouts)
+    # 1. Trivia config custom input
     if await cmd_trivia.handle_trivia_text_input(update, context):
         return
 
-    # 2. Admin config custom input (botconfig inline keyboard text fields)
+    # 2. Admin config custom input
     if hasattr(cmd_admin, 'handle_admin_text_input'):
         if await cmd_admin.handle_admin_text_input(update, context):
             return
 
-    # 3. System-level text handlers (feedback drafts, wdim, etc.)
+    # 3. System-level text handlers
     if hasattr(cmd_system, 'global_tracker'):
         await cmd_system.global_tracker(update, context)
 
@@ -89,8 +87,6 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def post_init_wrapper(application: Application):
     await init_db(application)
 
-    # Push public commands to Telegram menus
-    # Only 'public: True' commands appear in the slash menu for regular users
     public_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
     try:
         await application.bot.set_my_commands(public_hints, scope=BotCommandScopeDefault())
@@ -116,7 +112,13 @@ def main():
         logger.error("CRITICAL: BOT_TOKEN environment variable is missing.")
         return
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # Create a persistent data directory if it doesn't exist
+    os.makedirs("data", exist_ok=True)
+    
+    # 💾 Initialize Persistence
+    persistence = PicklePersistence(filepath="data/bot_state.pickle")
+
+    app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
 
@@ -277,18 +279,14 @@ def main():
     # 🛡️ GLOBAL LISTENERS
     # ─────────────────────────────────────────
 
-    # Track members joining/leaving
     if hasattr(cmd_system, 'security_track_chats'):
         app.add_handler(MessageHandler(
             filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER,
             cmd_system.security_track_chats
         ))
 
-    # Main text router — handles all plain-text messages in priority order:
-    # trivia config input → admin config input → system tracker
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, global_text_router))
 
-    # Unknown command fallback
     if hasattr(cmd_system, 'unknown_command'):
         app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
@@ -296,33 +294,27 @@ def main():
     # ⏲️ BACKGROUND CRON SCHEDULES
     # ─────────────────────────────────────────
 
-    # Trivia countdown sweeper — runs every 3 seconds
     if hasattr(cmd_trivia, 'trivia_timeout_sweeper'):
         app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=3)
 
-    # Daily trivia scheduler — checks every 60 seconds
     if hasattr(cmd_trivia, 'trivia_cron_job'):
         app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
 
-    # Broadcast/schedule processor — runs every 30 seconds
     if hasattr(cmd_admin, 'process_schedules'):
         app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
 
-    # Monthly trivia KP reset — runs at 13:00 WIB daily (only acts on 1st of month)
     if hasattr(cmd_trivia, 'run_monthly_trivia_reset'):
         app.job_queue.run_daily(
             cmd_trivia.run_monthly_trivia_reset,
             time=datetime.time(hour=13, minute=0, tzinfo=WIB)
         )
 
-    # Audit log daily digest
     if hasattr(cmd_admin, 'send_daily_audit_digest'):
         app.job_queue.run_daily(
             cmd_admin.send_daily_audit_digest,
             time=datetime.time(hour=23, minute=50, tzinfo=WIB)
         )
 
-    # Optional cron jobs from crons.py
     try:
         from crons import daily_morning_log, poll_cleanup
         app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
