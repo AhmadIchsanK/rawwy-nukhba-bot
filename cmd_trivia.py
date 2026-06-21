@@ -99,9 +99,8 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await q.answer("Draft expired. Run /triviaconfig again.", show_alert=True)
 
         if act == "seltheme":
-            buttons = []
-            for k, v in THEME_MAP.items():
-                buttons.append([InlineKeyboardButton(v, callback_data=f"tcfg_thm_{k}")])
+            themes = ["Random", "Movies & TV Shows", "Gaming", "Sports & Esports", "Music", "Geography", "General Knowledge", "History", "Science & Technology", "Food & Drink", "Anime / Manga & Comics"]
+            buttons = [[InlineKeyboardButton(t, callback_data=f"tcfg_thm_{t}")] for t in themes]
             buttons.append([InlineKeyboardButton("✏️ Custom Input", callback_data="tcfg_thm_custom")])
             buttons.append([InlineKeyboardButton("🔙 Back", callback_data="tcfg_back")])
             return await q.edit_message_text("Select a Theme:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -112,7 +111,7 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['awaiting_tcfg_theme'] = True
                 return await q.edit_message_text("✏️ Please type your custom theme in the chat now:")
             else:
-                d['theme'] = THEME_MAP.get(val, "Random")
+                d['theme'] = val
                 return await render_tcfg_menu(update, context, True)
                 
         elif act == "tadd":
