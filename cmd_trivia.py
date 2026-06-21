@@ -9,12 +9,6 @@ from core import WIB, GEMINI_API_KEY, is_bot_admin, delete_cmd
 
 logger = logging.getLogger(__name__)
 
-THEME_MAP = {
-    "0": "Random", "1": "Movies & TV Shows", "2": "Gaming", "3": "Sports & Esports",
-    "4": "Music", "5": "Geography", "6": "General Knowledge", "7": "History",
-    "8": "Science & Technology", "9": "Food & Drink", "10": "Anime / Manga & Comics"
-}
-
 async def ensure_trivia_database(pool):
     async with pool.acquire() as conn:
         await conn.execute('''
@@ -32,7 +26,6 @@ async def ensure_trivia_database(pool):
             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT DO NOTHING", k, v)
 
 async def trivia_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -70,17 +63,14 @@ async def render_tcfg_menu(update, context, is_edit=False):
     
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("🧠 Theme", callback_data="tcfg_seltheme"), InlineKeyboardButton("📅 Toggle Days", callback_data="tcfg_days")],
-        [InlineKeyboardButton("⏱️ Custom Time", callback_data="tcfg_tcus"), InlineKeyboardButton("🎯 Options Count", callback_data="tcfg_opts")],
-        [InlineKeyboardButton("⏳ Expiry Set", callback_data="tcfg_expiry_menu")],
+        [InlineKeyboardButton("⏱️ +1h", callback_data="tcfg_tadd"), InlineKeyboardButton("⏱️ -1h", callback_data="tcfg_tsub"), InlineKeyboardButton("⏱️ Custom Time", callback_data="tcfg_tcus")],
+        [InlineKeyboardButton("🎯 Options Count", callback_data="tcfg_opts"), InlineKeyboardButton("⏳ Expiry (+10s)", callback_data="tcfg_expiry")],
         [InlineKeyboardButton("✅ Finish / Save", callback_data="tcfg_save")]
     ])
     
     if is_edit:
         try:
-            if update.callback_query:
-                await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
-            else:
-                await context.bot.edit_message_text(text, chat_id=update.effective_chat.id, message_id=context.user_data['tcfg_msg_id'], reply_markup=kb, parse_mode="Markdown")
+            await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
         except Exception:
             pass
     else:
@@ -97,15 +87,14 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data.startswith("tcfg_"):
         if not await is_bot_admin(q.from_user.username, pool):
             return await q.answer("Unauthorized", show_alert=True)
-        act = q.data.split("_", 1)[1]
+        act = q.data.split("_")[1]
         d = context.user_data.get('tcfg_draft')
         if not d and act != "save":
             return await q.answer("Draft expired. Run /triviaconfig again.", show_alert=True)
 
         if act == "seltheme":
-            buttons = []
-            for k, v in THEME_MAP.items():
-                buttons.append([InlineKeyboardButton(v, callback_data=f"tcfg_thm_{k}")])
+            themes = ["Random", "Movies & TV Shows", "Gaming", "Sports & Esports", "Music", "Geography", "General Knowledge", "History", "Science & Technology", "Food & Drink", "Anime / Manga & Comics"]
+            buttons = [[InlineKeyboardButton(t, callback_data=f"tcfg_thm_{i}")] for i, t in enumerate(themes)]
             buttons.append([InlineKeyboardButton("✏️ Custom Input", callback_data="tcfg_thm_custom")])
             buttons.append([InlineKeyboardButton("🔙 Back", callback_data="tcfg_back")])
             return await q.edit_message_text("Select a Theme:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -116,9 +105,16 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['awaiting_tcfg_theme'] = True
                 return await q.edit_message_text("✏️ Please type your custom theme in the chat now:")
             else:
-                d['theme'] = THEME_MAP.get(val, "Random")
+                themes = ["Random", "Movies & TV Shows", "Gaming", "Sports & Esports", "Music", "Geography", "General Knowledge", "History", "Science & Technology", "Food & Drink", "Anime / Manga & Comics"]
+                d['theme'] = themes[int(val)]
                 return await render_tcfg_menu(update, context, True)
                 
+        elif act == "tadd":
+            h, m = map(int, d['run_time'].split(":"))
+            d['run_time'] = f"{(h+1)%24:02d}:{m:02d}"
+        elif act == "tsub":
+            h, m = map(int, d['run_time'].split(":"))
+            d['run_time'] = f"{(h-1)%24:02d}:{m:02d}"
         elif act == "tcus":
             context.user_data['awaiting_tcfg_time'] = True
             return await q.edit_message_text("✏️ Please type exact time (HH:MM format, 24-hr):")
@@ -128,18 +124,9 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif act == "opts":
             curr = int(d['opts'])
             d['opts'] = str(4 if curr >= 6 else curr + 1)
-        elif act == "expiry_menu":
-            buttons = [
-                [InlineKeyboardButton("60s", callback_data="tcfg_exp_60"), InlineKeyboardButton("70s", callback_data="tcfg_exp_70"), InlineKeyboardButton("80s", callback_data="tcfg_exp_80")],
-                [InlineKeyboardButton("90s", callback_data="tcfg_exp_90"), InlineKeyboardButton("100s", callback_data="tcfg_exp_100"), InlineKeyboardButton("110s", callback_data="tcfg_exp_110")],
-                [InlineKeyboardButton("120s", callback_data="tcfg_exp_120")],
-                [InlineKeyboardButton("🔙 Back", callback_data="tcfg_back")]
-            ]
-            return await q.edit_message_text("Select Expiry Time:", reply_markup=InlineKeyboardMarkup(buttons))
-        elif act.startswith("exp_"):
-            val = q.data.split("_", 2)[2]
-            d['reg_to'] = val
-            return await render_tcfg_menu(update, context, True)
+        elif act == "expiry":
+            curr = int(d['reg_to'])
+            d['reg_to'] = str(60 if curr >= 120 else curr + 10)
         elif act == "back":
             return await render_tcfg_menu(update, context, True)
         elif act == "save":
@@ -280,7 +267,6 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
                 pass
 
 async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -288,7 +274,6 @@ async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await deploy_trivia(context.bot, update.effective_chat.id, False, pool)
 
 async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -296,7 +281,6 @@ async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await deploy_trivia(context.bot, update.effective_chat.id, True, pool)
 
 async def cancel_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -305,7 +289,6 @@ async def cancel_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Active trivia detected. Are you sure you want to cancel with no Knowledge Points awarded?", reply_markup=kb)
 
 async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
@@ -329,7 +312,6 @@ async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ Modified Knowledge Points for **@{user}**!", parse_mode="Markdown")
 
 async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
