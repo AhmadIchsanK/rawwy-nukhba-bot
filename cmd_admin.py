@@ -23,7 +23,8 @@ async def send_md(context, chat_id, text):
         if len(chunk) + len(line) + 1 > 3800:
             try:
                 await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Markdown parse failed, sending plain text: {e}")
                 await context.bot.send_message(chat_id, chunk)
             chunk = line + "\n"
         else:
@@ -31,7 +32,8 @@ async def send_md(context, chat_id, text):
     if chunk.strip():
         try:
             await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Markdown parse failed, sending plain text: {e}")
             await context.bot.send_message(chat_id, chunk)
 
 
@@ -204,7 +206,7 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if owner and q.from_user.id != owner:
         return await q.answer("❌ This panel was opened by another admin.", show_alert=True)
 
-    data = q.data  # e.g. "cfg_gemini_add"
+    data = q.data
 
     if data == "cfg_noop":
         return await q.answer()
@@ -215,8 +217,8 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("Cancelled.")
         try:
             await q.edit_message_text("❌ Config cancelled. No changes saved.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to edit message on config cancel: {e}")
         return
 
     if data == "cfg_save":
@@ -237,16 +239,15 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "✅ **Configuration saved and applied!**\n\n" + _cfg_text(d),
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to update menu text on save: {e}")
         return
 
     d = context.user_data.get('cfg_draft')
     if not d:
         return await q.answer("Session expired. Run /botconfig again.", show_alert=True)
 
-    # Parse "cfg_<field>_<action>"
-    parts = data.split("_")  # ['cfg', 'gemini', 'add'] or ['cfg', 'away', 'cus']
+    parts = data.split("_")
     if len(parts) < 3:
         return await q.answer()
 
@@ -279,11 +280,10 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✏️ **Type a new value for `{field}`:**\n\nCurrent: `{d[db_key]}`",
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to edit custom config prompt: {e}")
         return
 
-    # Refresh panel
     try:
         await q.edit_message_text(
             _cfg_text(d),
@@ -296,11 +296,6 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """
-    Handle pending custom text input for /botconfig.
-    Returns True if message was consumed, False otherwise.
-    Called from global_text_router in main.py.
-    """
     owner = context.user_data.get('cfg_owner')
     if owner and update.effective_user.id != owner:
         return False
@@ -328,10 +323,9 @@ async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_
 
     try:
         await update.message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Could not delete message: {e}")
 
-    # Re-send the config panel
     try:
         chat_id = update.effective_chat.id
         msg_id  = context.user_data.get('cfg_msg_id')
@@ -432,7 +426,6 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool):
         return
 
-    # Optional arg: number of entries to show (default 20)
     try:
         limit = int(context.args[0]) if context.args else 20
         limit = max(1, min(limit, 100))
@@ -440,7 +433,6 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
         limit = 20
 
     async with pool.acquire() as conn:
-        # Ensure table exists
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
@@ -510,7 +502,6 @@ async def set_audit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_daily_audit_digest(context: ContextTypes.DEFAULT_TYPE):
-    """Cron job: sends AI-digested audit report at configured time."""
     pool = context.bot_data.get('db_pool')
     if not pool:
         return
@@ -529,8 +520,9 @@ async def send_daily_audit_digest(context: ContextTypes.DEFAULT_TYPE):
     try:
         from crons import generate_audit_report
         msg = await generate_audit_report(pool, now.date())
-    except Exception:
-        msg = f"📋 **Daily Audit Digest** — {now.strftime('%m/%d/%Y')}\n\nNo audit report generator found."
+    except Exception as e:
+        logger.error(f"Audit report generation failed: {e}")
+        msg = f"📋 **Daily Audit Digest** — {now.strftime('%m/%d/%Y')}\n\nFailed to generate report."
 
     try:
         await context.bot.send_message(super_uid, msg, parse_mode="Markdown")
@@ -583,8 +575,8 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await q.answer("Closed.")
         try:
             await q.edit_message_text("👥 User Manager closed.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Menu close failed: {e}")
         return
 
     if data == "mu_back":
@@ -595,8 +587,8 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 reply_markup=_mu_main_kb(),
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Menu navigation failed: {e}")
         return
 
     if data == "mu_section_ailimit":
@@ -613,8 +605,8 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     [InlineKeyboardButton("🔙 Back", callback_data="mu_back")]
                 ])
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"AI Limit Manager UI failed: {e}")
         context.user_data['awaiting_mu_input'] = True
         return
 
@@ -631,8 +623,8 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     [InlineKeyboardButton("🔙 Back", callback_data="mu_back")]
                 ])
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Stars Manager UI failed: {e}")
         context.user_data['awaiting_mu_input'] = True
         return
 
@@ -649,8 +641,8 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     [InlineKeyboardButton("🔙 Back", callback_data="mu_back")]
                 ])
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"KP Manager UI failed: {e}")
         context.user_data['awaiting_mu_input'] = True
         return
 
@@ -658,7 +650,6 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def _handle_mu_text(update: Update, context: ContextTypes.DEFAULT_TYPE, pool) -> bool:
-    """Process text input for the manage users panel."""
     if not context.user_data.get('awaiting_mu_input'):
         return False
 
@@ -748,8 +739,8 @@ async def _handle_mu_text(update: Update, context: ContextTypes.DEFAULT_TYPE, po
 
     try:
         await update.message.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to delete message: {e}")
     await update.message.reply_text(msg, parse_mode="Markdown")
     return True
 
@@ -759,7 +750,6 @@ async def _handle_mu_text(update: Update, context: ContextTypes.DEFAULT_TYPE, po
 # ─────────────────────────────────────────────
 
 async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current bot version and changelog. Available to all users."""
     pool = context.bot_data.get('db_pool')
     await _ensure_version_table(pool)
 
@@ -787,12 +777,6 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Auto-increment version and log a changelog entry.
-    Broadcasts update DM to all users who have ever DM'd the bot.
-    Super Owner only.
-    Usage: /pushupdate Fixed trivia timer, added /about command
-    """
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_super(update.effective_user.username):
@@ -816,7 +800,6 @@ async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
             new_ver, changelog
         )
-        # Get all users who have ever DM'd the bot
         dm_users = await conn.fetch(
             "SELECT DISTINCT user_id FROM users WHERE user_id IS NOT NULL"
         )
@@ -834,9 +817,9 @@ async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(user['user_id'], broadcast_text, parse_mode="Markdown")
             sent_count += 1
-            await asyncio.sleep(0.05)  # Avoid hitting rate limits
-        except Exception:
-            pass
+            await asyncio.sleep(0.05) 
+        except Exception as e:
+            logger.warning(f"Failed to push update broadcast to {user['user_id']}: {e}")
 
     await update.message.reply_text(
         f"✅ **Version `{new_ver}` pushed!**\n"
@@ -846,11 +829,6 @@ async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Manually set a version number and log an entry.
-    Super Owner only.
-    Usage: /updatechange 2.0 , Complete system overhaul
-    """
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_super(update.effective_user.username):
@@ -975,8 +953,8 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer("Cancelled.")
         try:
             await q.edit_message_text("❌ Schedule cancelled. No changes saved.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to clear scheduler UI: {e}")
         return
 
     if not d:
@@ -1000,8 +978,8 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ **Broadcast Scheduled!**\n\n{_nsched_text(d)}",
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update schedule message: {e}")
         return
 
     if data == "nsched_target":
@@ -1014,8 +992,8 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "or type a specific chat ID (e.g. `-1001234567890`):",
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update target chat prompt: {e}")
         return
 
     if data.startswith("nsched_freq_"):
@@ -1040,8 +1018,8 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⏰ **Type exact time in HH:MM (24-hour WIB):**\n\nExample: `14:30`",
                 parse_mode="Markdown"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update time prompt: {e}")
         return
 
     elif data == "nsched_mention":
@@ -1056,11 +1034,10 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "📝 **Type the broadcast message now:**\n\n"
                 "_Your next message will be used as the announcement text._"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update message prompt: {e}")
         return
 
-    # Refresh panel
     try:
         await q.edit_message_text(
             _nsched_text(d), reply_markup=_nsched_kb(d), parse_mode="Markdown"
@@ -1071,7 +1048,6 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _handle_nsched_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Process text inputs for /newsched panel."""
     owner = context.user_data.get('nsched_owner')
     if owner and update.effective_user.id != owner:
         return False
@@ -1115,8 +1091,8 @@ async def _handle_nsched_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     if consumed:
         try:
             await update.message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to delete user message: {e}")
         await update.message.reply_text(
             _nsched_text(d), reply_markup=_nsched_kb(d), parse_mode="Markdown"
         )
@@ -1136,7 +1112,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_msg = await update.message.reply_text("🔍 Running command health check…")
 
-    # All registered command → function mappings to test
     import cmd_system
     import cmd_user
     import cmd_trivia
@@ -1150,7 +1125,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cmd_system_help = None
 
     checks = [
-        # (command_name, module, function_name)
         ("start",           cmd_system,      "start"),
         ("help",            cmd_system_help, "help_command"),
         ("about",           cmd_system,      "about_command"),
@@ -1158,7 +1132,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("feedback",        cmd_system,      "submit_feedback"),
         ("ask",             cmd_system,      "ask_bot"),
         ("gemini",          cmd_system,      "ask_gemini"),
-        ("updateinfo",      None,            None),  # this file
+        ("updateinfo",      None,            None),  
         ("pushupdate",      None,            None),
         ("updatechange",    None,            None),
         ("newevent",        cmd_user,        "create_event"),
@@ -1189,7 +1163,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("canceltrivia",    cmd_trivia,      "cancel_trivia"),
         ("endtrivia",       cmd_trivia,      "end_trivia"),
         ("admin_kp",        cmd_trivia,      "admin_kp"),
-        ("botconfig",       None,            None),  # this file
+        ("botconfig",       None,            None),  
         ("setchannel",      None,            None),
         ("unsetchannel",    None,            None),
         ("groupid",         None,            None),
@@ -1230,7 +1204,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("super_reset",     None,            None),
     ]
 
-    # Self-check for this module
     self_funcs = {
         "updateinfo": update_info, "pushupdate": push_update,
         "updatechange": update_change, "botconfig": bot_config,
@@ -1261,7 +1234,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for cmd, module, func_name in checks:
         if module is None:
-            # Check in self_funcs
             fn = self_funcs.get(cmd)
             if fn and callable(fn):
                 results.append(f"/{cmd} ✅")
@@ -1292,41 +1264,32 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await status_msg.delete()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to delete status message: {e}")
 
     await send_md(context, update.effective_user.id, report)
 
 
 # ─────────────────────────────────────────────
 # GLOBAL TEXT INPUT ROUTER FOR ADMIN PANELS
-# (called from main.py global_text_router)
 # ─────────────────────────────────────────────
 
 async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """
-    Routes text input to whichever admin panel is currently awaiting input.
-    Returns True if consumed, False otherwise.
-    """
     pool = context.bot_data.get('db_pool')
 
-    # /botconfig custom input
     if context.user_data.get('awaiting_cfg_field'):
         owner = context.user_data.get('cfg_owner')
         if not owner or update.effective_user.id == owner:
             return await handle_admin_text_input(update, context)
 
-    # /manageusers text input
     if context.user_data.get('awaiting_mu_input'):
         return await _handle_mu_text(update, context, pool)
 
-    # /newsched text input
     if any(context.user_data.get(k) for k in [
         'awaiting_nsched_target', 'awaiting_nsched_time', 'awaiting_nsched_message'
     ]):
         return await _handle_nsched_text(update, context)
 
-    # /botconfig custom number input
     if context.user_data.get('awaiting_cfg_field'):
         field = context.user_data.get('awaiting_cfg_field')
         text  = update.message.text.strip() if update.message and update.message.text else ""
@@ -1343,8 +1306,8 @@ async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_
             d[field] = str(val)
         try:
             await update.message.delete()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to delete user message: {e}")
         try:
             chat_id = update.effective_chat.id
             msg_id  = context.user_data.get('cfg_msg_id')
@@ -1353,15 +1316,15 @@ async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_
                     chat_id=chat_id, message_id=msg_id,
                     text=_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update config panel: {e}")
         return True
 
     return False
 
 
 # ─────────────────────────────────────────────
-# REMAINING ADMIN COMMANDS (unchanged / kept)
+# REMAINING ADMIN COMMANDS
 # ─────────────────────────────────────────────
 
 async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1426,8 +1389,8 @@ async def unpin_event(context):
         await context.bot.unpin_chat_message(
             chat_id=context.job.data['chat_id'], message_id=context.job.data['msg_id']
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to unpin event message: {e}")
 
 
 async def event_reminder(context):
@@ -1469,8 +1432,8 @@ async def auto_return_away(context):
     if uid:
         try:
             await context.bot.send_message(uid, msg, parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Failed to notify user of auto-return: {e}")
 
 
 async def poll_reminder(context: ContextTypes.DEFAULT_TYPE):
@@ -1480,8 +1443,8 @@ async def poll_reminder(context: ContextTypes.DEFAULT_TYPE):
             f"⏳ **Poll Reminder:** *{context.job.data['q']}* ends in 15 minutes!",
             parse_mode="Markdown"
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to send poll reminder: {e}")
 
 
 async def cancel_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1504,8 +1467,8 @@ async def cancel_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         j.schedule_removal()
     try:
         await context.bot.unpin_chat_message(chat_id=ev['chat_id'], message_id=ev['msg_id'])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to unpin cancelled event: {e}")
     await context.bot.send_message(update.effective_user.id, "✅ Event cancelled and unpinned.")
 
 
@@ -1745,8 +1708,8 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "INSERT INTO announcement_messages (announcement_id, chat_id, message_id) VALUES ($1,$2,$3)",
                     a_id, t['chat_id'], m.message_id
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Broadcast failed to {t['chat_id']}: {e}")
     await context.bot.send_message(update.effective_user.id, "✅ Broadcast sent.")
 
 
@@ -1769,8 +1732,8 @@ async def edit_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📢 **[RW] NUKHBA BROADCAST**\n\n{text}",
                     chat_id=m['chat_id'], message_id=m['message_id'], parse_mode="Markdown"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Edit broadcast failed for {m['chat_id']}: {e}")
         await conn.execute("UPDATE announcements SET text=$1 WHERE id=$2", text, a_id)
     await context.bot.send_message(update.effective_user.id, "✅ Announcement updated.")
 
@@ -1789,8 +1752,8 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for m in msgs:
             try:
                 await context.bot.delete_message(chat_id=m['chat_id'], message_id=m['message_id'])
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Delete broadcast failed for {m['chat_id']}: {e}")
         await conn.execute("DELETE FROM announcements WHERE id=$1", a_id)
     await context.bot.send_message(update.effective_user.id, "✅ Announcement deleted.")
 
@@ -1862,8 +1825,8 @@ async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid:
         try:
             await context.bot.send_message(uid, f"⚠️ An admin removed your Away status.\n\n{msg}", parse_mode="Markdown")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not notify user of forced return: {e}")
     await context.bot.send_message(update.effective_user.id, f"✅ @{target} forced back to Available.")
 
 
@@ -2073,8 +2036,8 @@ async def process_schedules(context: ContextTypes.DEFAULT_TYPE):
                 for t in targets:
                     try:
                         await send_md(context, t, msg)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Failed to push scheduled broadcast: {e}")
                 await conn.execute(
                     "UPDATE scheduled_announcements SET last_run=$1 WHERE id=$2", now, s['id']
                 )
