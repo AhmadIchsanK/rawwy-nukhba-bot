@@ -81,7 +81,13 @@ COMMANDS = [
     {"name": "delannounce", "desc": "Delete announcement", "format": "`/delannounce [ID]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🗑️"},
     {"name": "feedbacklist", "desc": "View recent feedback", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "📥"},
     {"name": "analyze_feedback", "desc": "Analyze feedback via AI", "format": "`/analyze_feedback [MM/DD/YYYY to MM/DD/YYYY]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🧠"},
-    
+{"name": "announce", "desc": "Send announcement", "format": "`/announce [ChatID|all] , [Message]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "📣"},
+    {"name": "editannounce", "desc": "Edit announcement", "format": "`/editannounce [ID] , [New Msg]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "✏️"},
+    {"name": "delannounce", "desc": "Delete announcement", "format": "`/delannounce [ID]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🗑️"},
+    {"name": "feedbacklist", "desc": "View recent feedback", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "📥"},
+    {"name": "analyze_feedback", "desc": "Analyze feedback via AI", "format": "`/analyze_feedback [MM/DD/YYYY to MM/DD/YYYY]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🧠"},
+    {"name": "audittime", "desc": "Set daily audit log time", "format": "`/audittime HH:MM`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "⏰"},
+       
     # 👑 SUPER OWNER
     {"name": "addadmin", "desc": "Promote to Admin", "format": "`/addadmin [@user]`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⬆️"},
     {"name": "deladmin", "desc": "Demote Admin", "format": "`/deladmin [@user]`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⬇️"},
