@@ -60,37 +60,115 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     text = update.message.text
     
-    if context.user_data.get('awaiting_tcfg_theme') and chat.type == "private":
-        context.user_data['awaiting_tcfg_theme'] = False
-        if 'tcfg_draft' in context.user_data:
-            context.user_data['tcfg_draft']['theme'] = text[:50]
-            try:
-                import cmd_trivia
-                await cmd_trivia.render_tcfg_menu(update, context, True)
-                await update.message.delete()
-            except Exception:
-                pass
-        return
+    step = context.user_data.get('inline_step')
+    if step and chat.type == "private":
+        context.user_data['inline_step'] = None
+        msg_id = context.user_data.get('inline_msg_id')
+        owner_id = context.user_data.get('inline_owner')
         
-    if context.user_data.get('awaiting_tcfg_time') and chat.type == "private":
-        context.user_data['awaiting_tcfg_time'] = False
-        if re.match(r'^\d{2}:\d{2}$', text) and 'tcfg_draft' in context.user_data:
-            context.user_data['tcfg_draft']['run_time'] = text
-            try:
+        if update.effective_user.id != owner_id:
+            return
+            
+        if step == 'tcfg_theme':
+            context.user_data['tcfg_draft']['theme'] = text[:50]
+            import cmd_trivia
+            await cmd_trivia.render_tcfg_menu(update, context, True)
+            
+        elif step == 'tcfg_time':
+            if re.match(r'^\d{2}:\d{2}$', text):
+                context.user_data['tcfg_draft']['run_time'] = text
                 import cmd_trivia
                 await cmd_trivia.render_tcfg_menu(update, context, True)
-                await update.message.delete()
-            except Exception:
-                pass
-        else:
-            await update.message.reply_text("❌ Invalid Time Format. Configuration reset.")
-        return
+            else:
+                await context.bot.send_message(chat.id, "❌ Invalid format. Use HH:MM (24-hr).")
+                
+        elif step == 'tcfg_chat':
+            context.user_data['tcfg_draft']['target_chat_id'] = text
+            import cmd_trivia
+            await cmd_trivia.render_tcfg_menu(update, context, True)
 
-    if context.user_data.get('editing_feedback') and chat.type == "private":
-        context.user_data['editing_feedback'] = False
-        async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO feedback_drafts (user_id, text) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET text=$2", update.effective_user.id, text)
-        await process_feedback_submission(update, context, text)
+        elif step == 'tcfg_lb_chat':
+            context.user_data['tcfg_draft']['lb_chat'] = text
+            import cmd_trivia
+            await cmd_trivia.render_tcfg_menu(update, context, True)
+
+        elif step == 'tcfg_lb_time':
+            if re.match(r'^\d{2}:\d{2}$', text):
+                context.user_data['tcfg_draft']['lb_time'] = text
+                import cmd_trivia
+                await cmd_trivia.render_tcfg_menu(update, context, True)
+
+        elif step.startswith('mu_custom_'):
+            field = step.split('_')[2]
+            try:
+                val = int(text)
+                context.user_data['mu_draft'][field] = val
+                import cmd_admin
+                await cmd_admin.render_mu_menu(update, context, True)
+            except Exception:
+                await context.bot.send_message(chat.id, "❌ Must be a number.")
+                
+        elif step == 'mu_search':
+            tgt = text.replace("@", "").strip()
+            async with pool.acquire() as conn:
+                u = await conn.fetchrow("SELECT username, gemini_quota FROM users WHERE username=$1", tgt)
+                k = await conn.fetchrow("SELECT quota, monthly_points, all_time_points FROM kudos WHERE username=$1", tgt)
+                ts = await conn.fetchrow("SELECT monthly_kp, all_time_kp FROM trivia_scores WHERE username=$1", tgt)
+            if not u and not k and not ts:
+                await context.bot.send_message(chat.id, f"❌ Cannot find @{tgt}.")
+                import cmd_admin
+                await cmd_admin.render_mu_search(update, context, True)
+            else:
+                context.user_data['mu_draft'] = {
+                    'target_user': tgt,
+                    'stars': k['quota'] if k else 0,
+                    'limit': u['gemini_quota'] if u else 20,
+                    'kp': ts['all_time_kp'] if ts else 0
+                }
+                import cmd_admin
+                await cmd_admin.render_mu_menu(update, context, True)
+                
+        elif step == 'ns_msg':
+            context.user_data['ns_draft']['msg'] = text
+            import cmd_admin
+            await cmd_admin.render_ns_menu(update, context, True)
+            
+        elif step == 'ns_time':
+            if re.match(r'^\d{2}:\d{2}$', text):
+                context.user_data['ns_draft']['time'] = text
+                import cmd_admin
+                await cmd_admin.render_ns_menu(update, context, True)
+            else:
+                await context.bot.send_message(chat.id, "❌ Invalid format. Use HH:MM.")
+                
+        elif step == 'ns_chat':
+            context.user_data['ns_draft']['target'] = text
+            import cmd_admin
+            await cmd_admin.render_ns_menu(update, context, True)
+
+        elif step == 'ev_title':
+            context.user_data['ev_draft']['title'] = text[:100]
+            import cmd_user
+            await cmd_user.render_ev_menu(update, context, True)
+
+        elif step == 'ev_time':
+            try:
+                new_dt = WIB.localize(datetime.datetime.strptime(text, "%m/%d/%Y %H:%M"))
+                context.user_data['ev_draft']['time'] = new_dt
+                import cmd_user
+                await cmd_user.render_ev_menu(update, context, True)
+            except Exception:
+                await context.bot.send_message(chat.id, "❌ Invalid format. Use MM/DD/YYYY HH:MM.")
+
+        elif step == 'editing_feedback':
+            async with pool.acquire() as conn:
+                await conn.execute("INSERT INTO feedback_drafts (user_id, text) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET text=$2", update.effective_user.id, text)
+            await process_feedback_submission(update, context, text)
+
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
         return
     
     try:
@@ -106,6 +184,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if is_away:
                 for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
                     j.schedule_removal()
+                import cmd_user
                 recap_msg = await cmd_user.process_return(username, pool, context.bot)
                 try:
                     await context.bot.send_message(update.effective_user.id, f"✅ {recap_msg}", parse_mode="Markdown")
@@ -123,7 +202,6 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Global tracker error: {e}")
 
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type == "private":
         return await update.message.reply_text("❌ This command must be used in a group.")
@@ -159,7 +237,6 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await temp.edit_text(f"❌ Failed to generate recap. Please DM me first.")
 
 async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from core import delete_cmd
     await delete_cmd(update)
     if update.effective_chat.type != "private":
         try:
@@ -191,7 +268,8 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     
     if action == "fb_edit":
-        context.user_data['editing_feedback'] = True
+        context.user_data['inline_step'] = 'editing_feedback'
+        context.user_data['inline_owner'] = update.effective_user.id
         await q.edit_message_text("✏️ Please type your updated feedback now. (You only get one edit chance).")
     elif action == "fb_submit":
         username = q.from_user.username or str(q.from_user.id)
