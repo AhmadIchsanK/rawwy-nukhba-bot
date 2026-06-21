@@ -15,12 +15,13 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) < 3:
             raise ValueError
         title = parts[0]
-        e_time = WIB.localize(datetime.datetime.strptime(parts[1], "%m/%d/%Y %H.%M"))
+        # Standardized to HH:MM format parsing
+        e_time = WIB.localize(datetime.datetime.strptime(parts[1], "%m/%d/%Y %H:%M"))
         rem = int(parts[2])
         if e_time < datetime.datetime.now(WIB):
             return await update.message.reply_text("❌ Cannot schedule in the past.")
     except Exception:
-        return await update.message.reply_text("❌ Format: `/newevent [Title] , [MM/DD/YYYY HH.MM] , [RemMins]`", parse_mode="Markdown")
+        return await update.message.reply_text("❌ Format: `/newevent [Title] , [MM/DD/YYYY HH:MM] , [RemMins]`", parse_mode="Markdown")
     
     async with pool.acquire() as conn:
         max_e = int(await conn.fetchval("SELECT value FROM config WHERE key='max_events'") or 5)
@@ -54,10 +55,10 @@ async def edit_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = " ".join(context.args).split(",", 1)
         e_id = int(parts[0].strip())
         title, time_str, rem_str = [p.strip() for p in parts[1].rsplit(",", 2)]
-        e_time = WIB.localize(datetime.datetime.strptime(time_str, "%m/%d/%Y %H.%M"))
+        e_time = WIB.localize(datetime.datetime.strptime(time_str, "%m/%d/%Y %H:%M"))
         rem = int(rem_str)
     except Exception:
-        return await update.message.reply_text("❌ Format: `/editevent [ID] , [Title] , [MM/DD/YYYY HH.MM] , [RemMins]`", parse_mode="Markdown")
+        return await update.message.reply_text("❌ Format: `/editevent [ID] , [Title] , [MM/DD/YYYY HH:MM] , [RemMins]`", parse_mode="Markdown")
     
     async with pool.acquire() as conn:
         ev = await conn.fetchrow('SELECT created_by FROM events WHERE id=$1', e_id)
@@ -423,11 +424,11 @@ async def set_away(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
         parts = [p.strip() for p in " ".join(context.args).rsplit(",", 1)]
         reason = parts[0]
-        end_time = WIB.localize(datetime.datetime.strptime(parts[1], "%m/%d/%Y %H.%M"))
+        end_time = WIB.localize(datetime.datetime.strptime(parts[1], "%m/%d/%Y %H:%M"))
         if end_time < datetime.datetime.now(WIB):
             return await update.message.reply_text("❌ Time is in the past.")
     except Exception:
-        return await update.message.reply_text("❌ Format: `/away [Reason] , [MM/DD/YYYY HH.MM]`", parse_mode="Markdown")
+        return await update.message.reply_text("❌ Format: `/away [Reason] , [MM/DD/YYYY HH:MM]`", parse_mode="Markdown")
         
     async with pool.acquire() as conn:
         await conn.execute('INSERT INTO away_status (username, reason, end_time) VALUES ($1, $2, $3)', username, reason, end_time)
