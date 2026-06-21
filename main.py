@@ -4,7 +4,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 from core import BOT_TOKEN, DATABASE_URL, WIB, init_db, log_action
 import cmd_system, cmd_user, cmd_admin, cmd_trivia
 
-# Configure standard internal logging trackers
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -48,11 +47,23 @@ async def post_init_wrapper(application: Application):
 async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
     """Automated morning diagnostic check running at 7:00 AM WIB."""
     pool = context.bot_data.get('db_pool')
-    now_str = datetime.datetime.now(WIB).strftime('%Y-%m-%d %H:%M:%S WIB')
-    logger.info(f"☀️ System status check executed successfully at {now_str}")
-    if pool:
+    target_date = datetime.datetime.now(WIB).date()
+    try:
+        from crons import generate_audit_report
+        msg = await generate_audit_report(pool, target_date)
         async with pool.acquire() as conn:
-            await conn.execute("INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, 0, 0) ON CONFLICT (date) DO NOTHING")
+            admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
+            from core import SUPER_OWNER
+            super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
+        
+        admin_ids = {a['user_id'] for a in admins if a['user_id']}
+        if super_id: admin_ids.add(super_id)
+        
+        for uid in admin_ids:
+            try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
+            except: pass
+    except Exception as e:
+        logger.error(f"Failed to run daily morning log: {e}")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Global system fallback exception catcher."""
@@ -69,7 +80,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             pass
 
 # ----------------------------------------------------
-# 🛡️ DYNAMIC AUTODISCOVERY FALLBACK BRIDGES (USER SUITE)
+# 🛡️ DYNAMIC AUTODISCOVERY FALLBACK BRIDGES
 # ----------------------------------------------------
 async def dynamic_thanks_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for attr in ['thanks_command', 'give_star', 'send_star', 'cmd_thanks', 'thanks', 'give_thanks']:
@@ -126,68 +137,6 @@ async def dynamic_mytasks_fallback(update: Update, context: ContextTypes.DEFAULT
         if hasattr(cmd_user, attr): return await getattr(cmd_user, attr)(update, context)
     await update.message.reply_text("⚠️ Pending task viewer configuration mismatch inside cmd_user module.")
 
-# ----------------------------------------------------
-# 🛡️ DYNAMIC SMART-SEARCH FALLBACK BRIDGES (ADMIN SUITE)
-# ----------------------------------------------------
-async def run_dynamic_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, fallback_names_list: list):
-    for attr in fallback_names_list:
-        if hasattr(cmd_admin, attr): return await getattr(cmd_admin, attr)(update, context)
-    keyword = fallback_names_list[1] if len(fallback_names_list) > 1 else fallback_names_list[0]
-    for attr in dir(cmd_admin):
-        if keyword in attr.lower() and callable(getattr(cmd_admin, attr)):
-            return await getattr(cmd_admin, attr)(update, context)
-    await update.message.reply_text(f"⚠️ Keyword matching failed for '{keyword}' function lineage.")
-
-async def adm_bday_add(u, c): await run_dynamic_admin_cmd(u, c, ['add_bday', 'add_birthday', 'bday'])
-async def adm_bday_edit(u, c): await run_dynamic_admin_cmd(u, c, ['edit_bday', 'edit_birthday', 'bday'])
-async def adm_bday_del(u, c): await run_dynamic_admin_cmd(u, c, ['del_bday', 'del_birthday', 'bday'])
-async def adm_bday_channel(u, c): await run_dynamic_admin_cmd(u, c, ['set_bday_channel', 'bdaychannel', 'setbdaychannel'])
-async def adm_bday_time(u, c): await run_dynamic_admin_cmd(u, c, ['set_bday_time', 'bdaytime', 'setbdaytime'])
-async def adm_bday_config(u, c): await run_dynamic_admin_cmd(u, c, ['bday_config', 'bdayconfig'])
-async def adm_bday_list(u, c): await run_dynamic_admin_cmd(u, c, ['list_bdays', 'listbirthdays'])
-async def adm_bday_batch_add(u, c): await run_dynamic_admin_cmd(u, c, ['addbday_batch', 'batch_add'])
-async def adm_bday_batch_del(u, c): await run_dynamic_admin_cmd(u, c, ['delbday_batch', 'batch_del'])
-
-async def adm_quota_audit(u, c): await run_dynamic_admin_cmd(u, c, ['check_quota', 'quota'])
-async def adm_stars_mod(u, c): await run_dynamic_admin_cmd(u, c, ['admin_stars', 'stars'])
-async def adm_weekly_quota(u, c): await run_dynamic_admin_cmd(u, c, ['set_weekly_quota', 'quota'])
-
-async def adm_limit_audit(u, c): await run_dynamic_admin_cmd(u, c, ['check_limit', 'limit'])
-async def adm_limit_mod(u, c): await run_dynamic_admin_cmd(u, c, ['admin_limit', 'limit'])
-async def adm_weekly_limit(u, c): await run_dynamic_admin_cmd(u, c, ['set_weekly_limit', 'limit'])
-
-async def adm_attendance(u, c): await run_dynamic_admin_cmd(u, c, ['attendance', 'away'])
-async def adm_forceback(u, c): await run_dynamic_admin_cmd(u, c, ['force_back', 'back'])
-async def adm_grouptasks(u, c): await run_dynamic_admin_cmd(u, c, ['group_tasks', 'task'])
-async def adm_cancel_event(u, c): await run_dynamic_admin_cmd(u, c, ['cancel_event', 'event'])
-async def adm_cancel_task(u, c): await run_dynamic_admin_cmd(u, c, ['cancel_task', 'task'])
-async def adm_cancel_poll(u, c): await run_dynamic_admin_cmd(u, c, ['cancel_poll_admin', 'poll'])
-async def adm_lib_batch_add(u, c): await run_dynamic_admin_cmd(u, c, ['addlib_batch', 'lib_batch'])
-async def adm_lib_batch_del(u, c): await run_dynamic_admin_cmd(u, c, ['dellib_batch', 'lib_batch'])
-
-async def adm_schedule(u, c): await run_dynamic_admin_cmd(u, c, ['schedule_announcement', 'schedule'])
-async def adm_listschedules(u, c): await run_dynamic_admin_cmd(u, c, ['list_schedules', 'schedule'])
-async def adm_delschedule(u, c): await run_dynamic_admin_cmd(u, c, ['del_schedule', 'schedule'])
-async def adm_announce(u, c): await run_dynamic_admin_cmd(u, c, ['announce', 'broadcast'])
-async def adm_editannounce(u, c): await run_dynamic_admin_cmd(u, c, ['edit_announce', 'announce'])
-async def adm_delannounce(u, c): await run_dynamic_admin_cmd(u, c, ['del_announce', 'announce'])
-async def adm_groupid(u, c): await run_dynamic_admin_cmd(u, c, ['check_group_id', 'group'])
-async def adm_auditlog(u, c): await run_dynamic_admin_cmd(u, c, ['get_audit_log', 'log'])
-
-async def adm_feedbacklist(u, c): await run_dynamic_admin_cmd(u, c, ['feedback_list', 'feedback'])
-async def adm_analyze_feedback(u, c): await run_dynamic_admin_cmd(u, c, ['analyze_feedback', 'feedback'])
-async def adm_alltimefeedback(u, c): await run_dynamic_admin_cmd(u, c, ['all_time_feedback', 'feedback'])
-
-async def sup_addadmin(u, c): await run_dynamic_admin_cmd(u, c, ['add_admin_req', 'admin'])
-async def sup_deladmin(u, c): await run_dynamic_admin_cmd(u, c, ['del_admin_req', 'admin'])
-async def sup_listadmins(u, c): await run_dynamic_admin_cmd(u, c, ['list_admins', 'admin'])
-async def sup_removemember(u, c): await run_dynamic_admin_cmd(u, c, ['remove_member_req', 'member'])
-async def sup_graveyard(u, c): await run_dynamic_admin_cmd(u, c, ['graveyard', 'grave'])
-async def sup_botstatus(u, c): await run_dynamic_admin_cmd(u, c, ['bot_status', 'status'])
-async def sup_pause(u, c): await run_dynamic_admin_cmd(u, c, ['pause_bot', 'stop'])
-async def sup_restart(u, c): await run_dynamic_admin_cmd(u, c, ['restart_bot', 'start'])
-async def sup_super_reset(u, c): await run_dynamic_admin_cmd(u, c, ['super_reset_req', 'reset'])
-
 def main():
     """Application factory loop setting up routers."""
     if not BOT_TOKEN: return
@@ -196,9 +145,10 @@ def main():
     app.post_init = post_init_wrapper
     app.add_error_handler(error_handler)
 
-    # Trivia Routing
+    # Trivia Module Handlers
     app.add_handler(CommandHandler("mypoint", cmd_trivia.my_point))
     app.add_handler(CommandHandler("settriviachannel", cmd_trivia.set_trivia_channel))
+    app.add_handler(CommandHandler("unsettriviachannel", cmd_admin.unset_trivia_channel))
     app.add_handler(CommandHandler("settriviatheme", cmd_trivia.set_trivia_theme))
     app.add_handler(CommandHandler("settriviatime", cmd_trivia.set_trivia_time))
     app.add_handler(CommandHandler("settriviadays", cmd_trivia.set_trivia_days))
@@ -213,7 +163,7 @@ def main():
     app.add_handler(CommandHandler("admin_kp", cmd_trivia.admin_kp))
     app.add_handler(CallbackQueryHandler(cmd_trivia.trivia_callback, pattern="^triv_"))
 
-    # User Features
+    # Core User Command Handlers
     app.add_handler(CommandHandler("start", cmd_system.start))
     app.add_handler(CommandHandler("help", cmd_system.help_command))
     app.add_handler(CommandHandler("gemini", cmd_system.ask_gemini))
@@ -244,59 +194,60 @@ def main():
     app.add_handler(CommandHandler("away", cmd_user.set_away))
     app.add_handler(CommandHandler("back", cmd_user.set_back))
 
-    # Admins
-    app.add_handler(CommandHandler("addbday", adm_bday_add))
-    app.add_handler(CommandHandler("editbday", adm_bday_edit))
-    app.add_handler(CommandHandler("delbday", adm_bday_del))
-    app.add_handler(CommandHandler("setbdaychannel", adm_bday_channel))
-    app.add_handler(CommandHandler("setbdaytime", adm_bday_time))
-    app.add_handler(CommandHandler("bdayconfig", adm_bday_config))
-    app.add_handler(CommandHandler("listbdays", adm_bday_list))
-    app.add_handler(CommandHandler("addbday_batch", adm_bday_batch_add))
-    app.add_handler(CommandHandler("delbday_batch", adm_bday_batch_del))
+    # Administrative Controls Matrix
+    app.add_handler(CommandHandler("addbday", cmd_admin.add_bday))
+    app.add_handler(CommandHandler("editbday", cmd_admin.edit_bday))
+    app.add_handler(CommandHandler("delbday", cmd_admin.del_bday))
+    app.add_handler(CommandHandler("setbdaychannel", cmd_admin.set_bday_channel))
+    app.add_handler(CommandHandler("unsetbdaychannel", cmd_admin.unset_bday_channel))
+    app.add_handler(CommandHandler("setbdaytime", cmd_admin.set_bday_time))
+    app.add_handler(CommandHandler("bdayconfig", cmd_admin.bday_config))
+    app.add_handler(CommandHandler("listbdays", cmd_admin.list_bdays))
+    app.add_handler(CommandHandler("addbday_batch", cmd_admin.addbday_batch))
+    app.add_handler(CommandHandler("delbday_batch", cmd_admin.delbday_batch))
     
-    app.add_handler(CommandHandler("checkquota", adm_quota_audit))
-    app.add_handler(CommandHandler("admin_stars", adm_stars_mod))
-    app.add_handler(CommandHandler("setweeklyquota", adm_weekly_quota))
+    app.add_handler(CommandHandler("checkquota", cmd_admin.check_quota))
+    app.add_handler(CommandHandler("admin_stars", cmd_admin.admin_stars))
+    app.add_handler(CommandHandler("setweeklyquota", cmd_admin.set_weekly_quota))
     
-    app.add_handler(CommandHandler("checklimit", adm_limit_audit))
-    app.add_handler(CommandHandler("admin_limit", adm_limit_mod))
-    app.add_handler(CommandHandler("setweeklylimit", adm_weekly_limit))
+    app.add_handler(CommandHandler("checklimit", cmd_admin.check_limit))
+    app.add_handler(CommandHandler("admin_limit", cmd_admin.admin_limit))
+    app.add_handler(CommandHandler("setweeklylimit", cmd_admin.set_weekly_limit))
     
-    app.add_handler(CommandHandler("attendance", adm_attendance))
-    app.add_handler(CommandHandler("forceback", adm_forceback))
-    app.add_handler(CommandHandler("grouptasks", adm_grouptasks))
-    app.add_handler(CommandHandler("cancelevent", adm_cancel_event))
-    app.add_handler(CommandHandler("canceltask", adm_cancel_task))
-    app.add_handler(CommandHandler("cancelpoll", adm_cancel_poll))
-    app.add_handler(CommandHandler("addlib_batch", adm_lib_batch_add))
-    app.add_handler(CommandHandler("dellib_batch", adm_lib_batch_del))
+    app.add_handler(CommandHandler("attendance", cmd_admin.attendance))
+    app.add_handler(CommandHandler("forceback", cmd_admin.force_back))
+    app.add_handler(CommandHandler("grouptasks", cmd_admin.group_tasks))
+    app.add_handler(CommandHandler("cancelevent", cmd_admin.cancel_event))
+    app.add_handler(CommandHandler("canceltask", cmd_admin.cancel_task))
+    app.add_handler(CommandHandler("cancelpoll", cmd_admin.cancel_poll_admin))
+    app.add_handler(CommandHandler("addlib_batch", cmd_admin.addlib_batch))
+    app.add_handler(CommandHandler("dellib_batch", cmd_admin.dellib_batch))
     
-    app.add_handler(CommandHandler("schedule", adm_schedule))
-    app.add_handler(CommandHandler("listschedules", adm_listschedules))
-    app.add_handler(CommandHandler("delschedule", adm_delschedule))
-    app.add_handler(CommandHandler("announce", adm_announce))
-    app.add_handler(CommandHandler("editannounce", adm_editannounce))
-    app.add_handler(CommandHandler("delannounce", adm_delannounce))
-    app.add_handler(CommandHandler("groupid", adm_groupid))
-    app.add_handler(CommandHandler("auditlog", adm_auditlog))
+    app.add_handler(CommandHandler("schedule", cmd_admin.schedule_announcement))
+    app.add_handler(CommandHandler("listschedules", cmd_admin.list_schedules))
+    app.add_handler(CommandHandler("delschedule", cmd_admin.del_schedule))
+    app.add_handler(CommandHandler("announce", cmd_admin.announce))
+    app.add_handler(CommandHandler("editannounce", cmd_admin.edit_announce))
+    app.add_handler(CommandHandler("delannounce", cmd_admin.del_announce))
+    app.add_handler(CommandHandler("groupid", cmd_admin.check_group_id))
+    app.add_handler(CommandHandler("auditlog", cmd_admin.get_audit_log))
     
-    app.add_handler(CommandHandler("feedbacklist", adm_feedbacklist))
-    app.add_handler(CommandHandler("analyze_feedback", adm_analyze_feedback))
-    app.add_handler(CommandHandler("alltimefeedback", adm_alltimefeedback))
+    app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
+    app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
+    app.add_handler(CommandHandler("alltimefeedback", cmd_admin.all_time_feedback))
 
-    # Super Owner Exclusives
-    app.add_handler(CommandHandler("addadmin", sup_addadmin))
-    app.add_handler(CommandHandler("deladmin", sup_deladmin))
-    app.add_handler(CommandHandler("listadmins", sup_listadmins))
-    app.add_handler(CommandHandler("removemember", sup_removemember))
-    app.add_handler(CommandHandler("graveyard", sup_graveyard))
-    app.add_handler(CommandHandler("botstatus", sup_botstatus))
-    app.add_handler(CommandHandler("pause", sup_pause))
-    app.add_handler(CommandHandler("restart", sup_restart))
-    app.add_handler(CommandHandler("super_reset", sup_super_reset))
+    # Super Owner Scope Handlers
+    app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
+    app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
+    app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
+    app.add_handler(CommandHandler("removemember", cmd_admin.remove_member_req))
+    app.add_handler(CommandHandler("graveyard", cmd_admin.graveyard))
+    app.add_handler(CommandHandler("botstatus", cmd_admin.bot_status))
+    app.add_handler(CommandHandler("pause", cmd_admin.pause_bot))
+    app.add_handler(CommandHandler("restart", cmd_admin.restart_bot))
+    app.add_handler(CommandHandler("super_reset", cmd_admin.super_reset_req))
 
-    # Callbacks
+    # Callback Processing Dispatches
     app.add_handler(CallbackQueryHandler(cmd_user.rsvp_callback, pattern="^rsvp_"))
     app.add_handler(CallbackQueryHandler(cmd_user.poll_callback, pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(cmd_admin.super_callback, pattern="^sup_"))
@@ -305,14 +256,21 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
-    # Background Jobs
+    # Background Automated Timing Sweeps
     app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=10)
     app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
     app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
     app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
     app.job_queue.run_daily(cmd_trivia.run_monthly_trivia_reset, time=datetime.time(hour=13, minute=0, tzinfo=WIB))
+    app.job_queue.run_repeating(crons_poll_cleanup, interval=3600)
 
+    logger.info("🚀 [RW] Nukhba Manager initialized. Starting event polling loops...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+async def crons_poll_cleanup(context: ContextTypes.DEFAULT_TYPE):
+    """Bridge runner to clear dead poll state fields safely."""
+    from crons import poll_cleanup
+    await poll_cleanup(context)
 
 if __name__ == '__main__':
     main()
