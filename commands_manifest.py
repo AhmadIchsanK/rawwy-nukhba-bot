@@ -9,10 +9,10 @@ COMMANDS = [
     {"name": "feedback", "desc": "Submit Feedback", "format": "`/feedback [details]`", "public": True, "category": "💬 General", "emoji": "💡"},
 
     # 📅 EVENTS & POLLS
-    {"name": "newevent", "desc": "Schedule an event", "format": "`/newevent [Title] , [MM/DD/YYYY HH.MM] , [RemMins]`", "public": True, "category": "📅 Events & Polls", "emoji": "📅"},
-    {"name": "editevent", "desc": "Edit your event", "format": "`/editevent [ID] , [Title] , [MM/DD/YYYY HH.MM] , [RemMins]`", "public": True, "category": "📅 Events & Polls", "emoji": "✏️"},
-    {"name": "events", "desc": "View upcoming events", "public": True, "category": "📅 Events & Polls", "emoji": "🗓️"},
-    {"name": "poll", "desc": "Interactive Team Poll", "format": "`/poll [Question] , [Opt1] , [Opt2]`", "public": True, "category": "📅 Events & Polls", "emoji": "📊"},
+    {"name": "newevent", "desc": "Schedule an event", "format": "`/newevent [Title] , [MM/DD/YYYY HH:MM] , [RemMins]`", "public": True, "category": "📅 Events", "emoji": "📅"},
+    {"name": "editevent", "desc": "Edit your event", "format": "`/editevent [ID] , [Title] , [MM/DD/YYYY HH:MM] , [RemMins]`", "public": True, "category": "📅 Events", "emoji": "✏️"},
+    {"name": "events", "desc": "View upcoming events", "public": True, "category": "📅 Events", "emoji": "🗓️"},
+    {"name": "poll", "desc": "Interactive Team Poll", "format": "`/poll [Question] , [Opt1] , [Opt2]`", "public": True, "category": "📊 Polls", "emoji": "📊"},
 
     # ⭐ RAWWY STARS
     {"name": "thanks", "desc": "Give a Star", "format": "Reply to a message with `/thanks`", "public": True, "category": "⭐ RAWWY Stars", "emoji": "⭐"},
@@ -32,18 +32,19 @@ COMMANDS = [
     {"name": "library", "desc": "Browse the Library", "public": True, "category": "📚 Library", "emoji": "🗂️"},
 
     # ⚡ TASKS & AWAY
-    {"name": "assign", "desc": "Assign a task", "format": "`/assign [@user] , [Mins] , [Desc]`", "public": True, "category": "⚡ Tasks & Away", "emoji": "📌"},
-    {"name": "complete", "desc": "Mark task complete", "format": "`/complete [ID]`", "public": True, "category": "⚡ Tasks & Away", "emoji": "✅"},
-    {"name": "mytasks", "desc": "View active tasks", "public": True, "category": "⚡ Tasks & Away", "emoji": "📋"},
-    {"name": "away", "desc": "Set away status", "format": "`/away [Reason] , [MM/DD/YYYY HH.MM]`", "public": True, "category": "⚡ Tasks & Away", "emoji": "🛫"},
-    {"name": "back", "desc": "Return to available", "public": True, "category": "⚡ Tasks & Away", "emoji": "🛬"},
+    {"name": "assign", "desc": "Assign a task", "format": "`/assign [@user] , [Mins] , [Desc]`", "public": True, "category": "⚡ Tasks", "emoji": "📌"},
+    {"name": "complete", "desc": "Mark task complete", "format": "`/complete [ID]`", "public": True, "category": "⚡ Tasks", "emoji": "✅"},
+    {"name": "mytasks", "desc": "View active tasks", "public": True, "category": "⚡ Tasks", "emoji": "📋"},
+    {"name": "away", "desc": "Set away status", "format": "`/away [Reason] , [MM/DD/YYYY HH:MM]`", "public": True, "category": "🏖️ Away Mode", "emoji": "🛫"},
+    {"name": "back", "desc": "Return to available", "public": True, "category": "🏖️ Away Mode", "emoji": "🛬"},
 
     # ⚙️ ADMIN SYSTEM CONFIG
     {"name": "botconfig", "desc": "Interactive Bot Settings", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🛠️"},
     {"name": "setchannel", "desc": "Set feature target channel", "format": "`/setchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📍"},
     {"name": "unsetchannel", "desc": "Remove feature target channel", "format": "`/unsetchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🔕"},
     {"name": "groupid", "desc": "Get current chat ID", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🆔"},
-    {"name": "auditlog", "desc": "Pull diagnostic logs", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📑"},
+    {"name": "auditlog", "desc": "Pull diagnostic logs", "format": "`/auditlog [number]`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📑"},
+    {"name": "audittime", "desc": "Set daily audit log time", "format": "`/audittime HH:MM`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "⏰"},
 
     # 🎮 ADMIN TRIVIA
     {"name": "triviaconfig", "desc": "Interactive Trivia Panel", "public": False, "admin": True, "category": "🎮 Trivia Admin", "emoji": "🎛️"},
@@ -81,14 +82,9 @@ COMMANDS = [
     {"name": "delannounce", "desc": "Delete announcement", "format": "`/delannounce [ID]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🗑️"},
     {"name": "feedbacklist", "desc": "View recent feedback", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "📥"},
     {"name": "analyze_feedback", "desc": "Analyze feedback via AI", "format": "`/analyze_feedback [MM/DD/YYYY to MM/DD/YYYY]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🧠"},
-{"name": "announce", "desc": "Send announcement", "format": "`/announce [ChatID|all] , [Message]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "📣"},
-    {"name": "editannounce", "desc": "Edit announcement", "format": "`/editannounce [ID] , [New Msg]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "✏️"},
-    {"name": "delannounce", "desc": "Delete announcement", "format": "`/delannounce [ID]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🗑️"},
-    {"name": "feedbacklist", "desc": "View recent feedback", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "📥"},
-    {"name": "analyze_feedback", "desc": "Analyze feedback via AI", "format": "`/analyze_feedback [MM/DD/YYYY to MM/DD/YYYY]`", "public": False, "admin": True, "category": "📢 Broadcasts", "emoji": "🧠"},
-    {"name": "audittime", "desc": "Set daily audit log time", "format": "`/audittime HH:MM`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "⏰"},
-       
+    
     # 👑 SUPER OWNER
+    {"name": "allcommandtest", "desc": "AI test for all commands", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🧪"},
     {"name": "addadmin", "desc": "Promote to Admin", "format": "`/addadmin [@user]`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⬆️"},
     {"name": "deladmin", "desc": "Demote Admin", "format": "`/deladmin [@user]`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⬇️"},
     {"name": "listadmins", "desc": "List current Admins", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "👥"},
