@@ -1,5 +1,6 @@
 # Canonical command manifest to drive both help text and Telegram menu
 # Telegram API requires command names to be 1-32 lowercase characters.
+
 COMMANDS = [
     # 💬 GENERAL
     {"name": "start", "desc": "Start interaction", "public": True, "category": "💬 General", "emoji": "🚀"},
@@ -12,8 +13,9 @@ COMMANDS = [
     {"name": "wdim", "desc": "What did I miss? (Recap)", "public": True, "category": "🤖 AI / Gemini", "emoji": "🔍"},
 
     # 📅 EVENTS & POLLS
-    {"name": "newevent", "desc": "Schedule an event", "format": "`/newevent Team Sync , 12/25/2026 14:00 , 30`", "public": True, "category": "📅 Events & Polls", "emoji": "📅"},
-    {"name": "events", "desc": "Interactive Event Manager", "public": True, "category": "📅 Events & Polls", "emoji": "🗓️"},
+    {"name": "newevent", "desc": "Schedule an event", "format": "`/newevent Title , MM/DD/YYYY HH:MM , RemMins`", "public": True, "category": "📅 Events & Polls", "emoji": "📅"},
+    {"name": "editevent", "desc": "Edit an event", "format": "`/editevent ID , Title , MM/DD/YYYY HH:MM , RemMins`", "public": True, "category": "📅 Events & Polls", "emoji": "✏️"},
+    {"name": "events", "desc": "Upcoming events", "public": True, "category": "📅 Events & Polls", "emoji": "🗓️"},
     {"name": "poll", "desc": "Interactive Team Poll", "format": "`/poll Where to eat? , Pizza , Sushi`", "public": True, "category": "📅 Events & Polls", "emoji": "📊"},
 
     # ⭐ RAWWY STARS
@@ -29,12 +31,11 @@ COMMANDS = [
     # 📚 LIBRARY
     {"name": "library", "desc": "Browse Library", "public": True, "category": "📚 Library", "emoji": "🗂️"},
     {"name": "getlib", "desc": "Retrieve an asset", "format": "`/getlib Logo`", "public": True, "category": "📚 Library", "emoji": "📤"},
-    {"name": "addlib", "desc": "Save an asset", "format": "`/addlib Logo , https://link.com/logo.png`", "public": True, "category": "📚 Library", "emoji": "📥"},
+    {"name": "addlib", "desc": "Save an asset", "format": "`/addlib Logo , content`", "public": True, "category": "📚 Library", "emoji": "📥"},
     {"name": "editlib", "desc": "Edit an asset", "format": "`/editlib Logo , <new content>`", "public": True, "category": "📚 Library", "emoji": "✏️"},
-    {"name": "dellib", "desc": "Delete an asset", "format": "`/dellib Logo`", "public": True, "category": "📚 Library", "emoji": "🗑️"},
 
     # ⚡ TASKS & AWAY
-    {"name": "mytasks", "desc": "Interactive Task Manager", "public": True, "category": "⚡ Tasks & Away", "emoji": "📋"},
+    {"name": "mytasks", "desc": "Active Tasks", "public": True, "category": "⚡ Tasks & Away", "emoji": "📋"},
     {"name": "assign", "desc": "Assign a task", "format": "`/assign @user , 120 , Review code`", "public": True, "category": "⚡ Tasks & Away", "emoji": "📌"},
     {"name": "complete", "desc": "Complete a task", "format": "`/complete [TaskID]`", "public": True, "category": "⚡ Tasks & Away", "emoji": "✅"},
     {"name": "away", "desc": "Set away status", "format": "`/away Doctor , 10/15/2026 14:30`", "public": True, "category": "⚡ Tasks & Away", "emoji": "🛫"},
@@ -90,7 +91,7 @@ COMMANDS = [
     {"name": "announce", "desc": "Send announcement now", "format": "`/announce <chat_id|all> , <Message>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📣"},
     {"name": "editannounce", "desc": "Edit sent announcement", "format": "`/editannounce [ID] , <New Message>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "✏️"},
     {"name": "delannounce", "desc": "Delete sent announcement", "format": "`/delannounce [ID]`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🗑️"},
-    {"name": "feedbacklist", "desc": "View raw feedback (7 Days)", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📥"},
+    {"name": "feedbacklist", "desc": "View raw feedback", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📥"},
     {"name": "analyze_feedback", "desc": "AI summarize feedback", "format": "`/analyze_feedback <MM/DD/YYYY> to <MM/DD/YYYY>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🤖"},
     
     # ==========================================
