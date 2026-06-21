@@ -1,4 +1,4 @@
-import datetime, logging, pytz
+import datetime, logging, json, pytz
 from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
@@ -7,20 +7,137 @@ from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delet
 logger = logging.getLogger(__name__)
 
 async def send_md(context, chat_id, text):
-    """Smart markdown text message chunker utility."""
     chunk = ""
     for line in text.split('\n'):
         if len(chunk) + len(line) > 3800:
             try: await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
             except: await context.bot.send_message(chat_id, chunk)
             chunk = line + "\n"
-        else: 
-            chunk += line + "\n"
+        else: chunk += line + "\n"
     if chunk.strip(): 
         try: await context.bot.send_message(chat_id, chunk, parse_mode="Markdown")
         except: await context.bot.send_message(chat_id, chunk)
 
-# --- BACKGROUND AUTOMATION WORKERS ---
+# --- UNIFIED CONFIGURATION PANELS ---
+async def bot_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    
+    async with pool.acquire() as conn:
+        gl = await conn.fetchval("SELECT value FROM config WHERE key='gemini_weekly_limit'") or '20'
+        sq = await conn.fetchval("SELECT value FROM config WHERE key='star_quota'") or '3'
+        mt = await conn.fetchval("SELECT value FROM config WHERE key='max_tasks'") or '4'
+        ma = await conn.fetchval("SELECT value FROM config WHERE key='max_away_days'") or '14'
+        
+    text = (
+        "⚙️ **NUKHBA GLOBAL CONFIGURATION**\n\n"
+        f"🤖 AI Limit: `{gl} queries/wk`\n"
+        f"🌟 Star Quota: `{sq} stars/wk`\n"
+        f"⚡ Max Tasks: `{mt} pending/user`\n"
+        f"🏖️ Max Away: `{ma} days`"
+    )
+    
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"🤖 AI Limit (+5)", callback_data="cfg_gemini"), InlineKeyboardButton(f"🌟 Star Quota (+1)", callback_data="cfg_stars")],
+        [InlineKeyboardButton(f"⚡ Max Tasks (+1)", callback_data="cfg_tasks"), InlineKeyboardButton(f"🏖️ Max Away (+2)", callback_data="cfg_away")]
+    ])
+    try: await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+    except: await update.callback_query.edit_message_text(text, reply_markup=kb, parse_mode="Markdown")
+
+async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(q.from_user.username, pool): return await q.answer("Unauthorized", show_alert=True)
+    
+    act = q.data.split("_")[1]
+    keys = {"gemini": "gemini_weekly_limit", "stars": "star_quota", "tasks": "max_tasks", "away": "max_away_days"}
+    increments = {"gemini": 5, "stars": 1, "tasks": 1, "away": 2}
+    
+    async with pool.acquire() as conn:
+        val = await conn.fetchval("SELECT value FROM config WHERE key=$1", keys[act])
+        new_val = int(val) + increments[act] if val else increments[act]
+        if new_val > 100: new_val = 1 
+        await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", keys[act], str(new_val))
+        
+    await q.answer(f"{act.title()} updated.")
+    await bot_config(update, context)
+
+# --- UNIFIED CHANNEL BINDING ---
+async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    if update.effective_chat.type == "private": return await update.message.reply_text("❌ Run inside group.")
+    
+    target = context.args[0].lower() if context.args else ""
+    valid = {"bday": "bday_channel", "trivia": "target_chat_id", "stars": "stars_channel"}
+    if target not in valid: return await update.message.reply_text("❌ Usage: `/setchannel <bday|trivia|stars>`")
+    
+    async with pool.acquire() as conn:
+        if target == "trivia":
+            await conn.execute("INSERT INTO trivia_config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", valid[target], str(update.effective_chat.id))
+        else:
+            await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", valid[target], str(update.effective_chat.id))
+    await update.message.reply_text(f"✅ Channel binding for `{target}` locked to this group.", parse_mode="Markdown")
+
+async def unset_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    
+    target = context.args[0].lower() if context.args else ""
+    valid = {"bday": "bday_channel", "trivia": "target_chat_id", "stars": "stars_channel"}
+    if target not in valid: return await update.message.reply_text("❌ Usage: `/unsetchannel <bday|trivia|stars>`")
+    
+    async with pool.acquire() as conn:
+        if target == "trivia":
+            await conn.execute("DELETE FROM trivia_config WHERE key=$1", valid[target])
+        else:
+            await conn.execute("DELETE FROM config WHERE key=$1", valid[target])
+    await update.message.reply_text(f"✅ Channel binding for `{target}` has been cleared.", parse_mode="Markdown")
+
+# --- FEEDBACK ANALYSIS (STRICT 3-PART) ---
+async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    if not GEMINI_API_KEY: return await update.message.reply_text("❌ API Key Missing.")
+    
+    arg = "".join(context.args).strip() if context.args else ""
+    try:
+        async with pool.acquire() as conn:
+            if "to" in arg:
+                st, en = [p.strip() for p in arg.split("to", 1)]
+                s_dt = datetime.datetime.strptime(st, "%m/%d/%Y").date()
+                e_dt = datetime.datetime.strptime(en, "%m/%d/%Y").date()
+                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date >= $1 AND created_at::date <= $2 ORDER BY created_at ASC", s_dt, e_dt)
+                range_desc = f"from {st} to {en}"
+            else:
+                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC")
+                range_desc = "last 7 days"
+    except Exception as e: return await update.message.reply_text(f"❌ Date error. Use MM/DD/YYYY to MM/DD/YYYY")
+
+    if not reports: return await update.message.reply_text(f"✅ Backlog clean for {range_desc}.")
+    temp = await update.message.reply_text("⏳ Generating structured feedback analysis brief...")
+    raw_data = "\n".join([f"• @{r['username']}: {r['report']}" for r in reports])
+
+    ai_prompt = (
+        f"Analyze this team feedback ({range_desc}).\n"
+        "Output strictly this format and nothing else. Be concise and strategic.\n\n"
+        "### 🚨 Summary\n[Summary of issues]\n\n"
+        "### 💡 Suggestion\n[Practical workflow enhancements]\n\n"
+        "### 🚀 Next Step\n[Actionable steps for the team]\n\n"
+        f"Data:\n{raw_data}"
+    )
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=ai_prompt)
+        await temp.delete()
+        await send_md(context, update.effective_user.id, f"✅ 🤖 **Gemini Analytics ({range_desc})**\n\n{response.text}")
+    except Exception as e: await update.message.reply_text(f"❌ Analysis Error: {e}")
+
+# --- OTHER ADMIN UTILS ---
 async def unpin_event(context):
     try: await context.bot.unpin_chat_message(chat_id=context.job.data['chat_id'], message_id=context.job.data['msg_id'])
     except: pass
@@ -41,8 +158,6 @@ async def auto_return_away(context):
     pool = context.bot_data.get('db_pool')
     username = context.job.data['username']
     uid = await pool.fetchval("SELECT user_id FROM users WHERE username=$1", username)
-    
-    # Safe decoupled reference bridge invocation sequence
     import cmd_user
     msg = await cmd_user.process_return(username, pool, context.bot)
     await log_action(pool, uid or 0, context.job.data['chat_id'], "Away Status", "Removed", f"@{username} auto-returned")
@@ -50,8 +165,7 @@ async def auto_return_away(context):
         try: await context.bot.send_message(uid, msg, parse_mode="Markdown")
         except: pass
 
-# --- CANCELLATION HANDLERS ---
-async def cancel_event(update, context):
+async def cancel_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
@@ -67,7 +181,7 @@ async def cancel_event(update, context):
     except: pass
     await context.bot.send_message(update.effective_user.id, "✅ Event cancelled.")
 
-async def cancel_task(update, context):
+async def cancel_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -81,7 +195,7 @@ async def cancel_task(update, context):
         await conn.execute("DELETE FROM tasks WHERE id=$1", t_id)
     await context.bot.send_message(update.effective_user.id, "✅ Task deleted.")
 
-async def cancel_poll_admin(update, context):
+async def cancel_poll_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
@@ -92,28 +206,15 @@ async def cancel_poll_admin(update, context):
         await context.bot.send_message(update.effective_user.id, "✅ Poll stopped.")
     except Exception as e: await context.bot.send_message(update.effective_user.id, f"❌ Error: {e}")
 
-# --- GEMINI MANAGER CONTROLS ---
-async def set_weekly_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    try: limit = int(context.args[0])
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setweeklylimit 20`")
-    async with pool.acquire() as conn: 
-        await conn.execute("INSERT INTO config (key, value) VALUES ('gemini_weekly_limit', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(limit))
-    await context.bot.send_message(update.effective_user.id, f"✅ Global AI limit set to {limit}.")
-
+async def set_weekly_limit(update: Update, context: ContextTypes.DEFAULT_TYPE): pass
 async def admin_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
     try:
         parts = [p.strip() for p in " ".join(context.args).split(",", 2)]
-        t = parts[0].replace("@", "").lower()
-        act = parts[1].lower()
-        amt = int(parts[2])
+        t = parts[0].replace("@", "").lower(); act = parts[1].lower(); amt = int(parts[2])
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/admin_limit @user , [set/add/sub] , Amount`")
-    
     async with pool.acquire() as conn:
         if act == "set": await conn.execute("UPDATE users SET gemini_quota=$1 WHERE username=$2", amt, t)
         elif act == "add": await conn.execute("UPDATE users SET gemini_quota=gemini_quota+$1 WHERE username=$2", amt, t)
@@ -134,17 +235,7 @@ async def check_limit(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"✅ @{target} Limit left: {r}" if r is not None else "❌ User not found."
     await context.bot.send_message(update.effective_user.id, msg[:4000])
 
-# --- RAWWY STARS QUOTA CONTROLS ---
-async def set_weekly_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    try: limit = int(context.args[0])
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setweeklyquota 3`")
-    async with pool.acquire() as conn: 
-        await conn.execute("INSERT INTO config (key, value) VALUES ('star_quota', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(limit))
-    await context.bot.send_message(update.effective_user.id, f"✅ Default weekly Star Quota set to {limit}.")
-
+async def set_weekly_quota(update: Update, context: ContextTypes.DEFAULT_TYPE): pass
 async def check_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -165,66 +256,22 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool): return
     try:
         parts = [p.strip() for p in " ".join(context.args).split(",", 3)]
-        t = parts[0].replace("@", "").lower()
-        field = parts[1].lower()
-        act = parts[2].lower()
-        amt = int(parts[3])
+        t = parts[0].replace("@", "").lower(); field = parts[1].lower(); act = parts[2].lower(); amt = int(parts[3])
         col = 'monthly_points' if field == 'monthly' else 'all_time_points' if field == 'total' else 'quota'
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format error.")
-    
     async with pool.acquire() as conn:
         await conn.execute(f'INSERT INTO kudos (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
         await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2' if act=="add" else f'UPDATE kudos SET {col}={col}-$1 WHERE username=$2' if act=="sub" else f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
     await context.bot.send_message(update.effective_user.id, "✅ Stars modified.")
-
-# --- LIBRARY ENGINE CONTROLS ---
-async def del_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    try: name = context.args[0].lower().strip()
-    except: return await context.bot.send_message(update.effective_user.id, "❌ `/dellib asset_name`")
-    async with pool.acquire() as conn:
-        res = await conn.execute('DELETE FROM library WHERE name=$1', name)
-        if res == "DELETE 0": return await context.bot.send_message(update.effective_user.id, "❌ Asset doesn't exist.")
-    await context.bot.send_message(update.effective_user.id, f"✅ Asset '{name}' dropped.")
-
-# --- BIRTHDAY INFRASTRUCTURE ---
-async def set_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    if update.effective_chat.type == "private": return await context.bot.send_message(update.effective_user.id, "❌ Run inside group.")
-    async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO config (key, value) VALUES ('bday_channel', $1) ON CONFLICT (key) DO UPDATE SET value=$1", str(update.effective_chat.id))
-    await context.bot.send_message(update.effective_user.id, f"✅ Birthday channel locked to {update.effective_chat.title}.")
-
-async def unset_bday_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM config WHERE key='bday_channel'")
-    await context.bot.send_message(update.effective_user.id, "✅ Birthday channel tracking links removed cleanly.")
-
-async def unset_trivia_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM trivia_config WHERE key='target_chat_id'")
-    await context.bot.send_message(update.effective_user.id, "✅ Trivia automation channel links removed cleanly.")
 
 async def set_bday_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool): return
     try: h, m = map(int, context.args[0].split(':'))
-    except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setbdaytime White/Cycle Format HH:MM`")
-    
+    except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/setbdaytime HH:MM`")
     formatted_time = f"{h:02d}:{m:02d}"
-    async with pool.acquire() as conn:
-        await conn.execute("INSERT INTO config (key, value) VALUES ('bday_time', $1) ON CONFLICT (key) DO UPDATE SET value=$1", formatted_time)
+    async with pool.acquire() as conn: await conn.execute("INSERT INTO config (key, value) VALUES ('bday_time', $1) ON CONFLICT (key) DO UPDATE SET value=$1", formatted_time)
     from crons import schedule_bday_job
     await schedule_bday_job(context.application)
     await context.bot.send_message(update.effective_user.id, f"✅ Alerts scheduled daily at {formatted_time} WIB.")
@@ -244,8 +291,7 @@ async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool): return
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",")]
-        u = parts[0].replace("@", "").lower()
-        b = parts[1]
+        u = parts[0].replace("@", "").lower(); b = parts[1]
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/addbday @user, MM/DD`")
     async with pool.acquire() as conn:
         exist = await conn.fetchval('SELECT bday FROM birthdays WHERE lower(username)=$1', u)
@@ -259,8 +305,7 @@ async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool): return
     try: 
         parts = [p.strip() for p in " ".join(context.args).split(",")]
-        u = parts[0].replace("@", "").lower()
-        b = parts[1]
+        u = parts[0].replace("@", "").lower(); b = parts[1]
     except: return await context.bot.send_message(update.effective_user.id, "❌ Format: `/editbday @user, MM/DD`")
     async with pool.acquire() as conn:
         res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE lower(username)=$2', b, u)
@@ -284,7 +329,6 @@ async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = "🎂 **Birthdays Matrix**\n" + "\n".join([f"• @{x['username']}: {x['bday']}" for x in b])
     await context.bot.send_message(update.effective_user.id, msg)
 
-# --- BULK DATA PROCESSING MODULES ---
 async def addlib_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -339,7 +383,6 @@ async def delbday_batch(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for item in items: await conn.execute('DELETE FROM birthdays WHERE lower(username)=$1', item.replace("@", "").strip().lower())
     await context.bot.send_message(update.effective_user.id, "✅ Birthday drop batch processed.")
 
-# --- AI INSIGHT BRIEF ENGINE ---
 async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -351,52 +394,6 @@ async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for r in recs: msg += f"• `[{r['created_at'].astimezone(WIB).strftime('%m/%d/%Y %H:%M')}]` @{r['username']}: {r['report']}\n"
     await send_md(context, update.effective_user.id, msg)
 
-async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool): return
-    if not GEMINI_API_KEY: return await context.bot.send_message(update.effective_user.id, "❌ API Key Missing.")
-    arg = "".join(context.args).strip() if context.args else ""
-    try:
-        async with pool.acquire() as conn:
-            if "," in arg:
-                st, en = [p.strip() for p in arg.split(",", 1)]
-                s_dt = datetime.datetime.strptime(st, "%m/%d/%Y").date()
-                e_dt = datetime.datetime.strptime(en, "%m/%d/%Y").date()
-                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date >= $1 AND created_at::date <= $2 ORDER BY created_at ASC", s_dt, e_dt)
-                range_desc = f"from {st} to {en}"
-            elif arg:
-                tgt = datetime.datetime.strptime(arg, "%m/%d/%Y").date()
-                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at::date = $1 ORDER BY created_at ASC", tgt)
-                range_desc = f"for specific date: {arg}"
-            else:
-                reports = await conn.fetch("SELECT username, report, created_at FROM bug_reports WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC")
-                range_desc = f"within default active period (last 7 days)"
-    except ValueError: return await context.bot.send_message(update.effective_user.id, "❌ Date format error. Use MM/DD/YYYY")
-    except Exception as e: return await context.bot.send_message(update.effective_user.id, f"❌ Database error: {e}")
-
-    if not reports: return await context.bot.send_message(update.effective_user.id, f"✅ Backlog clean {range_desc}.")
-    temp = await context.bot.send_message(update.effective_user.id, "⏳ Generating detailed feedback analysis brief...")
-    raw_data = ""
-    for r in reports:
-        dt = r['created_at'].astimezone(WIB).strftime('%m/%d/%Y')
-        raw_data += f"• [{dt}] @{r['username']}: {r['report']}\n"
-
-    ai_prompt = (
-        f"You are a Senior Product Manager analyzing team feedback {range_desc}.\n"
-        "Provide a brief, strategic summary strictly matching this structure (no code wrapper blocks):\n\n"
-        "### 🚨 1. Problem\n[Summarize the issues]\n\n"
-        "### 💡 2. Suggestion\n[Outline practical workflows]\n\n"
-        "### 🚀 3. Next Step\n[Actionable steps]\n\n"
-        f"Feedback Feed Data:\n{raw_data}"
-    )
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=ai_prompt)
-        await temp.delete()
-        await send_md(context, update.effective_user.id, f"✅ 🤖 **Gemini Analytics ({range_desc})**\n\n{response.text}")
-    except Exception as e: await context.bot.send_message(update.effective_user.id, f"❌ Analysis Error: {e}")
-
 async def all_time_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -407,7 +404,6 @@ async def all_time_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for r in recs: msg += f"• `[{r['created_at'].astimezone(WIB).strftime('%m/%d/%Y')}]` @{r['username']}: {r['report']}\n"
     await send_md(context, update.effective_user.id, msg)
 
-# --- BROADCAST PIPELINES ---
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -452,7 +448,6 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("DELETE FROM announcements WHERE id=$1", a_id)
     await context.bot.send_message(update.effective_user.id, "✅ Announcement dropped.")
 
-# --- METRICS & DIAGNOSTICS ---
 async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -541,7 +536,6 @@ async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
     except Exception as e: await context.bot.send_message(update.effective_user.id, f"❌ Error: {e}")
 
-# --- SUPER ACTIONS MATRIX ---
 async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     if not await is_super(update.effective_user.username): return
