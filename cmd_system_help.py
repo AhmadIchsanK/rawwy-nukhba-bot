@@ -5,21 +5,39 @@ from core import delete_cmd
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
-    # Build help text grouped by public/admin/super
+    
     public = [c for c in COMMANDS if c.get('public')]
     admin = [c for c in COMMANDS if c.get('admin')]
     superc = [c for c in COMMANDS if c.get('super')]
 
-    text = "📖 **Nukhba Bot Manual**\n\n"
-    text += "**General**\n"
+    text = "📖 **[RW] Nukhba Manager Manual**\n\n"
+    
+    text += "🟢 **GENERAL & USER COMMANDS**\n"
+    current_cat = ""
     for c in public:
-        text += f"• /{c['name']} — {c['desc']}\n"
+        if c.get('category') != current_cat:
+            current_cat = c.get('category')
+            text += f"\n*{current_cat}*\n"
+        text += f"• `/{c['name']}` — {c['desc']}\n"
+        
     if admin:
-        text += "\n**Admin**\n"
+        text += "\n🔐 **ADMINISTRATOR SUITE**\n"
+        current_cat = ""
         for c in admin:
-            text += f"• /{c['name']} — {c['desc']}\n"
+            if c.get('category') != current_cat:
+                current_cat = c.get('category')
+                text += f"\n*{current_cat}*\n"
+            text += f"• `/{c['name']}` — {c['desc']}\n"
+            
     if superc:
-        text += "\n**Super Owner**\n"
+        text += "\n👑 **SUPER OWNER EXCLUSIVES**\n"
         for c in superc:
-            text += f"• /{c['name']} — {c['desc']}\n"
-    await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
+            text += f"• `/{c['name']}` — {c['desc']}\n"
+            
+    try:
+        await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("✅ I have securely sent the manual to your Direct Messages!")
+    except:
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("❌ I cannot send you a DM yet. Please start a private chat with me first!")
