@@ -547,6 +547,25 @@ async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = "✅ 📈 **Tracked Groups:**\n\n" + "\n".join([f"• `{g['chat_id']}` : {g['title']}" for g in groups]) if groups else "❌ No active groups logged."
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
+async def set_audit_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool): return
+    
+    try:
+        time_str = context.args[0].replace('.', ':')
+        h, m = map(int, time_str.split(':'))
+        formatted_time = f"{h:02d}:{m:02d}"
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/audittime HH:MM` (e.g., 23:30)", parse_mode="Markdown")
+        
+    async with pool.acquire() as conn:
+        await conn.execute("INSERT INTO config (key, value) VALUES ('audit_time', $1) ON CONFLICT (key) DO UPDATE SET value=$1", formatted_time)
+        
+    from crons import schedule_audit_job
+    await schedule_audit_job(context.application)
+    await context.bot.send_message(update.effective_user.id, f"✅ Daily automated Audit Digest scheduled for **{formatted_time} WIB**.", parse_mode="Markdown")
+
 async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -571,7 +590,7 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for log in logs:
         dt = log['timestamp'].astimezone(WIB).strftime('%m/%d %H:%M')
         user = f"@{log['username']}" if log['username'] else "System"
-        status_emoji = "✅" if log['status'] == 'Success' else "⚠️" if log['status'] == 'Warning' else "❌" if log['status'] == 'Error' else "ℹ️"
+        status_emoji = "✅" if log['status'] == 'Success' else "⚠️" if log['status'] == 'Warning' else "❌" if log['status'] == 'Error' else "🛡️"
         msg += f"`[{dt}]` {status_emoji} **{log['category']}** by {user}\n└ _{log['detail']}_\n\n"
         
     await send_md(context, update.effective_user.id, msg)
@@ -582,11 +601,15 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_super(update.effective_user.username):
         return
         
+    now = datetime.datetime.now(WIB)
     async with pool.acquire() as conn:
         g = await conn.fetchval("SELECT COUNT(*) FROM active_groups")
         u = await conn.fetchval("SELECT COUNT(*) FROM users")
+        
         t_pend = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending'")
+        t_overdue = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending' AND deadline < NOW()")
         t_comp = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Completed'")
+        
         l = await conn.fetchval("SELECT COUNT(*) FROM library")
         b = await conn.fetchval("SELECT COUNT(*) FROM birthdays")
         
@@ -595,20 +618,25 @@ async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         events = await conn.fetchval("SELECT COUNT(*) FROM events WHERE event_time > NOW()")
         polls = await conn.fetchval("SELECT COUNT(*) FROM active_polls WHERE end_time > NOW()")
         
+        # System Health
+        stats = await conn.fetchrow("SELECT uses, errors FROM bot_stats WHERE date = CURRENT_DATE")
+        uses_today = stats['uses'] if stats else 0
+        errors_today = stats['errors'] if stats else 0
+        
     msg = (
         "✅ 📈 **[RW] NUKHBA SYSTEM HEALTH**\n"
         "──────────────────────\n"
-        "👥 **User & Community Engagement**\n"
-        f"• **Tracked Users:** `{u}`\n"
-        f"• **Active Groups:** `{g}`\n"
-        f"• **Currently Away:** `{aways}`\n"
-        f"• **Stars Exchanged:** `{stars} 🌟`\n\n"
-        "🛠️ **Features & Modules**\n"
-        f"• **Pending Tasks:** `{t_pend}` *(Completed: {t_comp})*\n"
-        f"• **Upcoming Events:** `{events}`\n"
-        f"• **Live Polls:** `{polls}`\n"
-        f"• **Library Assets:** `{l}`\n"
-        f"• **Birthdays Tracked:** `{b}`\n"
+        "👥 **Engagement Health**\n"
+        f"• Tracked Users: `{u}` | Active Groups: `{g}`\n"
+        f"• Currently Away: `{aways}`\n"
+        f"• Total Stars Exchanged: `{stars} 🌟`\n\n"
+        "🛠️ **Workflow Health**\n"
+        f"• **Tasks:** `{t_pend}` Pending | 🚨 `{t_overdue}` Overdue *(Completed: {t_comp})*\n"
+        f"• **Active Modules:** `{events}` Events | `{polls}` Polls\n"
+        f"• **Database:** `{l}` Assets | `{b}` Birthdays\n\n"
+        "🤖 **API & Diagnostics (Today)**\n"
+        f"• Commands Run: `{uses_today}`\n"
+        f"• System Errors: `{errors_today}`\n"
     )
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
