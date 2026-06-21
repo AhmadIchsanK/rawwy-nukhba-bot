@@ -98,12 +98,14 @@ async def post_init_wrapper(application: Application):
 
     logger.info("🚀 Nukhba Manager Bot is online and ready.")
 
+
 async def post_stop_wrapper(application: Application):
     """Gracefully close the database pool when the bot shuts down."""
     pool = application.bot_data.get('db_pool')
     if pool:
         await pool.close()
         logger.info("🛑 PostgreSQL database connection pool closed gracefully.")
+
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("⚠️ Unhandled exception during update processing:", exc_info=context.error)
@@ -200,6 +202,7 @@ def main():
     app.add_handler(CommandHandler("forcesupertrivia",safe_cmd(cmd_trivia, "force_super_trivia")))
     app.add_handler(CommandHandler("canceltrivia",    safe_cmd(cmd_trivia, "cancel_trivia")))
     app.add_handler(CommandHandler("endtrivia",       safe_cmd(cmd_trivia, "end_trivia")))
+    app.add_handler(CommandHandler("triviaend",       safe_cmd(cmd_trivia, "end_trivia"))) # Alias
     app.add_handler(CommandHandler("admin_kp",        safe_cmd(cmd_trivia, "admin_kp")))
 
     # ─────────────────────────────────────────
@@ -291,7 +294,8 @@ def main():
             cmd_system.security_track_chats
         ))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, global_text_router))
+    # Catch ALL non-command messages so forwarded media for target config is caught
+    app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_text_router))
 
     if hasattr(cmd_system, 'unknown_command'):
         app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
