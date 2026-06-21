@@ -55,7 +55,9 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['editing_feedback'] = False
         async with pool.acquire() as conn:
             await conn.execute("INSERT INTO feedback_drafts (user_id, text) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET text=$2", update.effective_user.id, text)
-        await process_feedback_submission(update, context, text)
+        
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Confirm & Submit", callback_data="fb_submit")]])
+        await update.message.reply_text(f"**Review your updated feedback:**\n\n_{text}_\n\nConfirm submission?", reply_markup=kb, parse_mode="Markdown")
         return
     
     try:
@@ -135,14 +137,11 @@ async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         await conn.execute("INSERT INTO feedback_drafts (user_id, text) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET text=$2", update.effective_user.id, text)
         
-    await process_feedback_submission(update, context, text)
-
-async def process_feedback_submission(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Confirm & Submit", callback_data="fb_submit")],
         [InlineKeyboardButton("✏️ Edit Once", callback_data="fb_edit")]
     ])
-    await context.bot.send_message(update.effective_user.id, f"**Review your feedback:**\n\n_{text}_\n\nDoes this look correct?", reply_markup=kb, parse_mode="Markdown")
+    await update.message.reply_text(f"**Review your feedback:**\n\n_{text}_\n\nDoes this look correct?", reply_markup=kb, parse_mode="Markdown")
 
 async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
