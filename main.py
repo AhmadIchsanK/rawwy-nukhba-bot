@@ -1,5 +1,6 @@
 import logging
 import datetime
+import asyncio
 from telegram import Update, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from core import BOT_TOKEN, DATABASE_URL, WIB, init_db, log_action
@@ -23,6 +24,12 @@ async def post_init_wrapper(application: Application):
         logger.info("✅ Menu correctly synced to commands_manifest.py absolute truth across all scopes.")
     except Exception as e:
         logger.error(f"Failed to push menu updates: {e}")
+        
+    try:
+        from crons import schedule_audit_job
+        await schedule_audit_job(application)
+    except Exception as e:
+        logger.error(f"Failed to boot audit job: {e}")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("⚠️ Exception encountered during runtime processing:", exc_info=context.error)
@@ -167,13 +174,12 @@ def main():
     app.add_handler(CommandHandler("delannounce", cmd_admin.del_announce))
     app.add_handler(CommandHandler("groupid", cmd_admin.check_group_id))
     app.add_handler(CommandHandler("auditlog", cmd_admin.get_audit_log))
+    app.add_handler(CommandHandler("audittime", cmd_admin.set_audit_time))
     
     app.add_handler(CommandHandler("feedbacklist", cmd_admin.feedback_list))
     app.add_handler(CommandHandler("analyze_feedback", cmd_admin.analyze_feedback))
-    app.add_handler(CommandHandler("alltimefeedback", cmd_admin.all_time_feedback))
-    app.add_handler(CommandHandler("audittime", cmd_admin.set_audit_time))
 
-    # Super Owner Scope Handlers
+    app.add_handler(CommandHandler("allcommandtest", cmd_admin.all_command_test))
     app.add_handler(CommandHandler("addadmin", cmd_admin.add_admin_req))
     app.add_handler(CommandHandler("deladmin", cmd_admin.del_admin_req))
     app.add_handler(CommandHandler("listadmins", cmd_admin.list_admins))
@@ -198,16 +204,14 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_system.global_tracker))
     app.add_handler(MessageHandler(filters.COMMAND, cmd_system.unknown_command))
 
-    app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=5)
+    app.job_queue.run_repeating(cmd_trivia.trivia_timeout_sweeper, interval=1)
     app.job_queue.run_repeating(cmd_trivia.trivia_cron_job, interval=60)
     app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
     
     try:
-        from crons import daily_morning_log, poll_cleanup, schedule_audit_job
+        from crons import daily_morning_log, poll_cleanup
         app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
         app.job_queue.run_repeating(poll_cleanup, interval=3600)
-        # Initialize the audit log scheduler dynamically based on DB setting
-        app.post_init = lambda app: asyncio.gather(post_init_wrapper(app), schedule_audit_job(app))
     except ImportError:
         pass
         
