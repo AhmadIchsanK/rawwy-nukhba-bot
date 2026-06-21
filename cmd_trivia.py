@@ -37,7 +37,7 @@ async def trivia_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool):
         return
     if update.effective_chat.type != "private":
-        return await update.message.reply_text("❌ For security, please run `/triviaconfig` in my Direct Messages.")
+        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ For security, please run `/triviaconfig` in my Direct Messages.")
     
     async with pool.acquire() as conn:
         theme = await conn.fetchval("SELECT value FROM config WHERE key='trivia_theme'") or 'Random'
@@ -81,7 +81,7 @@ async def render_tcfg_menu(update, context, is_edit=False):
             pass
     else:
         try:
-            msg = await update.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
+            msg = await context.bot.send_message(chat_id=update.effective_chat.id, text=text, reply_markup=kb, parse_mode="Markdown")
         except Exception:
             msg = await update.callback_query.message.reply_text(text, reply_markup=kb, parse_mode="Markdown")
         context.user_data['tcfg_msg_id'] = msg.message_id
@@ -99,8 +99,9 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await q.answer("Draft expired. Run /triviaconfig again.", show_alert=True)
 
         if act == "seltheme":
-            themes = ["Random", "Movies & TV Shows", "Gaming", "Sports & Esports", "Music", "Geography", "General Knowledge", "History", "Science & Technology", "Food & Drink", "Anime / Manga & Comics"]
-            buttons = [[InlineKeyboardButton(t, callback_data=f"tcfg_thm_{t}")] for t in themes]
+            buttons = []
+            for k, v in THEME_MAP.items():
+                buttons.append([InlineKeyboardButton(v, callback_data=f"tcfg_thm_{k}")])
             buttons.append([InlineKeyboardButton("✏️ Custom Input", callback_data="tcfg_thm_custom")])
             buttons.append([InlineKeyboardButton("🔙 Back", callback_data="tcfg_back")])
             return await q.edit_message_text("Select a Theme:", reply_markup=InlineKeyboardMarkup(buttons))
@@ -111,7 +112,7 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 context.user_data['awaiting_tcfg_theme'] = True
                 return await q.edit_message_text("✏️ Please type your custom theme in the chat now:")
             else:
-                d['theme'] = val
+                d['theme'] = THEME_MAP.get(val, "Random")
                 return await render_tcfg_menu(update, context, True)
                 
         elif act == "tadd":
@@ -291,7 +292,7 @@ async def cancel_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool):
         return
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Resume/Retry", callback_data="tcancel_retry"), InlineKeyboardButton("❌ Confirm Cancel", callback_data="tcancel_confirm")]])
-    await update.message.reply_text("Active trivia detected. Are you sure you want to cancel with no Knowledge Points awarded?", reply_markup=kb)
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Active trivia detected. Are you sure you want to cancel with no Knowledge Points awarded?", reply_markup=kb)
 
 async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -305,7 +306,7 @@ async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
         op = parts[1].lower()
         amount = int(parts[2])
     except Exception:
-        return await update.message.reply_text("❌ Usage Format: `/admin_kp [@username] , [set|add|sub] , [amount]`", parse_mode="Markdown")
+        return await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Usage Format: `/admin_kp [@username] , [set|add|sub] , [amount]`", parse_mode="Markdown")
         
     async with pool.acquire() as conn:
         if op == 'set':
@@ -314,7 +315,7 @@ async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await conn.execute("INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, $2, $2) ON CONFLICT (username) DO UPDATE SET monthly_kp = trivia_scores.monthly_kp + $2, all_time_kp = trivia_scores.all_time_kp + $2", user, amount)
         elif op == 'sub':
             await conn.execute("INSERT INTO trivia_scores (username, monthly_kp, all_time_kp) VALUES ($1, 0, 0) ON CONFLICT (username) DO UPDATE SET monthly_kp = GREATEST(0, trivia_scores.monthly_kp - $2), all_time_kp = GREATEST(0, trivia_scores.all_time_kp - $2)", user, amount)
-    await update.message.reply_text(f"✅ Modified Knowledge Points for **@{user}**!", parse_mode="Markdown")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ Modified Knowledge Points for **@{user}**!", parse_mode="Markdown")
 
 async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -326,9 +327,9 @@ async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(update.effective_user.id, text, parse_mode="Markdown")
         if update.effective_chat.type != "private":
-            await update.message.reply_text("✅ Your knowledge scores have been delivered privately to your DMs!")
+            await context.bot.send_message(chat_id=update.effective_chat.id, text="✅ Your knowledge scores have been delivered privately to your DMs!")
     except Exception:
-        await update.message.reply_text("❌ Failed to message you privately! Please initiate a DM chat with me first.")
+        await context.bot.send_message(chat_id=update.effective_chat.id, text="❌ Failed to message you privately! Please initiate a DM chat with me first.")
 
 async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
