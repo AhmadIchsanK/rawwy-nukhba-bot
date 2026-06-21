@@ -545,29 +545,72 @@ async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with pool.acquire() as conn:
             groups = await conn.fetch("SELECT chat_id, title FROM active_groups")
         msg = "✅ 📈 **Tracked Groups:**\n\n" + "\n".join([f"• `{g['chat_id']}` : {g['title']}" for g in groups]) if groups else "❌ No active groups logged."
-        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="Markdown")
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return
-    from crons import generate_audit_report
-    msg = await generate_audit_report(pool, datetime.datetime.now(WIB).date())
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode="Markdown")
+        
+    limit = 15
+    if context.args and context.args[0].isdigit():
+        limit = min(int(context.args[0]), 50)
+        
+    async with pool.acquire() as conn:
+        logs = await conn.fetch(
+            "SELECT u.username, a.category, a.status, a.detail, a.timestamp "
+            "FROM audit_logs a LEFT JOIN users u ON a.user_id = u.user_id "
+            "ORDER BY a.timestamp DESC LIMIT $1", limit
+        )
+        
+    if not logs:
+        return await context.bot.send_message(update.effective_user.id, "🪹 No system events logged yet.")
+        
+    msg = f"📑 **System Audit Log (Last {limit} Events)**\n\n"
+    for log in logs:
+        dt = log['timestamp'].astimezone(WIB).strftime('%m/%d %H:%M')
+        user = f"@{log['username']}" if log['username'] else "System"
+        status_emoji = "✅" if log['status'] == 'Success' else "⚠️" if log['status'] == 'Warning' else "❌" if log['status'] == 'Error' else "ℹ️"
+        msg += f"`[{dt}]` {status_emoji} **{log['category']}** by {user}\n└ _{log['detail']}_\n\n"
+        
+    await send_md(context, update.effective_user.id, msg)
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_super(update.effective_user.username):
         return
+        
     async with pool.acquire() as conn:
-        g = await conn.fetch("SELECT chat_id, title FROM active_groups")
+        g = await conn.fetchval("SELECT COUNT(*) FROM active_groups")
         u = await conn.fetchval("SELECT COUNT(*) FROM users")
-        t = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending'")
+        t_pend = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending'")
+        t_comp = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Completed'")
         l = await conn.fetchval("SELECT COUNT(*) FROM library")
         b = await conn.fetchval("SELECT COUNT(*) FROM birthdays")
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=f"✅ 📈 **Status**\n👥 Tracked: `{u}`\n📋 Tasks: `{t}`\n📚 Assets: `{l}`\n🎂 Birthdays: `{b}`\n🏠 Groups: `{len(g)}`", parse_mode="Markdown")
+        
+        stars = await conn.fetchval("SELECT SUM(all_time_points) FROM kudos") or 0
+        aways = await conn.fetchval("SELECT COUNT(*) FROM away_status")
+        events = await conn.fetchval("SELECT COUNT(*) FROM events WHERE event_time > NOW()")
+        polls = await conn.fetchval("SELECT COUNT(*) FROM active_polls WHERE end_time > NOW()")
+        
+    msg = (
+        "✅ 📈 **[RW] NUKHBA SYSTEM HEALTH**\n"
+        "──────────────────────\n"
+        "👥 **User & Community Engagement**\n"
+        f"• **Tracked Users:** `{u}`\n"
+        f"• **Active Groups:** `{g}`\n"
+        f"• **Currently Away:** `{aways}`\n"
+        f"• **Stars Exchanged:** `{stars} 🌟`\n\n"
+        "🛠️ **Features & Modules**\n"
+        f"• **Pending Tasks:** `{t_pend}` *(Completed: {t_comp})*\n"
+        f"• **Upcoming Events:** `{events}`\n"
+        f"• **Live Polls:** `{polls}`\n"
+        f"• **Library Assets:** `{l}`\n"
+        f"• **Birthdays Tracked:** `{b}`\n"
+    )
+    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
