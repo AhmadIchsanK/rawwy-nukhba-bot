@@ -11,6 +11,7 @@ from core import WIB, GEMINI_API_KEY, is_bot_admin, is_super, delete_cmd
 
 logger = logging.getLogger(__name__)
 
+
 def escape_html(text):
     if not text:
         return ""
@@ -26,10 +27,10 @@ THEME_MAP = {
 # Gemini model — fallback chain prioritizing the most stable models
 GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
 
+LABELS = ['A', 'B', 'C', 'D', 'E', 'F']
 
 
-
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # DATABASE SETUP
 # ─────────────────────────────────────────
 
@@ -637,7 +638,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
 
 
 # ─────────────────────────────────────────
-# TRIVIA DEPLOYMENT
+# TRIVIA DEPLOYMENT WITH FALLBACKS
 # ─────────────────────────────────────────
 
 def _safe_label(text, idx):
@@ -665,7 +666,6 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
 
     num_options = 6 if is_super_round else opts
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
@@ -674,31 +674,60 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
-    try:
-        # DO NOT include config dict to prevent older google-genai versions from crashing
-        resp = await asyncio.to_thread(
-            client.models.generate_content,
-            model='gemini-2.5-flash',
-            contents=prompt
-        )
-        raw = resp.text.strip()
-        
-        # Flawless JSON extraction: Find the first { and the last } regardless of surrounding markdown
-        start_idx = raw.find('{')
-        end_idx = raw.rfind('}')
-        if start_idx != -1 and end_idx != -1:
-            raw = raw[start_idx:end_idx+1]
-            
-        data = json.loads(raw)
+    if not GEMINI_API_KEY:
+        logger.error("GEMINI_API_KEY is not set.")
+        return
 
-        assert 'question' in data and 'options' in data
-        assert 'correct_index' in data and 'explanation' in data
-        assert len(data['options']) >= 2
+    client = genai.Client(api_key=GEMINI_API_KEY)
+    data = None
+    primary_error = None
 
-    except Exception as e:
-        logger.error(f"Trivia AI generation failed: {e}")
+    for model_name in GEMINI_MODELS:
+        delay = 5
+        for attempt in range(1, 4):
+            try:
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=prompt
+                )
+                raw = resp.text.strip()
+                
+                # 100% immune to markdown UI parser cutting.
+                raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+                raw = re.sub(r'\s*`{3}$', '', raw)
+                
+                parsed_data = json.loads(raw.strip())
+                assert 'question' in parsed_data and 'options' in parsed_data
+                assert 'correct_index' in parsed_data and 'explanation' in parsed_data
+                assert len(parsed_data['options']) >= 2
+                
+                data = parsed_data
+                break # Success, break attempt loop
+            except Exception as e:
+                if primary_error is None:
+                    primary_error = e
+                    
+                err_str = str(e)
+                
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    break # Model not supported, break attempt loop immediately and try next model
+                    
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    if attempt < 3:
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
+                
+                break # Other fatal error, break attempt loop
+
+        if data:
+            break # We got data, break model loop
+
+    if not data:
+        logger.error(f"Trivia AI generation failed: {primary_error}")
         try:
-            await bot.send_message(chat_id, "⚠️ Trivia generation failed (AI Error). Please try again.")
+            await bot.send_message(chat_id, f"⚠️ Trivia generation failed (AI error). Please try again with /forcetrivia")
         except Exception:
             pass
         return
@@ -844,6 +873,7 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
         try:
             expires_at = r.get('expires_at')
             if not expires_at:
+                # Fallback safeguard if row exists but is orphaned/broken
                 await close_trivia_round(context.bot, r['chat_id'], "⏱️ Time Limit Reached", pool)
                 continue
 
@@ -894,8 +924,10 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
                 if "Message is not modified" in err:
                     pass
                 elif "Message to edit not found" in err:
-                    async with pool.acquire() as conn:
-                        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", r['chat_id'])
+                    # Do not delete DB record automatically here. 
+                    # Admin or user may have deleted the group message, 
+                    # but we let the DB expire naturally or be removed manually.
+                    pass
                 else:
                     logger.warning(f"Sweeper edit error (chat {r['chat_id']}): {e}")
             except Exception as e:
@@ -1198,28 +1230,46 @@ async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Couldn't DM you. Please start a chat with me first, then try again."
         )
 
+
 async def leaderboard_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
+
     async with pool.acquire() as conn:
-        monthly = await conn.fetch("SELECT username, monthly_kp FROM trivia_scores WHERE monthly_kp > 0 ORDER BY monthly_kp DESC LIMIT 5")
-        all_time = await conn.fetch("SELECT username, all_time_kp FROM trivia_scores WHERE all_time_kp > 0 ORDER BY all_time_kp DESC LIMIT 5")
-    
-    msg = "🏆 **Knowledge Points Leaderboard** 🏆\n\n📅 **This Month's Top Minds:**\n"
+        monthly  = await conn.fetch(
+            "SELECT username, monthly_kp FROM trivia_scores WHERE monthly_kp > 0 "
+            "ORDER BY monthly_kp DESC LIMIT 5"
+        )
+        all_time = await conn.fetch(
+            "SELECT username, all_time_kp FROM trivia_scores WHERE all_time_kp > 0 "
+            "ORDER BY all_time_kp DESC LIMIT 5"
+        )
+
+    podiums = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+    msg = "🏆 *Knowledge Points Leaderboard* 🏆\n\n📅 *This Month's Top Minds:*\n"
     if monthly:
-        for i, r in enumerate(monthly): msg += f"{i+1}. @{r['username']} - {r['monthly_kp']}\n"
-    else: msg += "None.\n"
-        
-    msg += "\n🧠 **All-Time Top Minds:**\n"
+        for i, r in enumerate(monthly):
+            msg += f"{podiums[i]} @{r['username']} — {r['monthly_kp']} KP\n"
+    else:
+        msg += "_No entries yet._\n"
+
+    msg += "\n🧠 *All-Time Top Minds:*\n"
     if all_time:
-        for i, r in enumerate(all_time): msg += f"{i+1}. @{r['username']} - {r['all_time_kp']}\n"
-    else: msg += "None.\n"
-        
+        for i, r in enumerate(all_time):
+            msg += f"{podiums[i]} @{r['username']} — {r['all_time_kp']} KP\n"
+    else:
+        msg += "_No entries yet._\n"
+
     try:
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-        if update.effective_chat.type != "private": await context.bot.send_message(update.effective_chat.id, "✅ Knowledge Points Leaderboard sent to your DMs!")
+        if update.effective_chat.type != "private":
+            await context.bot.send_message(update.effective_chat.id, "✅ Knowledge Points Leaderboard sent to your DMs!")
     except Exception:
-        await context.bot.send_message(update.effective_chat.id, "❌ Couldn't DM you. Please start a chat with me first, then try again.")
+        await context.bot.send_message(
+            update.effective_chat.id,
+            "❌ Couldn't DM you. Please start a chat with me first, then try again."
+        )
+
 
 # ─────────────────────────────────────────
 # LEGACY FALLBACKS
