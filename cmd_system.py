@@ -24,6 +24,85 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_system_help.help_command(update, context)
 
+
+ABOUT_TEXT = """🚀 **Meet Nukhba Manager: Your Ultimate AI Workspace Companion**
+
+Welcome to [RW] Nukhba Manager—a premium, all-in-one enterprise Telegram assistant designed to supercharge team productivity, elevate workplace culture, and inject a little fun into the daily grind.
+
+Powered by Google's Gemini 2.5 AI, Nukhba isn't just a chatbot; it's a dedicated digital team manager that organizes your workflow, tracks engagement, and keeps everyone connected.
+
+Here is everything Nukhba brings to your workspace:
+
+🤖 **1. Advanced AI & Analytics**
+• **Gemini Direct Access:** Ask complex questions, translate text, or brainstorm ideas right in the chat.
+• **"What Did I Miss?" (/wdim):** Been away? Nukhba reads the last 48 hours of chat history and sends you a beautifully formatted, AI-generated summary of key topics and decisions via Direct Message.
+• **Hyper-Personalized Cheers:** Feeling unmotivated? Set your personal goals and vibe, and Nukhba’s AI will generate a tailored, high-energy motivational pep-talk just for you.
+• **Smart Feedback Analysis:** Admins can instantly summarize weekly team feedback into actionable insights (Problem, Suggestion, Next Step) using AI.
+
+⚡ **2. Productivity & Task Management**
+• **Task Delegation:** Assign tasks with strict minute-based deadlines. Nukhba tracks pending work and pings assignees 10 minutes before their deadline expires.
+• **Asset Library:** A centralized team database. Save, edit, and instantly retrieve important links, texts, or files. Need to share something sensitive? Save it as a "private" asset to be delivered securely via DM.
+• **Event Scheduling:** Schedule team events with integrated, clickable RSVP buttons. Nukhba automatically pins the event and notifies attendees when it’s about to start.
+• **Interactive Polls:** Build advanced team polls with options for anonymous voting, multiple choices, or even strict "Quiz" modes with designated correct answers.
+
+🌟 **3. Team Culture & Engagement**
+• **RAWWY Stars System:** A peer-to-peer kudos economy! Award a limited weekly quota of "Stars" to teammates who went above and beyond. Track who shines the brightest on the Monthly and All-Time Leaderboards.
+• **Automated Birthdays:** Never miss a celebration. Register team birthdays and Nukhba will automatically broadcast a celebratory message in your designated channel at your preferred time.
+• **Smart Away Mode:** Going on PTO or stepping into a meeting? Set your status to Away. Nukhba will politely notify anyone who tags you, record all your missed mentions, and securely deliver them to you the moment you return.
+
+🎮 **4. The Trivia Engine**
+Keep the team's minds sharp with Nukhba's fully automated, high-stakes Trivia Engine!
+• **Daily Trivia:** Configurable daily questions spanning 11 themes (from Science to Pop Culture). Race against a live countdown timer to lock in your answer and earn Knowledge Points (KP).
+• **Weekly Super Trivia:** A brutal, high-stakes Sunday challenge with 6 options and heavy KP penalties for incorrect answers.
+• **Strict Mechanics:** Zero second chances. Answers lock instantly. Rounds end the second the timer hits zero or 3 winners claim the top spots, immediately revealing the correct explanation.
+
+🛡️ **5. Absolute Admin Control**
+Nukhba offers total granular control for management:
+• **Dynamic Configurations:** Adjust AI limits, star quotas, task limits, and trivia timeouts through interactive inline dashboard panels.
+• **Broadcasts & Scheduling:** Send instant announcements across all company groups, or schedule recurring daily/weekly messages.
+• **Real-Time Audit Logs:** A complete diagnostic tracker. View real-time logs of exactly who did what, or receive an automated daily AI-digested audit report every night.
+• **Super Owner Privileges:** God-mode controls to promote/demote admins, securely offboard leaving members (moving their data to the "Graveyard"), pause the system, or execute factory database wipes.
+
+_[RW] Nukhba Manager isn't just managing the chat—it's managing the success, morale, and efficiency of the entire team. Type /help to dive in!_"""
+
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    user_id = update.effective_user.id
+    pool = context.bot_data.get('db_pool')
+
+    async with pool.acquire() as conn:
+        # Guarantee user exists in the DB so we can track the cooldown
+        await conn.execute("INSERT INTO users (username, user_id) VALUES ($1, $2) ON CONFLICT (username) DO NOTHING", username, user_id)
+        
+        last_about = await conn.fetchval("SELECT last_about FROM users WHERE username=$1", username)
+        now = datetime.datetime.now(WIB)
+        
+        if last_about:
+            time_diff = now - last_about.astimezone(WIB)
+            if time_diff.total_seconds() < 7 * 24 * 3600:
+                rem_days = 7 - time_diff.days
+                if update.effective_chat.type != "private":
+                    return await update.message.reply_text(f"⏳ **Cooldown:** You can only request the About guide once a week. Please try again in {rem_days} days.", parse_mode="Markdown")
+                else:
+                    return await context.bot.send_message(user_id, f"⏳ **Cooldown:** You can only request the About guide once a week. Please try again in {rem_days} days.", parse_mode="Markdown")
+
+    try:
+        # Send the massive text block cleanly using our DM chunking system
+        await send_md_chunks(context.bot, user_id, ABOUT_TEXT)
+        
+        # Log successful delivery timestamp
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE users SET last_about=$1 WHERE username=$2", now, username)
+            
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("✅ **Success:** The comprehensive Nukhba Manager guide has been securely sent to your DMs!", parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"About command DM failed: {e}")
+        if update.effective_chat.type != "private":
+            await update.message.reply_text("❌ **Error:** I couldn't send you a DM. Please start a private chat with me first and try again.", parse_mode="Markdown")
+
+
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ **Unknown Command.** Please type `/help` to see valid commands.", parse_mode="Markdown")
 
@@ -271,13 +350,11 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         
-        # We use bt to bypass Markdown parsers when rendering literal JSON instructions
-        bt = "`" * 3
-        
         if is_bot_query:
             from commands_manifest import COMMANDS
             cmd_list = "\n".join([f"- /{c['name']}: {c['desc']}" for c in COMMANDS])
             
+            # Note: We keep the system prompt string literal formatted cleanly so it copies perfectly
             system_prompt = (
                 "You are Nukhba Manager, an advanced Telegram bot. "
                 "You have absolute knowledge of all your capabilities.\n\n"
@@ -289,64 +366,57 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                 f"- Max Events per User: {config_dict.get('max_events', 5)}\n"
                 f"- Max Away Days: {config_dict.get('max_away_days', 14)}\n\n"
                 f"- Trivia timeout: {config_dict.get('trivia_reg_to', 60)}s\n\n"
-                "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters.\n"
             )
             
             if is_adm:
                 system_prompt += (
                     "If the admin asks to configure or change a hidden setting, "
                     "output a JSON block exactly like this:\n"
-                    f"{bt}json\n"
-                    '[{"key": "dm_length", "value": "1000"}, {"key": "star_quota", "value": "5"}]\n'
-                    f"{bt}\n"
+                    "```json\n"
+                    '[{"key": "dm_length", "value": "800"}, {"key": "star_quota", "value": "5"}]\n'
+                    "```\n"
                 )
                 
             if is_sup:
                 system_prompt += (
                     "⚠️ ROOT PRIVILEGES: To modify python code, output a hotpatch:\n"
-                    f"{bt}json\n"
+                    "```json\n"
                     "[\n"
                     "  {\n"
                     '    "action": "hotpatch",\n'
                     '    "code": "print(\'hi\')"\n'
                     "  }\n"
                     "]\n"
-                    f"{bt}\n"
+                    "```\n"
                 )
             
             system_prompt += "\nUser Question: " + prompt
         else:
-            system_prompt = "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters. Be concise.\n\nUser Prompt: " + prompt
+            system_prompt = prompt
             
         response = await asyncio.wait_for(
             asyncio.to_thread(client.models.generate_content, model='gemini-2.5-flash', contents=system_prompt),
             timeout=120.0
         )
-        
         reply = response.text
         
-        # Hard truncate response to guarantee it never exceeds 3000 chars
-        if len(reply) > 3000:
-            reply = reply[:2997] + "..."
-            
         config_msg = ""
         if is_bot_query and is_adm:
-            match = re.search(r"`{3}json\s*\n(.*?)\n\s*`{3}", reply, re.DOTALL)
+            match = re.search(r"```json\s*\n(.*?)\n\s*```", reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
                     async with pool.acquire() as conn:
                         for c in configs:
                             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
-                    reply = re.sub(r"`{3}json\s*\n(.*?)\n\s*`{3}", "", reply, flags=re.DOTALL).strip()
+                    reply = re.sub(r"```json\s*\n(.*?)\n\s*```", "", reply, flags=re.DOTALL).strip()
                     config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
                 except Exception as e:
                     logger.error(f"Config parse error: {e}")
         
         async with pool.acquire() as conn:
             dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
-            # Set default DM threshold to 1000
-            dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 1000
+            dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 500
 
         prefix = "🤖 **About Me:**\n\n" if is_bot_query else "🤖 **Gemini AI Response:**\n\n"
         inline_prefix = "🤖 **Nukhba Manager:** " if is_bot_query else "🤖 **Gemini:** "
