@@ -8,6 +8,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delete_cmd, log_action
+from cmd_system import _generate_content_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -1332,18 +1333,14 @@ async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     try:
         client   = genai.Client(api_key=GEMINI_API_KEY)
-        response = await _generate_content_with_retry(client, 'gemini-2.0-flash', ai_prompt)
+        response = await _generate_content_with_retry(client, ai_prompt)
         await temp.delete()
         await send_md(
             context, update.effective_user.id,
             f"✅ 🤖 **Gemini Feedback Analysis ({range_desc})**\n\n{response.text}"
         )
     except Exception as e:
-        err_str = str(e)
-        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-             await temp.edit_text("⏳ **Gemini Rate Limited.** The AI is overloaded right now. Please try your analysis again in a few minutes.")
-        else:
-             await temp.edit_text(f"❌ Analysis failed: {err_str[:200]}")
+        await update.message.reply_text(f"❌ Analysis failed: {e}")
 
 
 async def unpin_event(context):
