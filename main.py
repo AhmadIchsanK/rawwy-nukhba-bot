@@ -249,10 +249,12 @@ def main():
     # ─────────────────────────────────────────
     # 🎂 ADMIN BIRTHDAYS
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("addbday",   safe_cmd(cmd_admin, "add_bday")))
-    app.add_handler(CommandHandler("editbday",  safe_cmd(cmd_admin, "edit_bday")))
-    app.add_handler(CommandHandler("delbday",   safe_cmd(cmd_admin, "del_bday")))
-    app.add_handler(CommandHandler("listbdays", safe_cmd(cmd_admin, "list_bdays")))
+    app.add_handler(CommandHandler("addbday",     safe_cmd(cmd_admin, "add_bday")))
+    app.add_handler(CommandHandler("editbday",    safe_cmd(cmd_admin, "edit_bday")))
+    app.add_handler(CommandHandler("delbday",     safe_cmd(cmd_admin, "del_bday")))
+    app.add_handler(CommandHandler("listbdays",   safe_cmd(cmd_admin, "list_bdays")))
+    app.add_handler(CommandHandler("bulkaddbday", safe_cmd(cmd_admin, "bulk_add_bday")))
+    app.add_handler(CommandHandler("bulkdelbday", safe_cmd(cmd_admin, "bulk_del_bday")))
 
     # ─────────────────────────────────────────
     # 🏖️ ADMIN TEAM MANAGEMENT

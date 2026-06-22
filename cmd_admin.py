@@ -1832,6 +1832,7 @@ async def cancel_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.unpin_chat_message(chat_id=ev['chat_id'], message_id=ev['msg_id'])
     except Exception as e:
         logger.warning(f"Failed to unpin cancelled event: {e}")
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Event Cancelled", "Success", f"#{e_id} by @{update.effective_user.username}")
     await context.bot.send_message(update.effective_user.id, "✅ Event cancelled and unpinned.")
 
 
@@ -2037,6 +2038,103 @@ async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 
+async def bulk_add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bulk-add birthdays. Format: /bulkaddbday @user1 MM/DD , @user2 MM/DD , @user3 MM/DD"""
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+
+    if not context.args:
+        return await context.bot.send_message(
+            update.effective_user.id,
+            "❌ **Usage:** `/bulkaddbday @user1 MM/DD , @user2 MM/DD , @user3 MM/DD`\n\n"
+            "Each entry is `@username MM/DD`, separated by commas.\n"
+            "Example: `/bulkaddbday @alice 06/15 , @bob 12/01 , @charlie 03/22`",
+            parse_mode="Markdown"
+        )
+
+    raw = " ".join(context.args)
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+
+    added, skipped, errors = [], [], []
+
+    async with pool.acquire() as conn:
+        for entry in entries:
+            parts = entry.split()
+            if len(parts) < 2:
+                errors.append(f"`{entry}` — bad format")
+                continue
+            u = parts[0].replace("@", "").lower()
+            b = parts[1]
+            if not await _validate_bday(b):
+                errors.append(f"@{u} — invalid date `{b}`")
+                continue
+            exist = await conn.fetchval("SELECT bday FROM birthdays WHERE lower(username)=$1", u)
+            if exist:
+                skipped.append(f"@{u} (already `{exist}`)")
+                continue
+            await conn.execute("INSERT INTO birthdays (username, bday) VALUES ($1, $2)", u, b)
+            added.append(f"@{u} → `{b}`")
+            await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday", "Bulk Added", f"@{u} → {b}")
+
+    report = f"🎂 **Bulk Birthday Import**\n\n"
+    if added:
+        report += f"✅ **Added ({len(added)}):**\n" + "\n".join(f"  • {x}" for x in added) + "\n\n"
+    if skipped:
+        report += f"⚠️ **Skipped — already exist ({len(skipped)}):**\n" + "\n".join(f"  • {x}" for x in skipped) + "\n\n"
+    if errors:
+        report += f"❌ **Errors ({len(errors)}):**\n" + "\n".join(f"  • {x}" for x in errors) + "\n\n"
+    if not added and not skipped and not errors:
+        report += "_Nothing to process._"
+
+    await context.bot.send_message(update.effective_user.id, report, parse_mode="Markdown")
+
+
+async def bulk_del_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bulk-delete birthdays. Format: /bulkdelbday @user1 , @user2 , @user3"""
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+
+    if not context.args:
+        return await context.bot.send_message(
+            update.effective_user.id,
+            "❌ **Usage:** `/bulkdelbday @user1 , @user2 , @user3`\n\n"
+            "Separate usernames with commas.\n"
+            "Example: `/bulkdelbday @alice , @bob , @charlie`",
+            parse_mode="Markdown"
+        )
+
+    raw = " ".join(context.args)
+    usernames = [u.strip().replace("@", "").lower() for u in raw.split(",") if u.strip()]
+
+    removed, not_found = [], []
+
+    async with pool.acquire() as conn:
+        for u in usernames:
+            if not u:
+                continue
+            exist = await conn.fetchval("SELECT bday FROM birthdays WHERE lower(username)=$1", u)
+            if not exist:
+                not_found.append(f"@{u}")
+                continue
+            await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
+            removed.append(f"@{u} (was `{exist}`)")
+            await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday", "Bulk Deleted", f"@{u}")
+
+    report = f"🗑️ **Bulk Birthday Delete**\n\n"
+    if removed:
+        report += f"✅ **Removed ({len(removed)}):**\n" + "\n".join(f"  • {x}" for x in removed) + "\n\n"
+    if not_found:
+        report += f"⚠️ **Not found ({len(not_found)}):**\n" + "\n".join(f"  • {x}" for x in not_found) + "\n\n"
+    if not removed and not not_found:
+        report += "_Nothing to process._"
+
+    await context.bot.send_message(update.effective_user.id, report, parse_mode="Markdown")
+
+
 async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -2087,6 +2185,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             except Exception as e:
                 logger.warning(f"Broadcast failed to {t['chat_id']}: {e}")
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Announcement", "Success", f"ID#{a_id} by @{update.effective_user.username} → {target_raw}")
     await context.bot.send_message(update.effective_user.id, "✅ Broadcast sent.")
 
 
@@ -2380,55 +2479,31 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if t in ["tasks", "all"]: await conn.execute("TRUNCATE tasks CASCADE")
                 if t in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
                 if t in ["channels", "all"]:
-
-    # Keep rows alive, only clear values
-    await conn.execute("""
-        INSERT INTO config(key,value)
-        VALUES
-        ('bday_channel',''),
-        ('stars_channel',''),
-        ('feedback_channel','')
-        ON CONFLICT (key)
-        DO UPDATE SET value=''
-    """)
-
-    await conn.execute("""
-        INSERT INTO trivia_config(key,value)
-        VALUES ('target_chat_id','')
-        ON CONFLICT (key)
-        DO UPDATE SET value=''
-    """)
-
-if t in ["stats", "all"]:
-
-    # DO NOT DELETE active_groups
-    await conn.execute("""
-        TRUNCATE bot_stats, chat_history CASCADE
-    """)
-                if t in ["trivia", "all"]: 
+                    await conn.execute("DELETE FROM config WHERE key IN ('bday_channel', 'stars_channel', 'feedback_channel')")
+                    await conn.execute("DELETE FROM trivia_config WHERE key='target_chat_id'")
+                if t in ["schedules", "all"]: await conn.execute("TRUNCATE scheduled_announcements CASCADE")
+                if t in ["feedback", "all"]: await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
+                # ⚠️ SAFE STATS WIPE: preserve active_groups so the bot still knows its registered
+                # chats — wiping active_groups would silently break all group-targeted features
+                # (birthday cron, trivia posts, announcements) until /registergroup is re-run.
+                if t in ["stats", "all"]: await conn.execute("TRUNCATE bot_stats, chat_history CASCADE")
+                if t in ["trivia", "all"]:
                     await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
-                    import cmd_trivia
-                    await cmd_trivia.restore_trivia_config_defaults(pool)
-               # self-heal important config rows
-
-await conn.execute("""
-INSERT INTO config(key,value)
-VALUES
-('bday_channel',''),
-('stars_channel',''),
-('feedback_channel','')
-ON CONFLICT (key) DO NOTHING
-""")
-
-await conn.execute("""
-CREATE TABLE IF NOT EXISTS active_groups (
-    chat_id BIGINT PRIMARY KEY,
-    title TEXT,
-    registered_at TIMESTAMP DEFAULT NOW()
-)
-""")
-
-await q.edit_message_text(f"✅ Wiped `{t}` database.")
+                    # Reset trivia_config to sane defaults rather than calling a non-existent helper
+                    await conn.execute("""
+                        UPDATE trivia_config SET value = CASE
+                            WHEN key = 'enabled'        THEN 'true'
+                            WHEN key = 'interval_hours' THEN '24'
+                            WHEN key = 'duration_secs'  THEN '30'
+                            WHEN key = 'points_normal'  THEN '5'
+                            WHEN key = 'points_super'   THEN '10'
+                            WHEN key = 'reset_day'      THEN '1'
+                            ELSE value
+                        END
+                    """)
+                # ✅ bot_admins, config (non-channel keys), users, graveyard are intentionally
+                # NOT wiped — admin accounts and core config must survive a data reset.
+                await q.edit_message_text(f"✅ Wiped `{t}` data. Admin accounts and core config preserved.")
             except Exception as e:
                 await q.edit_message_text(f"❌ Error wiping `{t}`: {e}")
 

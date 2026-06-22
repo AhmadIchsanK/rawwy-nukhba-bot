@@ -3,7 +3,7 @@ import logging
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from core import WIB, delete_cmd, is_bot_admin
+from core import WIB, delete_cmd, is_bot_admin, log_action
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ async def create_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     new_kb = [[InlineKeyboardButton("✅ Going", callback_data=f"rsvp_{e_id}_Going"), InlineKeyboardButton("❌ Not Going", callback_data=f"rsvp_{e_id}_Not")]]
     await msg.edit_reply_markup(reply_markup=InlineKeyboardMarkup(new_kb))
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Event Created", "Success", f"#{e_id} '{title}' by @{username}")
     
     from cmd_admin import event_reminder, unpin_event
     context.job_queue.run_once(event_reminder, when=e_time - datetime.timedelta(minutes=rem), chat_id=update.effective_chat.id, data={"id": e_id, "title": title}, name=f"event_rem_{e_id}")
@@ -74,6 +75,7 @@ async def edit_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     from cmd_admin import event_reminder
     context.job_queue.run_once(event_reminder, when=e_time - datetime.timedelta(minutes=rem), chat_id=update.effective_chat.id, data={"id": e_id, "title": title}, name=f"event_rem_{e_id}")
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Event Updated", "Success", f"#{e_id} '{title}' by @{username}")
     await update.message.reply_text(f"✅ Event `{e_id}` updated.", parse_mode="Markdown")
 
 async def list_events(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,6 +114,7 @@ async def rsvp_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{'✅' if r['status']=='Going' else '❌'} @{r['username']}\n"
         
     await q.edit_message_text(text, reply_markup=q.message.reply_markup, parse_mode="Markdown")
+    await log_action(pool, q.from_user.id, q.message.chat.id, "RSVP", "Success", f"@{username} → {status} event #{e_id}")
     await q.answer(status)
 
 async def get_poll_kb(pid, pool):
@@ -222,6 +225,7 @@ async def give_thanks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         score = await conn.fetchval('SELECT all_time_points FROM kudos WHERE username=$1', receiver)
         
     await update.message.reply_text(f"✅ 🌟 @{receiver} received a Star from @{giver}! (Total: {score})")
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Star Given", "Success", f"@{giver} → @{receiver}")
 
 async def my_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.username or str(update.effective_user.id)
@@ -411,6 +415,7 @@ async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     from cmd_admin import task_reminder
     context.job_queue.run_once(task_reminder, when=dl - datetime.timedelta(minutes=10), data={"assignee": a, "assigner": assigner, "id": t_id, "desc": d}, chat_id=update.effective_chat.id)
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Task Assigned", "Success", f"#{t_id} @{a} ← @{assigner}: {d[:40]}")
     await update.message.reply_text(f"✅ Task `{t_id}` assigned to @{a}.\n📝 {d}\n⏳ Due: {dl.strftime('%H:%M WIB')}", parse_mode="Markdown")
 
 async def complete_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
