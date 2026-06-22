@@ -24,8 +24,8 @@ THEME_MAP = {
     "8": "Science & Technology", "9": "Food & Drink", "10": "Anime / Manga & Comics"
 }
 
-# Gemini model — fallback chain prioritizing the most stable models
-GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+# Gemini model — fallback chain prioritizing the most stable free models
+GEMINI_MODELS = ["gemini-1.5-flash-8b", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
 
 LABELS = ['A', 'B', 'C', 'D', 'E', 'F']
 
