@@ -1,7 +1,6 @@
 import datetime
 import logging
 import json
-import re
 import asyncio
 from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -585,6 +584,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
         return True
 
     if context.user_data.get('awaiting_tcfg_time'):
+        import re
         if re.match(r'^\d{1,2}:\d{2}$', text):
             h, m = map(int, text.split(":"))
             if 0 <= h <= 23 and 0 <= m <= 59:
@@ -647,10 +647,7 @@ def _safe_label(text, idx):
 
 
 async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
-    # Aggressively delete any ghost data to unblock deployment
     async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-        
         status = await conn.fetchval("SELECT value FROM config WHERE key='status'") or 'active'
         if status != 'active':
             return
@@ -660,13 +657,18 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         to_key  = 'trivia_sup_to' if is_super_round else 'trivia_reg_to'
         timeout = int(await conn.fetchval(f"SELECT value FROM config WHERE key='{to_key}'") or '60')
 
+        existing = await conn.fetchval("SELECT chat_id FROM active_trivia WHERE chat_id=$1", chat_id)
+        if existing:
+            return
+
     num_options = 6 if is_super_round else opts
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = (
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
-        f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting. Just the JSON: "
+        f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
+        f"NO code blocks. Just the JSON: "
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
@@ -679,11 +681,11 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         )
         raw = resp.text.strip()
         
-        # 100% Bulletproof JSON extraction
-        start = raw.find('{')
-        end = raw.rfind('}')
-        if start != -1 and end != -1:
-            raw = raw[start:end+1]
+        # 100% immune to markdown UI parser cutting by finding exact boundary indices.
+        start_idx = raw.find('{')
+        end_idx = raw.rfind('}')
+        if start_idx != -1 and end_idx != -1:
+            raw = raw[start_idx:end_idx+1]
             
         data = json.loads(raw)
 
@@ -694,7 +696,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
     except Exception as e:
         logger.error(f"Trivia AI generation failed: {e}")
         try:
-            await bot.send_message(chat_id, "⚠️ Trivia generation failed (AI error). Please try again with /forcetrivia")
+            await bot.send_message(chat_id, "⚠️ Trivia generation failed. Please try again with /forcetrivia")
         except Exception:
             pass
         return
@@ -731,6 +733,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timeout)
         
         async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
             await conn.execute(
                 "INSERT INTO active_trivia "
                 "(chat_id, message_id, question, options, correct_index, explanation, "
@@ -748,7 +751,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         except Exception:
             pass
         try:
-            await bot.send_message(chat_id, f"⚠️ Database error when starting trivia:\n`{e}`", parse_mode="Markdown")
+            await bot.send_message(chat_id, f"⚠️ Database error when starting trivia: {e}")
         except Exception:
             pass
         return
@@ -889,8 +892,7 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
                 if "Message is not modified" in err:
                     pass
                 elif "Message to edit not found" in err:
-                    async with pool.acquire() as conn:
-                        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", r['chat_id'])
+                    pass
                 else:
                     logger.warning(f"Sweeper edit error (chat {r['chat_id']}): {e}")
             except Exception as e:
@@ -1010,6 +1012,9 @@ async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_bot_admin(update.effective_user.username, pool):
         return await context.bot.send_message(chat_id, "❌ Admins only.")
         
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+        
     await context.bot.send_message(chat_id, "🧠 Deploying trivia…")
     await deploy_trivia(context.bot, chat_id, False, pool)
 
@@ -1020,6 +1025,9 @@ async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.effective_chat.id
     if not await is_bot_admin(update.effective_user.username, pool):
         return await context.bot.send_message(chat_id, "❌ Admins only.")
+        
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
         
     await context.bot.send_message(chat_id, "🚨 Deploying super trivia…")
     await deploy_trivia(context.bot, chat_id, True, pool)
@@ -1186,31 +1194,6 @@ async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.effective_chat.id,
             "❌ Couldn't DM you. Please start a chat with me first, then try again."
         )
-
-
-async def leaderboard_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    
-    async with pool.acquire() as conn:
-        monthly = await conn.fetch("SELECT username, monthly_kp FROM trivia_scores WHERE monthly_kp > 0 ORDER BY monthly_kp DESC LIMIT 5")
-        all_time = await conn.fetch("SELECT username, all_time_kp FROM trivia_scores WHERE all_time_kp > 0 ORDER BY all_time_kp DESC LIMIT 5")
-    
-    msg = "🏆 **Knowledge Points Leaderboard** 🏆\n\n📅 **This Month's Top Minds:**\n"
-    if monthly:
-        for i, r in enumerate(monthly):
-            msg += f"{i+1}. @{r['username']} - {r['monthly_kp']} KP\n"
-    else:
-        msg += "None.\n"
-        
-    msg += "\n🌟 **All-Time Top Minds:**\n"
-    if all_time:
-        for i, r in enumerate(all_time):
-            msg += f"{i+1}. @{r['username']} - {r['all_time_kp']} KP\n"
-    else:
-        msg += "None.\n"
-        
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 
 # ─────────────────────────────────────────
