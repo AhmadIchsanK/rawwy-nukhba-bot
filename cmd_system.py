@@ -60,7 +60,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     if update.effective_chat.type == "private":
         await update_user_menu(update.effective_user.id, username, pool, context.bot)
-    await update.message.reply_text("✅ **Hello! [RW] Nukhba Manager is fully operational.** Type `/help` to see the command manual.", parse_mode="Markdown")
+    await update.message.reply_text("✅ **Hello! [RAWWY] Nukhba Manager is fully operational.** Type `/help` to see the command manual or /command to see all the available commands.", parse_mode="Markdown")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_system_help.help_command(update, context)
