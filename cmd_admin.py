@@ -1062,155 +1062,143 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_super(update.effective_user.username):
         return await update.message.reply_text("❌ Super Owner only.")
 
-    status_msg = await update.message.reply_text("🔍 Running command health check…")
+    status_msg = await update.message.reply_text("🔍 Running dynamic command health check…")
 
-    import cmd_system
-    import cmd_user
-    import cmd_trivia
-    try:
-        import cmd_cheer
-    except ImportError:
-        cmd_cheer = None
+    # ── Dynamic module registry ──────────────────────────────────────────────
+    import cmd_system, cmd_user, cmd_trivia, cmd_admin as _self_module
     try:
         import cmd_system_help
     except ImportError:
         cmd_system_help = None
+    try:
+        import cmd_cheer
+    except ImportError:
+        cmd_cheer = None
 
-    checks = [
-        ("start",           cmd_system,      "start"),
-        ("help",            cmd_system_help, "help_command"),
-        ("about",           cmd_system,      "about_command"),
-        ("wdim",            cmd_system,      "what_did_i_miss"),
-        ("feedback",        cmd_system,      "submit_feedback"),
-        ("ask",             cmd_system,      "ask_bot"),
-        ("gemini",          cmd_system,      "ask_gemini"),
-        ("update",          None,            None),  
-        ("pushupdate",      None,            None),
-        ("updatechange",    None,            None),
-        ("newevent",        cmd_user,        "create_event"),
-        ("editevent",       cmd_user,        "edit_event"),
-        ("events",          cmd_user,        "list_events"),
-        ("poll",            cmd_user,        "create_poll"),
-        ("thanks",          cmd_user,        "give_thanks"),
-        ("myquota",         cmd_user,        "my_quota"),
-        ("mystar",          cmd_user,        "my_star"),
-        ("totalstar",       cmd_user,        "total_star"),
-        ("leaderboard",     cmd_user,        "leaderboard"),
-        ("addlib",          cmd_user,        "add_lib"),
-        ("editlib",         cmd_user,        "edit_lib"),
-        ("dellib",          cmd_user,        "del_lib"),
-        ("getlib",          cmd_user,        "get_lib"),
-        ("library",         cmd_user,        "list_lib"),
-        ("assign",          cmd_user,        "assign_task"),
-        ("complete",        cmd_user,        "complete_task"),
-        ("mytasks",         cmd_user,        "my_tasks"),
-        ("away",            cmd_user,        "set_away"),
-        ("back",            cmd_user,        "set_back"),
-        ("cheerme",         cmd_cheer,       "cheer_me"),
-        ("setcheer",        cmd_cheer,       "set_cheer"),
-        ("mypoint",         cmd_trivia,      "my_point"),
-        ("triviaconfig",    cmd_trivia,      "trivia_config"),
-        ("forcetrivia",     cmd_trivia,      "force_trivia"),
-        ("forcesupertrivia",cmd_trivia,      "force_super_trivia"),
-        ("canceltrivia",    cmd_trivia,      "cancel_trivia"),
-        ("endtrivia",       cmd_trivia,      "end_trivia"),
-        ("admin_kp",        cmd_trivia,      "admin_kp"),
-        ("botconfig",       None,            None),  
-        ("setchannel",      None,            None),
-        ("unsetchannel",    None,            None),
-        ("groupid",         None,            None),
-        ("auditlog",        None,            None),
-        ("audittime",       None,            None),
-        ("manageusers",     None,            None),
-        ("checkquota",      None,            None),
-        ("admin_stars",     None,            None),
-        ("checklimit",      None,            None),
-        ("admin_limit",     None,            None),
-        ("addbday",         None,            None),
-        ("editbday",        None,            None),
-        ("delbday",         None,            None),
-        ("listbdays",       None,            None),
-        ("attendance",      None,            None),
-        ("forceback",       None,            None),
-        ("grouptasks",      None,            None),
-        ("cancelevent",     None,            None),
-        ("canceltask",      None,            None),
-        ("cancelpoll",      None,            None),
-        ("newsched",        None,            None),
-        ("listschedules",   None,            None),
-        ("delschedule",     None,            None),
-        ("announce",        None,            None),
-        ("editannounce",    None,            None),
-        ("delannounce",     None,            None),
-        ("feedbacklist",    None,            None),
-        ("analyze_feedback",None,            None),
-        ("allcommandtest",  None,            None),
-        ("addadmin",        None,            None),
-        ("deladmin",        None,            None),
-        ("listadmins",      None,            None),
-        ("removemember",    None,            None),
-        ("graveyard",       None,            None),
-        ("botstatus",       None,            None),
-        ("pause",           None,            None),
-        ("restart",         None,            None),
-        ("super_reset",     None,            None),
-    ]
+    # Map handler function names back to their modules
+    # Key: (handler_func_name,) → module
+    module_registry = {
+        # system
+        "start": cmd_system, "about_command": cmd_system,
+        "what_did_i_miss": cmd_system, "submit_feedback": cmd_system,
+        "ask_bot": cmd_system, "ask_gemini": cmd_system,
+        "feedback_callback": cmd_system, "global_tracker": cmd_system,
+        "unknown_command": cmd_system, "flush_chat_buffer": cmd_system,
+        "security_track_chats": cmd_system,
+        # system_help
+        "help_command": cmd_system_help,
+        # user
+        "create_event": cmd_user, "edit_event": cmd_user,
+        "list_events": cmd_user, "create_poll": cmd_user,
+        "rsvp_callback": cmd_user, "poll_callback": cmd_user,
+        "give_thanks": cmd_user, "my_quota": cmd_user,
+        "my_star": cmd_user, "total_star": cmd_user,
+        "leaderboard_star": cmd_user,
+        "add_lib": cmd_user, "edit_lib": cmd_user,
+        "del_lib": cmd_user, "get_lib": cmd_user, "list_lib": cmd_user,
+        "assign_task": cmd_user, "complete_task": cmd_user,
+        "my_tasks": cmd_user, "set_away": cmd_user, "set_back": cmd_user,
+        # cheer
+        "cheer_me": cmd_cheer, "set_cheer": cmd_cheer,
+        # trivia
+        "my_point": cmd_trivia, "leaderboard_kp": cmd_trivia,
+        "trivia_config": cmd_trivia, "force_trivia": cmd_trivia,
+        "force_super_trivia": cmd_trivia, "cancel_trivia": cmd_trivia,
+        "end_trivia": cmd_trivia, "admin_kp": cmd_trivia,
+        "trivia_callback": cmd_trivia,
+        # admin (self)
+        "update_info": _self_module, "push_update": _self_module,
+        "update_change": _self_module, "bot_config": _self_module,
+        "set_channel": _self_module, "unset_channel": _self_module,
+        "check_group_id": _self_module, "get_audit_log": _self_module,
+        "set_audit_time": _self_module, "manage_users": _self_module,
+        "check_quota": _self_module, "admin_stars": _self_module,
+        "check_limit": _self_module, "admin_limit": _self_module,
+        "add_bday": _self_module, "edit_bday": _self_module,
+        "del_bday": _self_module, "list_bdays": _self_module,
+        "attendance": _self_module, "force_back": _self_module,
+        "group_tasks": _self_module, "cancel_event": _self_module,
+        "cancel_task": _self_module, "cancel_poll_admin": _self_module,
+        "new_schedule": _self_module, "list_schedules": _self_module,
+        "del_schedule": _self_module, "announce": _self_module,
+        "edit_announce": _self_module, "del_announce": _self_module,
+        "feedback_list": _self_module, "analyze_feedback": _self_module,
+        "all_command_test": _self_module, "add_admin_req": _self_module,
+        "del_admin_req": _self_module, "list_admins": _self_module,
+        "remove_member_req": _self_module, "graveyard": _self_module,
+        "bot_status": _self_module, "pause_bot": _self_module,
+        "restart_bot": _self_module, "super_reset_req": _self_module,
+        "config_callback": _self_module, "manage_users_callback": _self_module,
+        "newsched_callback": _self_module, "super_callback": _self_module,
+        "handle_admin_text_input": _self_module,
+    }
 
-    self_funcs = {
-        "update": update_info, "pushupdate": push_update,
-        "updatechange": update_change, "botconfig": bot_config,
-        "setchannel": set_channel, "unsetchannel": unset_channel,
-        "groupid": check_group_id, "auditlog": get_audit_log,
-        "audittime": set_audit_time, "manageusers": manage_users,
-        "checkquota": check_quota, "admin_stars": admin_stars,
-        "checklimit": check_limit, "admin_limit": admin_limit,
-        "addbday": add_bday, "editbday": edit_bday,
-        "delbday": del_bday, "listbdays": list_bdays,
-        "attendance": attendance, "forceback": force_back,
-        "grouptasks": group_tasks, "cancelevent": cancel_event,
-        "canceltask": cancel_task, "cancelpoll": cancel_poll_admin,
-        "newsched": new_schedule, "listschedules": list_schedules,
-        "delschedule": del_schedule, "announce": announce,
-        "editannounce": edit_announce, "delannounce": del_announce,
-        "feedbacklist": feedback_list, "analyze_feedback": analyze_feedback,
-        "allcommandtest": all_command_test, "addadmin": add_admin_req,
-        "deladmin": del_admin_req, "listadmins": list_admins,
-        "removemember": remove_member_req, "graveyard": graveyard,
-        "botstatus": bot_status, "pause": pause_bot,
-        "restart": restart_bot, "super_reset": super_reset_req,
+    # Command → handler function name (matches main.py registrations)
+    CMD_TO_FUNC = {
+        "start": "start", "help": "help_command", "about": "about_command",
+        "wdim": "what_did_i_miss", "feedback": "submit_feedback",
+        "ask": "ask_bot", "gemini": "ask_gemini",
+        "update": "update_info", "pushupdate": "push_update",
+        "updatechange": "update_change",
+        "newevent": "create_event", "editevent": "edit_event",
+        "events": "list_events", "poll": "create_poll",
+        "thanks": "give_thanks", "myquota": "my_quota",
+        "mystar": "my_star", "totalstar": "total_star",
+        "leaderboard_star": "leaderboard_star",
+        "addlib": "add_lib", "editlib": "edit_lib",
+        "dellib": "del_lib", "getlib": "get_lib", "library": "list_lib",
+        "assign": "assign_task", "complete": "complete_task",
+        "mytasks": "my_tasks", "away": "set_away", "back": "set_back",
+        "cheerme": "cheer_me", "setcheer": "set_cheer",
+        "mypoint": "my_point", "leaderboard_kp": "leaderboard_kp",
+        "triviaconfig": "trivia_config", "forcetrivia": "force_trivia",
+        "forcesupertrivia": "force_super_trivia",
+        "canceltrivia": "cancel_trivia", "endtrivia": "end_trivia",
+        "triviaend": "end_trivia", "admin_kp": "admin_kp",
+        "botconfig": "bot_config", "setchannel": "set_channel",
+        "unsetchannel": "unset_channel", "groupid": "check_group_id",
+        "auditlog": "get_audit_log", "audittime": "set_audit_time",
+        "manageusers": "manage_users", "checkquota": "check_quota",
+        "admin_stars": "admin_stars", "checklimit": "check_limit",
+        "admin_limit": "admin_limit", "addbday": "add_bday",
+        "editbday": "edit_bday", "delbday": "del_bday",
+        "listbdays": "list_bdays", "attendance": "attendance",
+        "forceback": "force_back", "grouptasks": "group_tasks",
+        "cancelevent": "cancel_event", "canceltask": "cancel_task",
+        "cancelpoll": "cancel_poll_admin", "newsched": "new_schedule",
+        "listschedules": "list_schedules", "delschedule": "del_schedule",
+        "announce": "announce", "editannounce": "edit_announce",
+        "delannounce": "del_announce", "feedbacklist": "feedback_list",
+        "analyze_feedback": "analyze_feedback",
+        "allcommandtest": "all_command_test", "addadmin": "add_admin_req",
+        "deladmin": "del_admin_req", "listadmins": "list_admins",
+        "removemember": "remove_member_req", "graveyard": "graveyard",
+        "botstatus": "bot_status", "pause": "pause_bot",
+        "restart": "restart_bot", "super_reset": "super_reset_req",
     }
 
     results = []
-    ok = 0
-    fail = 0
+    ok = fail = 0
 
-    for cmd, module, func_name in checks:
+    for cmd, func_name in CMD_TO_FUNC.items():
+        module = module_registry.get(func_name)
         if module is None:
-            fn = self_funcs.get(cmd)
-            if fn and callable(fn):
-                results.append(f"/{cmd} ✅")
-                ok += 1
-            else:
-                results.append(f"/{cmd} ❌ Not implemented")
-                fail += 1
+            results.append(f"🚫 /{cmd} — handler `{func_name}` not mapped to any module")
+            fail += 1
+        elif not hasattr(module, func_name):
+            results.append(f"❌ /{cmd} — `{func_name}` missing from `{module.__name__}`")
+            fail += 1
+        elif not callable(getattr(module, func_name)):
+            results.append(f"❌ /{cmd} — `{func_name}` exists but is not callable")
+            fail += 1
         else:
-            if module is None:
-                results.append(f"/{cmd} ❌ Module not loaded")
-                fail += 1
-            elif not hasattr(module, func_name):
-                results.append(f"/{cmd} ❌ `{func_name}` missing from {module.__name__}")
-                fail += 1
-            elif not callable(getattr(module, func_name)):
-                results.append(f"/{cmd} ❌ `{func_name}` not callable")
-                fail += 1
-            else:
-                results.append(f"/{cmd} ✅")
-                ok += 1
+            results.append(f"✅ /{cmd}")
+            ok += 1
 
-    report = (
-        f"🧪 **COMMAND HEALTH REPORT**\n"
-        f"──────────────────────────────\n"
-        f"✅ OK: {ok}  |  ❌ Failed: {fail}\n\n"
+    summary = (
+        f"🧪 **DYNAMIC COMMAND HEALTH REPORT**\n"
+        f"──────────────────────────────────────\n"
+        f"✅ OK: {ok}  |  ❌ Failed: {fail}  |  🗂️ Total: {ok + fail}\n\n"
         + "\n".join(results)
     )
 
@@ -1219,7 +1207,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.debug(f"Failed to delete status message: {e}")
 
-    await send_md(context, update.effective_user.id, report)
+    await send_md(context, update.effective_user.id, summary)
 
 
 # ─────────────────────────────────────────────

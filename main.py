@@ -87,6 +87,13 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def post_init_wrapper(application: Application):
     await init_db(application)
 
+    # Schedule birthday announcements (self-rescheduling daily job)
+    try:
+        from crons import schedule_bday_job
+        await schedule_bday_job(application)
+    except Exception as e:
+        logger.warning(f"Birthday scheduler setup failed: {e}")
+
     public_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
     try:
         await application.bot.set_my_commands(public_hints, scope=BotCommandScopeDefault())
@@ -328,9 +335,10 @@ def main():
         )
 
     try:
-        from crons import daily_morning_log, poll_cleanup
+        from crons import daily_morning_log, poll_cleanup, monthly_leaderboard
         app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
         app.job_queue.run_repeating(poll_cleanup, interval=3600)
+        app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=0, minute=5, tzinfo=WIB))
     except ImportError:
         logger.warning("Optional crons.py not found — skipping daily logs and poll cleanup.")
 

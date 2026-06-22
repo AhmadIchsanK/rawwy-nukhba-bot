@@ -84,7 +84,101 @@ async def init_db(app: Application):
                     text TEXT
                 )
             ''')
-            
+            # ── USERS (core identity + AI quota) ──────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    username    VARCHAR(100) PRIMARY KEY,
+                    user_id     BIGINT,
+                    gemini_quota INT DEFAULT 10,
+                    last_about  TIMESTAMP WITH TIME ZONE
+                )
+            ''')
+            # ── KUDOS / RAWWY STARS ───────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS kudos (
+                    username        VARCHAR(100) PRIMARY KEY,
+                    quota           INT DEFAULT 3,
+                    monthly_points  INT DEFAULT 0,
+                    all_time_points INT DEFAULT 0
+                )
+            ''')
+            # ── EVENTS ────────────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS events (
+                    id          SERIAL PRIMARY KEY,
+                    title       TEXT NOT NULL,
+                    event_time  TIMESTAMP WITH TIME ZONE,
+                    created_by  VARCHAR(100),
+                    chat_id     BIGINT,
+                    msg_id      BIGINT,
+                    reminder_mins INT DEFAULT 30
+                )
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS rsvps (
+                    event_id    INT REFERENCES events(id) ON DELETE CASCADE,
+                    username    VARCHAR(100),
+                    status      VARCHAR(20),
+                    PRIMARY KEY (event_id, username)
+                )
+            ''')
+            # ── TASKS ─────────────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id          SERIAL PRIMARY KEY,
+                    assignee    VARCHAR(100),
+                    task_desc   TEXT,
+                    deadline    TIMESTAMP WITH TIME ZONE,
+                    assigned_by VARCHAR(100),
+                    status      VARCHAR(20) DEFAULT 'Pending',
+                    chat_id     BIGINT
+                )
+            ''')
+            # ── LIBRARY ───────────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS library (
+                    name        VARCHAR(200) PRIMARY KEY,
+                    content     TEXT,
+                    added_by    VARCHAR(100),
+                    is_private  BOOLEAN DEFAULT FALSE
+                )
+            ''')
+            # ── AWAY STATUS ───────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS away_status (
+                    username        VARCHAR(100) PRIMARY KEY,
+                    reason          TEXT,
+                    end_time        TIMESTAMP WITH TIME ZONE,
+                    last_notified   TIMESTAMP WITH TIME ZONE
+                )
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS away_mentions (
+                    id              SERIAL PRIMARY KEY,
+                    away_username   VARCHAR(100),
+                    mentioner       VARCHAR(100),
+                    message         TEXT,
+                    chat_title      TEXT,
+                    created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            ''')
+            # ── BIRTHDAYS ─────────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS birthdays (
+                    username    VARCHAR(100) PRIMARY KEY,
+                    bday        VARCHAR(5)
+                )
+            ''')
+            # ── ACTIVE POLLS ──────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS active_polls (
+                    chat_id     BIGINT,
+                    user_id     BIGINT,
+                    end_time    TIMESTAMP WITH TIME ZONE,
+                    PRIMARY KEY (chat_id, user_id)
+                )
+            ''')
+
         import cmd_trivia
         import cmd_cheer
         await cmd_trivia.ensure_trivia_database(app.bot_data['db_pool'])

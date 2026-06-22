@@ -100,7 +100,7 @@ COMMANDS = [
     # ==========================================
     # 👑 SUPER OWNER
     # ==========================================
-    {"name": "updateinfo", "desc": "View latest bot version log", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔄"},
+    {"name": "update", "desc": "View latest bot version log", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔄"},
     {"name": "pushupdate", "desc": "Push auto-increment version log", "format": "`/pushupdate Fixed bugs and UI`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🚀"},
     {"name": "updatechange", "desc": "Set manual version and log", "format": "`/updatechange 2.0 , Massive overhaul`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔄"},
     {"name": "allcommandtest", "desc": "Test all commands", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🧪"},

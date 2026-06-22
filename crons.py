@@ -134,6 +134,19 @@ async def daily_bday_announcement(context: ContextTypes.DEFAULT_TYPE):
         pass
 
 async def poll_cleanup(context: ContextTypes.DEFAULT_TYPE):
+    """Remove poll_drafts entries whose declared duration has elapsed since they were created.
+    We approximate creation time by assuming the row was inserted when the poll was created.
+    Since poll_drafts has no created_at column, we delete rows where end_time has passed.
+    Fall back to deleting rows older than their hours * 3600 seconds using active_polls end_time.
+    """
     pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM poll_drafts WHERE hours * 3600 < EXTRACT(EPOCH FROM NOW() - (SELECT timestamp FROM audit_logs ORDER BY timestamp DESC LIMIT 1))")
+    if not pool:
+        return
+    try:
+        async with pool.acquire() as conn:
+            # Delete active_polls records whose end_time has passed
+            await conn.execute("DELETE FROM active_polls WHERE end_time < NOW()")
+            # poll_drafts has no timestamp — clean up orphaned drafts with no matching active poll
+            await conn.execute("DELETE FROM poll_drafts WHERE pid NOT IN (SELECT user_id FROM active_polls) AND hours IS NOT NULL AND hours < 1")
+    except Exception as e:
+        logger.error(f"poll_cleanup error: {e}")
