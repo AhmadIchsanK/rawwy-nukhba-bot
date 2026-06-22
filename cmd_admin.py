@@ -444,9 +444,10 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 detail TEXT
             )
         ''')
+        # Timezone crash fix: Force AT TIME ZONE inside Postgres
         rows = await conn.fetch(
-            "SELECT timestamp, category, status, detail FROM audit_logs "
-            "ORDER BY timestamp DESC LIMIT $1",
+            "SELECT timestamp AT TIME ZONE 'Asia/Jakarta' as ts_wib, category, status, detail "
+            "FROM audit_logs ORDER BY timestamp DESC LIMIT $1",
             limit
         )
 
@@ -459,10 +460,7 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"📋 **Audit Log (Last {limit} entries)**\n"]
     for r in rows:
-        ts_val = r['timestamp']
-        if ts_val.tzinfo is None:
-            ts_val = ts_val.replace(tzinfo=datetime.timezone.utc)
-        ts = ts_val.astimezone(WIB).strftime('%m/%d %H:%M')
+        ts = r['ts_wib'].strftime('%m/%d %H:%M')
         lines.append(f"`[{ts}]` **{r['category']}** — {r['status']}\n  _{r['detail']}_")
 
     await send_md(context, update.effective_user.id, "\n".join(lines))
@@ -1135,7 +1133,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("feedback",        cmd_system,      "submit_feedback"),
         ("ask",             cmd_system,      "ask_bot"),
         ("gemini",          cmd_system,      "ask_gemini"),
-        ("updateinfo",      None,            None),  
+        ("update",          None,            None),  
         ("pushupdate",      None,            None),
         ("updatechange",    None,            None),
         ("newevent",        cmd_user,        "create_event"),
@@ -1208,7 +1206,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     self_funcs = {
-        "updateinfo": update_info, "pushupdate": push_update,
+        "update": update_info, "pushupdate": push_update,
         "updatechange": update_change, "botconfig": bot_config,
         "setchannel": set_channel, "unsetchannel": unset_channel,
         "groupid": check_group_id, "auditlog": get_audit_log,
@@ -1327,7 +1325,7 @@ async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_
 
 
 # ─────────────────────────────────────────────
-# REMAINING ADMIN COMMANDS
+# REMAINING ADMIN COMMANDS (Fully Restored)
 # ─────────────────────────────────────────────
 
 async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1597,6 +1595,186 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await conn.execute(f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
     await context.bot.send_message(update.effective_user.id, f"✅ Stars for @{t} updated.")
+
+
+async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    if update.effective_chat.type in ['group', 'supergroup']:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            f"📌 **Group Info**\nTitle: `{update.effective_chat.title}`\nID: `{update.effective_chat.id}`",
+            parse_mode="Markdown"
+        )
+    else:
+        async with pool.acquire() as conn:
+            groups = await conn.fetch("SELECT chat_id, title FROM active_groups")
+        msg = ("📈 **Tracked Groups:**\n\n" + "\n".join([f"• `{g['chat_id']}` — {g['title']}" for g in groups])) if groups else "❌ No active groups tracked yet."
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+
+
+async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    async with pool.acquire() as conn:
+        b = await conn.fetch('SELECT username, bday FROM birthdays ORDER BY bday')
+    if not b:
+        return await context.bot.send_message(update.effective_user.id, "🎂 No birthdays registered yet.")
+    msg = "🎂 **Birthday Registry**\n\n" + "\n".join([f"• @{x['username']}: `{x['bday']}`" for x in b])
+    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+
+
+async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    async with pool.acquire() as conn:
+        recs = await conn.fetch(
+            "SELECT username, report, created_at FROM bug_reports "
+            "WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC"
+        )
+    if not recs:
+        return await context.bot.send_message(update.effective_user.id, "🪹 No feedback in the last 7 days.")
+    msg = "📋 **Feedback — Last 7 Days**\n\n"
+    for r in recs:
+        ts   = r['created_at'].astimezone(WIB).strftime('%m/%d %H:%M')
+        msg += f"• `[{ts}]` @{r['username']}: {r['report']}\n"
+    await send_md(context, update.effective_user.id, msg)
+
+
+async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",")]
+        u = parts[0].replace("@", "").lower()
+        b = parts[1]
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/addbday @user , MM/DD`", parse_mode="Markdown")
+    async with pool.acquire() as conn:
+        exist = await conn.fetchval('SELECT bday FROM birthdays WHERE lower(username)=$1', u)
+        if exist:
+            return await context.bot.send_message(update.effective_user.id, f"❌ Already registered: {exist}")
+        await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2)', u, b)
+    await context.bot.send_message(update.effective_user.id, f"✅ Birthday for @{u} logged as `{b}`.", parse_mode="Markdown")
+
+
+async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",")]
+        u = parts[0].replace("@", "").lower()
+        b = parts[1]
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/editbday @user , MM/DD`", parse_mode="Markdown")
+    async with pool.acquire() as conn:
+        res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE lower(username)=$2', b, u)
+    if res == "UPDATE 0":
+        return await context.bot.send_message(update.effective_user.id, "❌ User not found.")
+    await context.bot.send_message(update.effective_user.id, f"✅ Birthday updated for @{u}.")
+
+
+async def del_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        u = context.args[0].replace("@", "").lower()
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/delbday @user`", parse_mode="Markdown")
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
+    await context.bot.send_message(update.effective_user.id, f"✅ Birthday for @{u} removed.")
+
+
+async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",", 1)]
+        target_raw = parts[0]
+        message    = parts[1]
+    except Exception:
+        return await context.bot.send_message(
+            update.effective_user.id,
+            "❌ Format: `/announce all , Your message here`",
+            parse_mode="Markdown"
+        )
+    async with pool.acquire() as conn:
+        a_id    = await conn.fetchval("INSERT INTO announcements (text) VALUES ($1) RETURNING id", message)
+        targets = await conn.fetch("SELECT chat_id FROM active_groups") if target_raw.lower() == "all" else [{"chat_id": int(target_raw)}]
+        for t in targets:
+            try:
+                m = await context.bot.send_message(
+                    t['chat_id'],
+                    f"📢 **[RW] NUKHBA BROADCAST**\n\n{message}",
+                    parse_mode="Markdown"
+                )
+                await conn.execute(
+                    "INSERT INTO announcement_messages (announcement_id, chat_id, message_id) VALUES ($1,$2,$3)",
+                    a_id, t['chat_id'], m.message_id
+                )
+            except Exception as e:
+                logger.warning(f"Broadcast failed to {t['chat_id']}: {e}")
+    await context.bot.send_message(update.effective_user.id, "✅ Broadcast sent.")
+
+
+async def edit_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",", 1)]
+        a_id  = int(parts[0])
+        text  = parts[1]
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/editannounce [ID] , New text`", parse_mode="Markdown")
+    async with pool.acquire() as conn:
+        msgs = await conn.fetch("SELECT chat_id, message_id FROM announcement_messages WHERE announcement_id=$1", a_id)
+        for m in msgs:
+            try:
+                await context.bot.edit_message_text(
+                    f"📢 **[RW] NUKHBA BROADCAST**\n\n{text}",
+                    chat_id=m['chat_id'], message_id=m['message_id'], parse_mode="Markdown"
+                )
+            except Exception as e:
+                logger.warning(f"Edit broadcast failed for {m['chat_id']}: {e}")
+        await conn.execute("UPDATE announcements SET text=$1 WHERE id=$2", text, a_id)
+    await context.bot.send_message(update.effective_user.id, "✅ Announcement updated.")
+
+
+async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        a_id = int(context.args[0])
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Format: `/delannounce [ID]`", parse_mode="Markdown")
+    async with pool.acquire() as conn:
+        msgs = await conn.fetch("SELECT chat_id, message_id FROM announcement_messages WHERE announcement_id=$1", a_id)
+        for m in msgs:
+            try:
+                await context.bot.delete_message(chat_id=m['chat_id'], message_id=m['message_id'])
+            except Exception as e:
+                logger.warning(f"Delete broadcast failed for {m['chat_id']}: {e}")
+        await conn.execute("DELETE FROM announcements WHERE id=$1", a_id)
+    await context.bot.send_message(update.effective_user.id, "✅ Announcement deleted.")
 
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
