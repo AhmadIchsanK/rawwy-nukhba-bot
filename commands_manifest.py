@@ -23,16 +23,18 @@ COMMANDS = [
     {"name": "myquota", "desc": "Check Star Quota", "public": True, "category": "⭐ RAWWY Stars", "emoji": "📉"},
     {"name": "mystar", "desc": "Monthly Stars", "public": True, "category": "⭐ RAWWY Stars", "emoji": "🌟"},
     {"name": "totalstar", "desc": "All-time Stars", "public": True, "category": "⭐ RAWWY Stars", "emoji": "🌠"},
-    {"name": "leaderboard", "desc": "Top RAWWY Stars", "public": True, "category": "⭐ RAWWY Stars", "emoji": "🏆"},
+    {"name": "leaderboard_star", "desc": "Top RAWWY Stars", "public": True, "category": "⭐ RAWWY Stars", "emoji": "🏆"},
 
     # 🎮 TRIVIA
     {"name": "mypoint", "desc": "View Knowledge Points", "public": True, "category": "🎮 Trivia", "emoji": "🧠"},
+    {"name": "leaderboard_kp", "desc": "Top Knowledge Points", "public": True, "category": "🎮 Trivia", "emoji": "🏅"},
 
     # 📚 LIBRARY
     {"name": "library", "desc": "Browse Library", "public": True, "category": "📚 Library", "emoji": "🗂️"},
     {"name": "getlib", "desc": "Retrieve an asset", "format": "`/getlib Logo`", "public": True, "category": "📚 Library", "emoji": "📤"},
     {"name": "addlib", "desc": "Save an asset", "format": "`/addlib Logo , content`", "public": True, "category": "📚 Library", "emoji": "📥"},
     {"name": "editlib", "desc": "Edit an asset", "format": "`/editlib Logo , <new content>`", "public": True, "category": "📚 Library", "emoji": "✏️"},
+    {"name": "dellib", "desc": "Delete an asset", "format": "`/dellib Logo`", "public": True, "category": "📚 Library", "emoji": "🗑️"},
 
     # ⚡ TASKS & AWAY
     {"name": "mytasks", "desc": "Active Tasks", "public": True, "category": "⚡ Tasks & Away", "emoji": "📋"},
@@ -109,5 +111,5 @@ COMMANDS = [
     {"name": "graveyard", "desc": "View offboarded members", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🪦"},
     {"name": "pause", "desc": "Pause the bot", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⏸️"},
     {"name": "restart", "desc": "Restart the bot", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "▶️"},
-    {"name": "super_reset", "desc": "Factory wipe sections", "format": "`/super_reset stars`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "☢️"}
+    {"name": "super_reset", "desc": "Factory wipe specific data", "format": "`/super_reset <all|stars|events|library...>`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "☢️"}
 ]
