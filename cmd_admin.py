@@ -1533,6 +1533,14 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(update.effective_user.id, f"✅ Stars for @{t} updated.")
 
 
+async def _validate_bday(b: str) -> bool:
+    """Validate MM/DD format."""
+    import re as _re
+    if not _re.match(r'^(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])$', b):
+        return False
+    return True
+
+
 async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -1544,12 +1552,15 @@ async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
         b = parts[1]
     except Exception:
         return await context.bot.send_message(update.effective_user.id, "❌ Format: `/addbday @user , MM/DD`", parse_mode="Markdown")
+    if not await _validate_bday(b):
+        return await context.bot.send_message(update.effective_user.id, f"❌ Invalid date format `{b}`. Use MM/DD (e.g. `06/22`).", parse_mode="Markdown")
     async with pool.acquire() as conn:
         exist = await conn.fetchval('SELECT bday FROM birthdays WHERE lower(username)=$1', u)
         if exist:
-            return await context.bot.send_message(update.effective_user.id, f"❌ Already registered: {exist}")
+            return await context.bot.send_message(update.effective_user.id, f"❌ @{u} already registered as `{exist}`. Use `/editbday` to change it.", parse_mode="Markdown")
         await conn.execute('INSERT INTO birthdays (username, bday) VALUES ($1, $2)', u, b)
     await context.bot.send_message(update.effective_user.id, f"✅ Birthday for @{u} logged as `{b}`.", parse_mode="Markdown")
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday", "Added", f"@{u} → {b}")
 
 
 async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1563,11 +1574,14 @@ async def edit_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
         b = parts[1]
     except Exception:
         return await context.bot.send_message(update.effective_user.id, "❌ Format: `/editbday @user , MM/DD`", parse_mode="Markdown")
+    if not await _validate_bday(b):
+        return await context.bot.send_message(update.effective_user.id, f"❌ Invalid date format `{b}`. Use MM/DD (e.g. `06/22`).", parse_mode="Markdown")
     async with pool.acquire() as conn:
         res = await conn.execute('UPDATE birthdays SET bday=$1 WHERE lower(username)=$2', b, u)
     if res == "UPDATE 0":
-        return await context.bot.send_message(update.effective_user.id, "❌ User not found.")
-    await context.bot.send_message(update.effective_user.id, f"✅ Birthday updated for @{u}.")
+        return await context.bot.send_message(update.effective_user.id, f"❌ @{u} not found in birthday registry. Use `/addbday` first.", parse_mode="Markdown")
+    await context.bot.send_message(update.effective_user.id, f"✅ Birthday updated: @{u} → `{b}`.", parse_mode="Markdown")
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Birthday", "Updated", f"@{u} → {b}")
 
 
 async def del_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1694,6 +1708,35 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await conn.execute("DELETE FROM announcements WHERE id=$1", a_id)
     await context.bot.send_message(update.effective_user.id, "✅ Announcement deleted.")
 
+
+
+async def register_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manually register the current group into active_groups. Run this if the bot was
+    added before the tracking fix or after a database wipe."""
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    chat = update.effective_chat
+    if chat.type not in ['group', 'supergroup']:
+        return await context.bot.send_message(
+            update.effective_user.id,
+            "❌ Run this command **inside the group** you want to register.",
+            parse_mode="Markdown"
+        )
+    async with pool.acquire() as conn:
+        await conn.execute(
+            'INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2',
+            chat.id, chat.title
+        )
+    # Also clear seen_groups cache so global_tracker re-evaluates
+    context.bot_data.get('seen_groups', set()).discard(chat.id)
+    await context.bot.send_message(
+        update.effective_user.id,
+        f"✅ **Group Registered!**\n\n🏠 `{chat.title}`\n🆔 `{chat.id}`",
+        parse_mode="Markdown"
+    )
+    await log_action(pool, update.effective_user.id, chat.id, "System", "Group Registered", f"Manual register by @{update.effective_user.username}")
 
 async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1933,16 +1976,36 @@ async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
     if not await is_super(update.effective_user.username):
         return
     pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        recs = await conn.fetch('SELECT username, removed_at FROM graveyard ORDER BY removed_at DESC')
-    msg = "🪦 **Graveyard — Offboarded Members**\n\n" + (
-        "\n".join([f"• @{r['username']} — {r['removed_at'].astimezone(WIB).strftime('%d %b %Y')}" for r in recs])
-        if recs else "_Graveyard is empty._"
-    )
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    try:
+        async with pool.acquire() as conn:
+            # Ensure table exists (idempotent — safe to re-run)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS graveyard (
+                    username VARCHAR(100) PRIMARY KEY,
+                    removed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            recs = await conn.fetch('SELECT username, removed_at FROM graveyard ORDER BY removed_at DESC')
+        
+        if not recs:
+            msg = "🪦 **Graveyard — Offboarded Members**\n\n_No members have been offboarded yet._"
+        else:
+            lines = []
+            for r in recs:
+                try:
+                    date_str = r['removed_at'].astimezone(WIB).strftime('%d %b %Y')
+                except Exception:
+                    date_str = "Unknown date"
+                lines.append(f"• @{r['username']} — {date_str}")
+            msg = "🪦 **Graveyard — Offboarded Members**\n\n" + "\n".join(lines)
+        
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+    except Exception as e:
+        await context.bot.send_message(update.effective_user.id, f"❌ Graveyard error: {e}")
 
 
 async def pause_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):

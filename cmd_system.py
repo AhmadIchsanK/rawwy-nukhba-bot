@@ -452,27 +452,35 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             async with pool.acquire() as conn:
                 await conn.execute("UPDATE users SET gemini_quota = gemini_quota + 1 WHERE username=$1", username)
     except Exception as e:
-        if "429" in str(e).lower() or "quota" in str(e).lower():
+        err_str = str(e)
+        # Detect true API-key exhaustion vs transient rate limit vs other errors
+        is_resource_exhausted = "RESOURCE_EXHAUSTED" in err_str or "429" in err_str
+        is_key_invalid = "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "invalid" in err_str.lower() and "key" in err_str.lower()
+        
+        if is_key_invalid:
             try:
-                await temp.edit_text("❌ Gemini API credit limit depleted (429). Admins notified.")
+                await temp.edit_text("❌ **Gemini API Key Invalid.** Please update `GEMINI_API_KEY` in Railway environment variables and redeploy.")
             except Exception:
                 pass
             async with pool.acquire() as conn:
-                admins = await conn.fetch("SELECT user_id FROM users u INNER JOIN bot_admins a ON u.username = a.username")
                 super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
-            admin_ids = {a['user_id'] for a in admins if a['user_id']}
             if super_id:
-                admin_ids.add(super_id)
-            for uid in admin_ids:
                 try:
-                    await context.bot.send_message(uid, "⚠️ **CRITICAL:** Gemini API limit depleted.", parse_mode="Markdown")
+                    await context.bot.send_message(super_id, f"⚠️ **CRITICAL:** Gemini API key is invalid or expired.\n\nError: `{err_str[:300]}`\n\nUpdate `GEMINI_API_KEY` in Railway and redeploy.", parse_mode="Markdown")
                 except Exception:
                     pass
-        else: 
+        elif is_resource_exhausted:
             try:
-                await temp.edit_text(f"❌ AI Error: {e}")
+                await temp.edit_text("⏳ **Gemini Rate Limited.** Free-tier request quota exceeded for this minute. Please try again in 60 seconds.")
             except Exception:
                 pass
+            logger.warning(f"Gemini rate limit hit: {err_str[:200]}")
+        else:
+            try:
+                await temp.edit_text(f"❌ AI Error: {err_str[:300]}")
+            except Exception:
+                pass
+            logger.error(f"Gemini unexpected error: {err_str}")
             
         if not is_adm:
             async with pool.acquire() as conn:

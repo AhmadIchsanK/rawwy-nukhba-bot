@@ -55,6 +55,7 @@ COMMANDS = [
     {"name": "setchannel", "desc": "Set feature target channel", "format": "`/setchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📍"},
     {"name": "unsetchannel", "desc": "Remove feature target channel", "format": "`/unsetchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🔕"},
     {"name": "groupid", "desc": "Check current chat group ID", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🆔"},
+    {"name": "registergroup", "desc": "Manually register current group", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🏠"},
     {"name": "auditlog", "desc": "Pull diagnostic logs", "format": "`/auditlog 15`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📑"},
     {"name": "audittime", "desc": "Set daily audit log time", "format": "`/audittime 23:50`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "⏰"},
 

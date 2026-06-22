@@ -2,7 +2,7 @@ import logging
 import datetime
 import os
 from telegram import Update, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes, PicklePersistence
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters, ContextTypes, PicklePersistence
 
 # Core imports
 from core import BOT_TOKEN, WIB, init_db
@@ -221,6 +221,7 @@ def main():
     app.add_handler(CommandHandler("setchannel",  safe_cmd(cmd_admin, "set_channel")))
     app.add_handler(CommandHandler("unsetchannel",safe_cmd(cmd_admin, "unset_channel")))
     app.add_handler(CommandHandler("groupid",     safe_cmd(cmd_admin, "check_group_id")))
+    app.add_handler(CommandHandler("registergroup", safe_cmd(cmd_admin, "register_group")))
     app.add_handler(CommandHandler("auditlog",    safe_cmd(cmd_admin, "get_audit_log")))
     app.add_handler(CommandHandler("audittime",   safe_cmd(cmd_admin, "set_audit_time")))
 
@@ -297,11 +298,9 @@ def main():
     # 🛡️ GLOBAL LISTENERS
     # ─────────────────────────────────────────
 
+    # Track bot being added/removed from groups (requires ChatMemberHandler + my_chat_member updates)
     if hasattr(cmd_system, 'security_track_chats'):
-        app.add_handler(MessageHandler(
-            filters.StatusUpdate.NEW_CHAT_MEMBERS | filters.StatusUpdate.LEFT_CHAT_MEMBER,
-            cmd_system.security_track_chats
-        ))
+        app.add_handler(ChatMemberHandler(cmd_system.security_track_chats, ChatMemberHandler.MY_CHAT_MEMBER))
 
     # Catch ALL non-command messages so forwarded media for target config is caught
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, global_text_router))
