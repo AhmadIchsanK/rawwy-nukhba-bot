@@ -664,7 +664,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
         f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
-        f"NO code blocks, NO backticks. Just the JSON: "
+        f"NO code blocks. Just the JSON: "
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
@@ -677,9 +677,9 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         )
         raw = resp.text.strip()
         
-        # Bypass markdown parsers securely without any literal triple backticks
-        raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
-        raw = re.sub(r'\s*`{3}$', '', raw)
+        # 100% immune to markdown UI parser cutting
+        raw = re.sub(r'^\`\`\`(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'\s*\`\`\`$', '', raw)
         data = json.loads(raw.strip())
 
         assert 'question' in data and 'options' in data
@@ -694,7 +694,9 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
             pass
         return
 
-    expires_at = datetime.datetime.now(WIB) + datetime.timedelta(seconds=timeout)
+    minutes = timeout // 60
+    seconds = timeout % 60
+    time_display = f"{minutes:02d}:{seconds:02d}"
 
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(_safe_label(opt, idx), callback_data=f"trivans_{idx}")]
@@ -707,7 +709,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
     msg_text = (
         f"{title}\n\n"
         f"❓ {escape_html(data['question'])}\n\n"
-        f"⏱️ <b>Time Remaining:</b> <code>{timeout}s</code>\n"
+        f"⏱️ <b>Time Remaining:</b> <code>{time_display}</code>\n"
         f"✅ Correct so far: 0/3\n"
         f"{footer}"
         f"🔒 <i>Answers lock instantly. No second chances!</i>"
@@ -719,19 +721,28 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         logger.error(f"Failed to send trivia message: {e}")
         return
 
-    async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-        # Using EXTRACT(EPOCH) directly in PostgreSQL ensures 100% accurate time delta tracking
-        await conn.execute(
-            "INSERT INTO active_trivia "
-            "(chat_id, message_id, question, options, correct_index, explanation, "
-            "is_super, expires_at, timeout_secs) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + ($8 || ' seconds')::interval, $8)",
-            chat_id, sent.message_id,
-            data['question'], json.dumps(data['options']),
-            data['correct_index'], data['explanation'],
-            is_super_round, timeout
-        )
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+            # Guaranteed precision timezone-free tracking using Postgres backend time
+            await conn.execute(
+                "INSERT INTO active_trivia "
+                "(chat_id, message_id, question, options, correct_index, explanation, "
+                "is_super, timeout_secs, expires_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + interval '1 second' * $8)",
+                chat_id, sent.message_id,
+                data['question'], json.dumps(data['options']),
+                data['correct_index'], data['explanation'],
+                is_super_round, timeout
+            )
+    except Exception as e:
+        logger.error(f"Trivia Database Insert Failed! {e}")
+        try:
+            await bot.delete_message(chat_id, sent.message_id)
+            await bot.send_message(chat_id, "⚠️ Database error when starting trivia. Please try again.")
+        except:
+            pass
+        return
 
 
 # ─────────────────────────────────────────
@@ -815,7 +826,7 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
 
     for r in rooms:
         try:
-            exp_epoch = float(r['exp_epoch'])
+            exp_epoch = float(r['exp_epoch']) if r['exp_epoch'] else 0.0
             rem = int(exp_epoch - float(db_now_epoch))
 
             if rem <= 0:
@@ -860,8 +871,10 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
                 if "Message is not modified" in err:
                     pass
                 elif "Message to edit not found" in err:
-                    async with pool.acquire() as conn:
-                        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", r['chat_id'])
+                    # Do not delete DB record automatically here. 
+                    # Admin or user may have deleted the group message, 
+                    # but we let the DB expire naturally or be removed manually.
+                    pass
                 else:
                     logger.warning(f"Sweeper edit error (chat {r['chat_id']}): {e}")
             except Exception as e:
@@ -980,6 +993,10 @@ async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     if not await is_bot_admin(update.effective_user.username, pool):
         return await context.bot.send_message(chat_id, "❌ Admins only.")
+        
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+        
     await context.bot.send_message(chat_id, "🧠 Deploying trivia…")
     await deploy_trivia(context.bot, chat_id, False, pool)
 
@@ -990,6 +1007,10 @@ async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     chat_id = update.effective_chat.id
     if not await is_bot_admin(update.effective_user.username, pool):
         return await context.bot.send_message(chat_id, "❌ Admins only.")
+        
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+        
     await context.bot.send_message(chat_id, "🚨 Deploying super trivia…")
     await deploy_trivia(context.bot, chat_id, True, pool)
 
