@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 ABOUT_TEXT = """🚀 **Meet Nukhba Manager: Your Ultimate AI Workspace Companion**
 
-Welcome to [RW] Nukhba Manager—a premium, all-in-one enterprise Telegram assistant designed to supercharge team productivity, elevate workplace culture, and inject a little fun into the daily grind.
+Welcome to [RAWWY] Nukhba Manager—a premium, all-in-one enterprise Telegram assistant designed to supercharge team productivity, elevate workplace culture, and inject a little fun into the daily grind.
 
 Powered by Google's Gemini 2.5 AI, Nukhba isn't just a chatbot; it's a dedicated digital team manager that organizes your workflow, tracks engagement, and keeps everyone connected.
 
