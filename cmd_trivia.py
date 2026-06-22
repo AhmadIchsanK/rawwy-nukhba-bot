@@ -664,7 +664,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
         f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
-        f"NO code blocks. Just the JSON: "
+        f"NO code blocks, NO backticks. Just the JSON: "
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
@@ -677,11 +677,9 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         )
         raw = resp.text.strip()
         
-        # Bypass markdown parsers by using `{3}` regex instead of typing three backticks
-        match = re.search(r"`{3}(?:json)?\s*(.*?)\s*`{3}", raw, re.DOTALL)
-        if match:
-            raw = match.group(1)
-            
+        # Bypass markdown parsers securely without any literal triple backticks
+        raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'\s*`{3}$', '', raw)
         data = json.loads(raw.strip())
 
         assert 'question' in data and 'options' in data
@@ -723,15 +721,16 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
 
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+        # Using EXTRACT(EPOCH) directly in PostgreSQL ensures 100% accurate time delta tracking
         await conn.execute(
             "INSERT INTO active_trivia "
             "(chat_id, message_id, question, options, correct_index, explanation, "
             "is_super, expires_at, timeout_secs) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, NOW() + ($8 || ' seconds')::interval, $8)",
             chat_id, sent.message_id,
             data['question'], json.dumps(data['options']),
             data['correct_index'], data['explanation'],
-            is_super_round, expires_at, timeout
+            is_super_round, timeout
         )
 
 
@@ -806,18 +805,18 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     if not pool:
         return
-    now = datetime.datetime.now(WIB)
 
     async with pool.acquire() as conn:
-        rooms = await conn.fetch("SELECT * FROM active_trivia")
+        db_now_epoch = await conn.fetchval("SELECT EXTRACT(EPOCH FROM NOW())")
+        rooms = await conn.fetch("SELECT *, EXTRACT(EPOCH FROM expires_at) as exp_epoch FROM active_trivia")
+
+    if not db_now_epoch:
+        return
 
     for r in rooms:
         try:
-            expires_at = r['expires_at']
-            if expires_at.tzinfo is None:
-                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
-            expires = expires_at.astimezone(WIB)
-            rem     = int((expires - now).total_seconds())
+            exp_epoch = float(r['exp_epoch'])
+            rem = int(exp_epoch - float(db_now_epoch))
 
             if rem <= 0:
                 await close_trivia_round(context.bot, r['chat_id'], "⏱️ Time Limit Reached", pool)
