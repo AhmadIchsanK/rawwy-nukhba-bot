@@ -27,9 +27,9 @@ THEME_MAP = {
 LABELS = ['A', 'B', 'C', 'D', 'E', 'F']
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # DATABASE SETUP
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def ensure_trivia_database(pool):
     async with pool.acquire() as conn:
@@ -84,9 +84,9 @@ async def ensure_trivia_database(pool):
             )
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # TRIVIA CONFIG — /triviaconfig
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def trivia_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -201,9 +201,9 @@ async def _tcfg_refresh_from_input(update, context, d):
         logger.warning(f"tcfg input refresh error: {e}")
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # MASTER CALLBACK ROUTER
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q    = update.callback_query
@@ -521,9 +521,9 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # TEXT INPUT HANDLER (called from main.py global_text_router)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
@@ -579,6 +579,11 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
                 await update.message.delete()
             except Exception:
                 pass
+            # FIXED: Send confirmation before refreshing
+            await update.message.reply_text(
+                f"✅ Target chat set to: `{chat_id_str}`",
+                parse_mode="Markdown"
+            )
             await _tcfg_refresh_from_input(update, context, d)
         else:
             await update.message.reply_text(
@@ -657,9 +662,9 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
     return False
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # TRIVIA DEPLOYMENT
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 def _safe_label(text, idx):
     prefix  = f"{LABELS[idx]}. "
@@ -730,12 +735,11 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
 
     title  = "🚨 <b>WEEKLY SUPER TRIVIA</b> 🚨" if is_super_round else "🧠 <b>DAILY TRIVIA</b> 🧠"
     footer = "⚡ <i>Super Trivia: −5 KP for wrong answers!</i>\n" if is_super_round else ""
-    bar    = "▓" * 10
-
+    
     msg_text = (
         f"{title}\n\n"
         f"❓ {escape_html(data['question'])}\n\n"
-        f"⏱️ <b>Time Remaining:</b> <code>{timeout}s</code> [{bar}]\n"
+        f"⏱️ <b>Time Remaining:</b> <code>{timeout}s</code>\n"
         f"✅ Correct so far: 0/3\n"
         f"{footer}"
         f"🔒 <i>Answers lock instantly. No second chances!</i>"
@@ -761,9 +765,9 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         )
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # TRIVIA CLOSE / END ROUND
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def close_trivia_round(bot, chat_id: int, reason: str, pool):
     """End a trivia round, post results and full explanation."""
@@ -825,15 +829,15 @@ async def close_trivia_round(bot, chat_id: int, reason: str, pool):
             pass
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # CRON: COUNTDOWN SWEEPER (every 3 seconds)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
     """
     Runs every 3 seconds.
     - Closes expired rounds.
-    - Updates the live countdown timer on active rounds.
+    - Updates the live countdown timer on active rounds (simple MM:SS format).
     """
     pool = context.bot_data.get('db_pool')
     if not pool:
@@ -855,11 +859,10 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
         winners        = json.loads(r['winners'])
         is_super_round = r['is_super']
 
-        # BUG FIX: use stored timeout_secs for accurate bar calculation
-        # instead of re-deriving it from timestamps (which drifted each tick)
-        total_secs = r.get('timeout_secs') or 60
-        filled     = max(0, min(10, round((rem / total_secs) * 10)))
-        timer_bar  = "▓" * filled + "░" * (10 - filled)
+        # Format countdown as MM:SS
+        minutes = rem // 60
+        seconds = rem % 60
+        time_display = f"{minutes:02d}:{seconds:02d}"
 
         title  = "🚨 <b>WEEKLY SUPER TRIVIA</b> 🚨" if is_super_round else "🧠 <b>DAILY TRIVIA</b> 🧠"
         footer = "⚡ <i>Super Trivia: −5 KP for wrong answers!</i>\n" if is_super_round else ""
@@ -872,7 +875,7 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
         updated_text = (
             f"{title}\n\n"
             f"❓ {escape_html(r['question'])}\n\n"
-            f"⏱️ <b>Time Remaining:</b> <code>{rem}s</code> [{timer_bar}]\n"
+            f"⏱️ <b>Time Remaining:</b> <code>{time_display}</code>\n"
             f"✅ Correct so far: {len(winners)}/3\n"
             f"{footer}"
             f"🔒 <i>Answers lock instantly. No second chances!</i>"
@@ -899,9 +902,9 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"Sweeper unexpected error: {e}")
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # CRON: DAILY TRIVIA SCHEDULER (every 60 seconds)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
@@ -951,9 +954,9 @@ async def trivia_cron_job(context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # CRON: MONTHLY KP RESET & LEADERBOARD
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
@@ -998,15 +1001,16 @@ async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Monthly trivia reset announcement failed: {e}")
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # ADMIN COMMANDS
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def force_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return await update.message.reply_text("❌ Admins only.")
+    await update.message.reply_text("🧠 Deploying trivia…")
     await deploy_trivia(context.bot, update.effective_chat.id, False, pool)
 
 
@@ -1015,6 +1019,7 @@ async def force_super_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return await update.message.reply_text("❌ Admins only.")
+    await update.message.reply_text("🚨 Deploying super trivia…")
     await deploy_trivia(context.bot, update.effective_chat.id, True, pool)
 
 
@@ -1056,7 +1061,41 @@ async def end_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not room:
         return await update.message.reply_text("ℹ️ No active trivia round in this chat.")
 
+    # FIXED: Send confirmation message
+    await update.message.reply_text("🛑 Ending trivia round and showing results…")
     await close_trivia_round(context.bot, chat_id, "🛑 Ended by Admin", pool)
+
+
+async def pause_daily_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pause daily auto trivia without pausing the entire bot."""
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return await update.message.reply_text("❌ Admins only.")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO config (key, value) VALUES ('trivia_auto_paused', '1') "
+            "ON CONFLICT (key) DO UPDATE SET value='1'"
+        )
+
+    await update.message.reply_text("⏸️ Daily auto trivia paused. Use `/resume_trivia` to resume.")
+
+
+async def resume_daily_trivia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Resume daily auto trivia."""
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return await update.message.reply_text("❌ Admins only.")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO config (key, value) VALUES ('trivia_auto_paused', '0') "
+            "ON CONFLICT (key) DO UPDATE SET value='0'"
+        )
+
+    await update.message.reply_text("▶️ Daily auto trivia resumed.")
 
 
 async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1109,9 +1148,9 @@ async def admin_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # USER COMMANDS
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1144,9 +1183,9 @@ async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 # LEGACY FALLBACKS
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────
 
 async def _legacy_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("ℹ️ Please use the unified `/triviaconfig` panel instead.")
