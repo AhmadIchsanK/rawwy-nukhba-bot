@@ -79,6 +79,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         now = datetime.datetime.now(datetime.timezone.utc)
         
         if last_about:
+            # Fix naive timestamps coming from Postgres
             if last_about.tzinfo is None:
                 last_about = last_about.replace(tzinfo=datetime.timezone.utc)
             time_diff = now - last_about
@@ -138,9 +139,11 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     text = update.message.text
     
+    # ⚠️ High-Performance Database Caching & Batching System
     try:
         bot_data = context.bot_data
         
+        # Initialize Memory Buffers
         bot_data.setdefault('chat_buffer', [])
         bot_data.setdefault('seen_users', set())
         bot_data.setdefault('seen_groups', set())
@@ -149,9 +152,11 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         bot_data['stats_uses'] += 1
 
+        # Evaluate if DB insert is necessary
         needs_user_update = username not in bot_data['seen_users']
         needs_group_update = chat.type in ['group', 'supergroup'] and chat.id not in bot_data['seen_groups']
 
+        # Away Status TTL Cache (Fetches once every 60 seconds instead of every message)
         now_ts = now.timestamp()
         if now_ts - bot_data['away_cache']['time'] > 60:
             async with pool.acquire() as conn:
@@ -168,9 +173,11 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if f"@{a['username']}" in text:
                 mentions_to_log.append(a)
 
+        # Buffer the text to memory first
         if chat.type in ['group', 'supergroup']:
             bot_data['chat_buffer'].append((chat.id, username, text))
 
+        # Check if flush threshold is met (15 messages)
         buffer_ready = len(bot_data['chat_buffer']) >= 15
         
         if needs_user_update or needs_group_update or is_returning or mentions_to_log or buffer_ready:
@@ -184,11 +191,13 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
                     bot_data['seen_groups'].add(chat.id)
 
+                # Batch write 15 messages simultaneously
                 if bot_data['chat_buffer']:
                     buffer_copy = bot_data['chat_buffer'][:]
                     bot_data['chat_buffer'].clear()
                     await conn.executemany('INSERT INTO chat_history (chat_id, username, message) VALUES ($1, $2, $3)', buffer_copy)
 
+                # Batch write bot interactions
                 if bot_data['stats_uses'] > 0:
                     uses_to_log = bot_data['stats_uses']
                     bot_data['stats_uses'] = 0
@@ -203,7 +212,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await context.bot.send_message(update.effective_user.id, f"✅ {recap_msg}", parse_mode="Markdown")
                     except Exception:
                         pass
-                    bot_data['away_cache']['time'] = 0
+                    bot_data['away_cache']['time'] = 0 # Invalidate cache to force refresh
 
                 if mentions_to_log:
                     for a in mentions_to_log:
@@ -213,7 +222,7 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if not last_notified or (now - last_notified.astimezone(WIB)).total_seconds() > 3600:
                             await update.message.reply_text(f"Just a heads up, @{a['username']} is away.\n(Reason: {a['reason']})")
                             await conn.execute('UPDATE away_status SET last_notified=$1 WHERE username=$2', now, a['username'])
-                            bot_data['away_cache']['time'] = 0
+                            bot_data['away_cache']['time'] = 0 # Invalidate cache to force refresh
 
     except Exception as e:
         logger.error(f"Global tracker error: {e}")
@@ -340,7 +349,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
     temp = await update.message.reply_text("⏳ Thinking...")
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        bt = chr(96) * 3
+        
+        # We use bt to bypass Markdown parsers when rendering literal JSON instructions
+        bt = "`" * 3
         
         if is_bot_query:
             from commands_manifest import COMMANDS
@@ -368,6 +379,19 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                     '[{"key": "dm_length", "value": "1000"}, {"key": "star_quota", "value": "5"}]\n'
                     f"{bt}\n"
                 )
+                
+            if is_sup:
+                system_prompt += (
+                    "⚠️ ROOT PRIVILEGES: To modify python code, output a hotpatch:\n"
+                    f"{bt}json\n"
+                    "[\n"
+                    "  {\n"
+                    '    "action": "hotpatch",\n'
+                    '    "code": "print(\'hi\')"\n'
+                    "  }\n"
+                    "]\n"
+                    f"{bt}\n"
+                )
             
             system_prompt += "\nUser Question: " + prompt
         else:
@@ -380,25 +404,27 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         
         reply = response.text
         
+        # Hard truncate response to guarantee it never exceeds 3000 chars
         if len(reply) > 3000:
             reply = reply[:2997] + "..."
             
         config_msg = ""
         if is_bot_query and is_adm:
-            match = re.search(f"{bt}json\s*\n(.*?)\n\s*{bt}", reply, re.DOTALL)
+            match = re.search(r"`{3}json\s*\n(.*?)\n\s*`{3}", reply, re.DOTALL)
             if match:
                 try:
                     configs = json.loads(match.group(1))
                     async with pool.acquire() as conn:
                         for c in configs:
                             await conn.execute("INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", c['key'], str(c['value']))
-                    reply = re.sub(f"{bt}json\s*\n(.*?)\n\s*{bt}", "", reply, flags=re.DOTALL).strip()
+                    reply = re.sub(r"`{3}json\s*\n(.*?)\n\s*`{3}", "", reply, flags=re.DOTALL).strip()
                     config_msg = "\n\n⚙️ *Dynamic configurations successfully applied to the database!*"
                 except Exception as e:
                     logger.error(f"Config parse error: {e}")
         
         async with pool.acquire() as conn:
             dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
+            # Set default DM threshold to 1000
             dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 1000
 
         prefix = "🤖 **About Me:**\n\n" if is_bot_query else "🤖 **Gemini AI Response:**\n\n"
@@ -506,7 +532,11 @@ async def ask_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_gemini_request(update, context, " ".join(context.args), True)
 
 
+# ─────────────────────────────────────────────
+# BACKGROUND BUFFER FLUSHER
+# ─────────────────────────────────────────────
 async def flush_chat_buffer(context: ContextTypes.DEFAULT_TYPE):
+    """Runs every 30 seconds to ensure slow chats are saved to the database."""
     pool = context.bot_data.get('db_pool')
     if not pool:
         return
@@ -515,10 +545,11 @@ async def flush_chat_buffer(context: ContextTypes.DEFAULT_TYPE):
     stats_uses = context.bot_data.get('stats_uses', 0)
     
     if not buffer and stats_uses == 0:
-        return 
+        return # Nothing to save
 
     try:
         async with pool.acquire() as conn:
+            # Flush Chat History
             if buffer:
                 buffer_copy = buffer[:]
                 context.bot_data['chat_buffer'].clear()
@@ -527,6 +558,7 @@ async def flush_chat_buffer(context: ContextTypes.DEFAULT_TYPE):
                     buffer_copy
                 )
                 
+            # Flush Bot Stats
             if stats_uses > 0:
                 context.bot_data['stats_uses'] = 0
                 await conn.execute(
