@@ -25,7 +25,8 @@ THEME_MAP = {
 }
 
 # Gemini model — fallback chain prioritizing the most stable free models
-GEMINI_MODELS = ["gemini-1.5-flash-8b", "gemini-2.0-flash", "gemini-2.0-flash-lite"]
+# Updated 2026-06: 1.5/2.0 models are fully shut down; use 2.5 generation
+GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 
 LABELS = ['A', 'B', 'C', 'D', 'E', 'F']
 

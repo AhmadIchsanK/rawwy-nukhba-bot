@@ -223,8 +223,8 @@ async def _generate_content_with_retry(client, contents, max_retries=3, base_del
     Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
     Survives rate limits and guarantees the primary error is reported.
     """
-    # Put 1.5-flash-8b first as it is the most stable free-tier model available
-    models_to_try = ['gemini-1.5-flash-8b', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']
+    # Updated 2026-06: 1.5/2.0 models are fully shut down; use 2.5 generation
+    models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash']
     primary_err = None
     
     for model_name in models_to_try:
