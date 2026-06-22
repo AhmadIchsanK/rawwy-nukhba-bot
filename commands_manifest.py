@@ -111,5 +111,5 @@ COMMANDS = [
     {"name": "graveyard", "desc": "View offboarded members", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🪦"},
     {"name": "pause", "desc": "Pause the bot", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⏸️"},
     {"name": "restart", "desc": "Restart the bot", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "▶️"},
-    {"name": "super_reset", "desc": "Factory wipe specific data", "format": "`/super_reset <all|stars|events|library...>`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "☢️"}
+    {"name": "super_reset", "desc": "Factory wipe sections", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "☢️"}
 ]
