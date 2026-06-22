@@ -584,7 +584,6 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
         return True
 
     if context.user_data.get('awaiting_tcfg_time'):
-        import re
         if re.match(r'^\d{1,2}:\d{2}$', text):
             h, m = map(int, text.split(":"))
             if 0 <= h <= 23 and 0 <= m <= 59:
@@ -667,9 +666,8 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
     prompt = (
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
-        f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
-        f"NO code blocks. Just the JSON: "
-        f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
+        f"IMPORTANT: Return ONLY a raw JSON object. NO code blocks. NO markdown."
+        f'{"{"}"question":"...","options":["..."],"correct_index":0,"explanation":"..."{"}"}'
     )
 
     try:
@@ -677,17 +675,10 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
             client.models.generate_content,
             model='gemini-2.5-flash',
             contents=prompt,
-            config={'response_mime_type': 'application/json'}
+            config={'response_mime_type': 'application/json'} # FORCES backend to return pure JSON
         )
-        raw = resp.text.strip()
         
-        # 100% immune to markdown UI parser cutting by finding exact boundary indices.
-        start_idx = raw.find('{')
-        end_idx = raw.rfind('}')
-        if start_idx != -1 and end_idx != -1:
-            raw = raw[start_idx:end_idx+1]
-            
-        data = json.loads(raw)
+        data = json.loads(resp.text.strip())
 
         assert 'question' in data and 'options' in data
         assert 'correct_index' in data and 'explanation' in data
@@ -729,7 +720,6 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         return
 
     try:
-        # Calculate exactly in Python UTC to avoid database timezone mismatch entirely
         expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timeout)
         
         async with pool.acquire() as conn:
@@ -1195,6 +1185,29 @@ async def my_point(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Couldn't DM you. Please start a chat with me first, then try again."
         )
 
+
+async def leaderboard_kp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    async with pool.acquire() as conn:
+        monthly = await conn.fetch("SELECT username, monthly_kp FROM trivia_scores WHERE monthly_kp > 0 ORDER BY monthly_kp DESC LIMIT 5")
+        all_time = await conn.fetch("SELECT username, all_time_kp FROM trivia_scores WHERE all_time_kp > 0 ORDER BY all_time_kp DESC LIMIT 5")
+    
+    msg = "🏆 **Knowledge Points Leaderboard** 🏆\n\n📅 **This Month's Top Minds:**\n"
+    if monthly:
+        for i, r in enumerate(monthly):
+            msg += f"{i+1}. @{r['username']} - {r['monthly_kp']}\n"
+    else:
+        msg += "None.\n"
+        
+    msg += "\n🧠 **All-Time Top Minds:**\n"
+    if all_time:
+        for i, r in enumerate(all_time):
+            msg += f"{i+1}. @{r['username']} - {r['all_time_kp']}\n"
+    else:
+        msg += "None.\n"
+        
+    await context.bot.send_message(update.effective_chat.id, msg, parse_mode="Markdown")
 
 # ─────────────────────────────────────────
 # LEGACY FALLBACKS
