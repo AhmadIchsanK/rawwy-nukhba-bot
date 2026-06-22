@@ -6,6 +6,7 @@ import asyncio
 import sys
 import importlib
 from google import genai
+from google.genai.errors import APIError
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
 from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
@@ -216,6 +217,35 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Global tracker error: {e}")
 
+
+async def _generate_content_with_retry(client, model_name, contents, max_retries=3, base_delay=5):
+    """
+    Wraps the Gemini API call in an exponential backoff loop. 
+    Crucial for surviving 429 RESOURCE_EXHAUSTED errors on free tiers.
+    """
+    delay = base_delay
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=contents
+            )
+        except Exception as e:
+            last_err = e
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                if attempt < max_retries:
+                    logger.warning(f"Gemini API Rate Limit hit (Attempt {attempt}/{max_retries}). Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+            # If it's a 400 error or we exhausted retries, break loop and raise
+            break
+    raise last_err
+
+
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     if update.effective_chat.type == "private":
@@ -245,11 +275,15 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        resp = await asyncio.to_thread(client.models.generate_content, model='gemini-2.0-flash', contents=prompt)
+        resp = await _generate_content_with_retry(client, 'gemini-2.0-flash', prompt)
         await context.bot.send_message(update.effective_user.id, f"📝 **What You Missed in {update.effective_chat.title}:**\n\n{resp.text}", parse_mode="Markdown")
         await temp.delete()
-    except Exception:
-        await temp.edit_text(f"❌ Failed to generate recap. Please DM me first.")
+    except Exception as e:
+        err_str = str(e)
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            await temp.edit_text("⏳ **Gemini Rate Limited.** The AI is currently busy handling too many requests. Please try your recap again in a few minutes.")
+        else:
+            await temp.edit_text(f"❌ Failed to generate recap. Error: {err_str[:100]}")
 
 async def submit_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -385,8 +419,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         else:
             system_prompt = "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters. Be concise.\n\nUser Prompt: " + prompt
             
+        # Call AI with robust async retry handler
         response = await asyncio.wait_for(
-            asyncio.to_thread(client.models.generate_content, model='gemini-2.0-flash', contents=system_prompt),
+            _generate_content_with_retry(client, 'gemini-2.0-flash', system_prompt),
             timeout=120.0
         )
         
@@ -471,7 +506,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
                     pass
         elif is_resource_exhausted:
             try:
-                await temp.edit_text("⏳ **Gemini Rate Limited.** Free-tier request quota exceeded for this minute. Please try again in 60 seconds.")
+                await temp.edit_text("⏳ **Gemini Rate Limited.** Free-tier request quota exceeded. The AI is overloaded right now. Please wait a minute and try again.")
             except Exception:
                 pass
             logger.warning(f"Gemini rate limit hit: {err_str[:200]}")
