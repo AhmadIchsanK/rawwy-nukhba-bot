@@ -1127,7 +1127,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checks = [
         ("start",           cmd_system,      "start"),
         ("help",            cmd_system_help, "help_command"),
-        ("about",           cmd_system,      "about_command"),
         ("wdim",            cmd_system,      "what_did_i_miss"),
         ("feedback",        cmd_system,      "submit_feedback"),
         ("ask",             cmd_system,      "ask_bot"),
@@ -1143,7 +1142,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("myquota",         cmd_user,        "my_quota"),
         ("mystar",          cmd_user,        "my_star"),
         ("totalstar",       cmd_user,        "total_star"),
-        ("leaderboard",     cmd_user,        "leaderboard"),
+        ("leaderboard_star",cmd_user,        "leaderboard_star"),
         ("addlib",          cmd_user,        "add_lib"),
         ("editlib",         cmd_user,        "edit_lib"),
         ("dellib",          cmd_user,        "del_lib"),
@@ -1157,6 +1156,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("cheerme",         cmd_cheer,       "cheer_me"),
         ("setcheer",        cmd_cheer,       "set_cheer"),
         ("mypoint",         cmd_trivia,      "my_point"),
+        ("leaderboard_kp",  cmd_trivia,      "leaderboard_kp"),
         ("triviaconfig",    cmd_trivia,      "trivia_config"),
         ("forcetrivia",     cmd_trivia,      "force_trivia"),
         ("forcesupertrivia",cmd_trivia,      "force_super_trivia"),
@@ -1876,7 +1876,15 @@ async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     if not await is_super(update.effective_user.username):
         return
-    target = context.args[0].lower() if context.args else 'all'
+        
+    valid_targets = ['all', 'stars', 'birthdays', 'events', 'polls', 'library', 'tasks', 'away', 'channels', 'schedules', 'feedback', 'stats', 'trivia']
+    target = context.args[0].lower() if context.args else ''
+    
+    if target not in valid_targets:
+        msg = "⚠️ **Factory Wipe Configuration**\n\nPlease specify a target to reset:\n`/super_reset [target]`\n\n**Valid targets:**\n"
+        msg += ", ".join([f"`{t}`" for t in valid_targets])
+        return await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+
     await context.bot.send_message(
         update.effective_user.id,
         f"⚠️ **Factory Wipe Confirmation**\n\nAre you sure you want to wipe `{target}`?\n\n**This cannot be undone.**",
@@ -1926,9 +1934,11 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sup_cancel":
         await q.answer("Cancelled.")
         return await q.edit_message_text("❌ Action cancelled.")
+        
     parts = q.data.split("_")
     act   = parts[1]
     t     = parts[2]
+    
     async with pool.acquire() as conn:
         if act == "addadmin":
             await conn.execute('INSERT INTO bot_admins (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
@@ -1942,11 +1952,36 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await conn.execute('INSERT INTO graveyard (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
             await q.edit_message_text(f"✅ @{t} offboarded and moved to Graveyard.")
         elif act == "reset":
-            if t in ["stars", "all"]:
-                await conn.execute("TRUNCATE kudos CASCADE")
-            if t in ["birthdays", "all"]:
-                await conn.execute("TRUNCATE birthdays CASCADE")
-            await q.edit_message_text(f"✅ Wiped `{t}` database.")
+            try:
+                if t in ["stars", "all"]:
+                    await conn.execute("TRUNCATE kudos CASCADE")
+                if t in ["birthdays", "all"]:
+                    await conn.execute("TRUNCATE birthdays CASCADE")
+                if t in ["events", "all"]:
+                    await conn.execute("TRUNCATE events, rsvps CASCADE")
+                if t in ["polls", "all"]:
+                    await conn.execute("TRUNCATE poll_drafts, active_polls CASCADE")
+                if t in ["library", "all"]:
+                    await conn.execute("TRUNCATE library CASCADE")
+                if t in ["tasks", "all"]:
+                    await conn.execute("TRUNCATE tasks CASCADE")
+                if t in ["away", "all"]:
+                    await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
+                if t in ["channels", "all"]:
+                    await conn.execute("DELETE FROM config WHERE key IN ('bday_channel', 'stars_channel', 'feedback_channel')")
+                    await conn.execute("DELETE FROM trivia_config WHERE key='target_chat_id'")
+                if t in ["schedules", "all"]:
+                    await conn.execute("TRUNCATE scheduled_announcements CASCADE")
+                if t in ["feedback", "all"]:
+                    await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
+                if t in ["stats", "all"]:
+                    await conn.execute("TRUNCATE bot_stats, chat_history, active_groups CASCADE")
+                if t in ["trivia", "all"]:
+                    await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
+                    
+                await q.edit_message_text(f"✅ Wiped `{t}` database.")
+            except Exception as e:
+                await q.edit_message_text(f"❌ Error wiping `{t}`: {e}")
 
 
 async def list_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
