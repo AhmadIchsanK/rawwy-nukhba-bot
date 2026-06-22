@@ -2409,7 +2409,26 @@ if t in ["stats", "all"]:
                     await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
                     import cmd_trivia
                     await cmd_trivia.restore_trivia_config_defaults(pool)
-                await q.edit_message_text(f"✅ Wiped `{t}` database.")
+               # self-heal important config rows
+
+await conn.execute("""
+INSERT INTO config(key,value)
+VALUES
+('bday_channel',''),
+('stars_channel',''),
+('feedback_channel','')
+ON CONFLICT (key) DO NOTHING
+""")
+
+await conn.execute("""
+CREATE TABLE IF NOT EXISTS active_groups (
+    chat_id BIGINT PRIMARY KEY,
+    title TEXT,
+    registered_at TIMESTAMP DEFAULT NOW()
+)
+""")
+
+await q.edit_message_text(f"✅ Wiped `{t}` database.")
             except Exception as e:
                 await q.edit_message_text(f"❌ Error wiping `{t}`: {e}")
 
