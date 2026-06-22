@@ -38,7 +38,7 @@ async def cheer_me(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
         prompt = f"Write a highly personal, hyper-energetic motivational cheer or pep-talk for @{username} based on their profile: {profile}."
-        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
         await update.message.reply_text(response.text)
     except Exception as e:
         await update.message.reply_text(f"❌ Could not generate motivation right now: {e}")

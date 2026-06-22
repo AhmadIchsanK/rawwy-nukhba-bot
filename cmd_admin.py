@@ -1322,7 +1322,7 @@ async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         client   = genai.Client(api_key=GEMINI_API_KEY)
         response = await asyncio.to_thread(
-            client.models.generate_content, model='gemini-2.5-flash', contents=ai_prompt
+            client.models.generate_content, model='gemini-2.0-flash', contents=ai_prompt
         )
         await temp.delete()
         await send_md(
@@ -1922,19 +1922,13 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if t in ["library", "all"]: await conn.execute("TRUNCATE library CASCADE")
                 if t in ["tasks", "all"]: await conn.execute("TRUNCATE tasks CASCADE")
                 if t in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
-                if t in ["channels", "all"]:
-                    # Only wipe channel notification bindings — trivia target/config is NEVER wiped here
+                if t in ["channels", "all"]: 
                     await conn.execute("DELETE FROM config WHERE key IN ('bday_channel', 'stars_channel', 'feedback_channel')")
+                    await conn.execute("DELETE FROM trivia_config WHERE key='target_chat_id'")
                 if t in ["schedules", "all"]: await conn.execute("TRUNCATE scheduled_announcements CASCADE")
                 if t in ["feedback", "all"]: await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
                 if t in ["stats", "all"]: await conn.execute("TRUNCATE bot_stats, chat_history, active_groups CASCADE")
-                if t in ["trivia", "all"]:
-                    # Only wipe scores and active rounds — NEVER wipe config keys (theme, time, opts, timeouts)
-                    await conn.execute("TRUNCATE active_trivia CASCADE")
-                    await conn.execute("TRUNCATE trivia_scores CASCADE")
-                    # Restore trivia config defaults in case config row was lost
-                    import cmd_trivia
-                    await cmd_trivia.restore_trivia_config_defaults(conn)
+                if t in ["trivia", "all"]: await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
                 await q.edit_message_text(f"✅ Wiped `{t}` database.")
             except Exception as e:
                 await q.edit_message_text(f"❌ Error wiping `{t}`: {e}")

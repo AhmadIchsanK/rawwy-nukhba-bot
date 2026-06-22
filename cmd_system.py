@@ -245,7 +245,7 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        resp = await asyncio.to_thread(client.models.generate_content, model='gemini-2.5-flash', contents=prompt)
+        resp = await asyncio.to_thread(client.models.generate_content, model='gemini-2.0-flash', contents=prompt)
         await context.bot.send_message(update.effective_user.id, f"📝 **What You Missed in {update.effective_chat.title}:**\n\n{resp.text}", parse_mode="Markdown")
         await temp.delete()
     except Exception:
@@ -386,7 +386,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             system_prompt = "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters. Be concise.\n\nUser Prompt: " + prompt
             
         response = await asyncio.wait_for(
-            asyncio.to_thread(client.models.generate_content, model='gemini-2.5-flash', contents=system_prompt),
+            asyncio.to_thread(client.models.generate_content, model='gemini-2.0-flash', contents=system_prompt),
             timeout=120.0
         )
         
