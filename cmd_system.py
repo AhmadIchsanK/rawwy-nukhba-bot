@@ -221,11 +221,11 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _generate_content_with_retry(client, contents, max_retries=3, base_delay=5):
     """
     Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
-    Survives 429 Rate Limits and 404 Model Not Found errors.
+    Survives rate limits and guarantees the primary error is reported.
     """
-    # Prioritize 2.0-flash (known to work), with safe fallbacks
-    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash']
-    last_err = None
+    # 2.0-flash is primary, 2.0-flash-lite is the high-availability fallback
+    models_to_try = ['gemini-2.0-flash', 'gemini-2.0-flash-lite']
+    primary_err = None
     
     for model_name in models_to_try:
         delay = base_delay
@@ -237,32 +237,28 @@ async def _generate_content_with_retry(client, contents, max_retries=3, base_del
                     contents=contents
                 )
             except Exception as e:
-                last_err = e
+                # Capture the very first error (the true rate limit) so it doesn't get masked
+                if primary_err is None:
+                    primary_err = e 
+                    
                 err_str = str(e)
                 
-                # If model isn't found/supported (404), break to try the next model immediately
+                # If model isn't found/supported (404), stop retrying this model
                 if "404" in err_str or "NOT_FOUND" in err_str:
                     break 
                     
-                # If Rate Limited (429), wait and retry the SAME model
+                # If Rate Limited (429), wait and retry
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     if attempt < max_retries:
                         await asyncio.sleep(delay)
                         delay *= 2
                         continue
                         
-                # Any other fatal error (like Bad API Key) -> break out
+                # Any other fatal error -> break out of this model's retry loop
                 break 
                 
-        # If we exit the inner loop because of a 404 or an exhausted 429, try the next model
-        if last_err:
-            err_str = str(last_err)
-            if "404" in err_str or "NOT_FOUND" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                continue
-            else:
-                break # Fatal error, stop trying models
-                
-    raise last_err
+    # If all models fail, raise the primary 429 error, NOT the fallback 404 error
+    raise primary_err
 
 
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
