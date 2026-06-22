@@ -221,10 +221,10 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _generate_content_with_retry(client, contents, max_retries=3, base_delay=5):
     """
     Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
-    Crucial for surviving 429 RESOURCE_EXHAUSTED errors on free tiers.
+    Survives 429 Rate Limits and 404 Model Not Found errors.
     """
-    # Prioritize 1.5-flash as it has the most generous and stable free tier
-    models_to_try = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b']
+    # Prioritize 2.0-flash (known to work), with safe fallbacks
+    models_to_try = ['gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash']
     last_err = None
     
     for model_name in models_to_try:
@@ -239,17 +239,29 @@ async def _generate_content_with_retry(client, contents, max_retries=3, base_del
             except Exception as e:
                 last_err = e
                 err_str = str(e)
+                
+                # If model isn't found/supported (404), break to try the next model immediately
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    break 
+                    
+                # If Rate Limited (429), wait and retry the SAME model
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     if attempt < max_retries:
                         await asyncio.sleep(delay)
                         delay *= 2
                         continue
-                break # Break out if it's a hard error or we exhausted retries for this model
-        
-        # If the error was NOT a rate limit, don't bother trying other models
-        if last_err and not ("429" in str(last_err) or "RESOURCE_EXHAUSTED" in str(last_err)):
-            break
-            
+                        
+                # Any other fatal error (like Bad API Key) -> break out
+                break 
+                
+        # If we exit the inner loop because of a 404 or an exhausted 429, try the next model
+        if last_err:
+            err_str = str(last_err)
+            if "404" in err_str or "NOT_FOUND" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                continue
+            else:
+                break # Fatal error, stop trying models
+                
     raise last_err
 
 
