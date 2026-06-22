@@ -668,9 +668,9 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
 
 async def _generate_trivia_question(theme: str, num_options: int) -> dict:
     """
-    Tries GEMINI_MODELS in order until one succeeds.
-    Returns parsed dict with question/options/correct_index/explanation.
-    Raises Exception if all models fail.
+    Tries GEMINI_MODELS in order. For 429 quota errors, retries up to
+    MAX_RETRIES times with exponential backoff before moving to the next model.
+    Raises Exception only if every model exhausts all retries.
     """
     if not GEMINI_API_KEY:
         raise Exception("GEMINI_API_KEY is not set in environment variables.")
@@ -683,42 +683,69 @@ async def _generate_trivia_question(theme: str, num_options: int) -> dict:
         f'Format: {{"question":"...","options":["opt1","opt2",...],"correct_index":0,"explanation":"..."}}'
     )
 
+    # Retry config
+    MAX_RETRIES  = 3          # attempts per model before moving to next
+    BASE_DELAY   = 5          # seconds before first retry
+    BACKOFF_MULT = 2          # multiply delay each retry: 5s, 10s, 20s
+
     last_error = None
+
     for model in GEMINI_MODELS:
-        try:
-            resp = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model,
-                contents=prompt
-            )
-            raw = resp.text.strip()
+        delay = BASE_DELAY
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model,
+                    contents=prompt
+                )
+                raw = resp.text.strip()
 
-            # Extract JSON — find first { and last }
-            start = raw.find('{')
-            end   = raw.rfind('}')
-            if start == -1 or end == -1:
-                raise ValueError(f"No JSON object found in response: {raw[:200]}")
+                # Extract JSON — find first { and last }
+                start = raw.find('{')
+                end   = raw.rfind('}')
+                if start == -1 or end == -1:
+                    raise ValueError(f"No JSON object found in response: {raw[:200]}")
 
-            data = json.loads(raw[start:end + 1])
+                data = json.loads(raw[start:end + 1])
 
-            # Validate structure
-            assert 'question' in data,      "Missing 'question'"
-            assert 'options' in data,       "Missing 'options'"
-            assert 'correct_index' in data, "Missing 'correct_index'"
-            assert 'explanation' in data,   "Missing 'explanation'"
-            assert isinstance(data['options'], list) and len(data['options']) >= 2, "Need at least 2 options"
-            assert 0 <= int(data['correct_index']) < len(data['options']), "correct_index out of range"
+                # Validate required fields
+                assert 'question'      in data, "Missing 'question'"
+                assert 'options'       in data, "Missing 'options'"
+                assert 'correct_index' in data, "Missing 'correct_index'"
+                assert 'explanation'   in data, "Missing 'explanation'"
+                assert isinstance(data['options'], list) and len(data['options']) >= 2, "Need at least 2 options"
+                assert 0 <= int(data['correct_index']) < len(data['options']), "correct_index out of range"
 
-            data['correct_index'] = int(data['correct_index'])
-            logger.info(f"Trivia generated successfully with model: {model}")
-            return data
+                data['correct_index'] = int(data['correct_index'])
+                logger.info(f"Trivia generated OK — model: {model}, attempt: {attempt}")
+                return data
 
-        except Exception as e:
-            last_error = e
-            logger.warning(f"Trivia model {model} failed: {e}")
-            continue
+            except Exception as e:
+                last_error = e
+                err_str    = str(e)
+                is_quota   = "429" in err_str or "RESOURCE_EXHAUSTED" in err_str
+                is_invalid = "404" in err_str or "NOT_FOUND" in err_str
 
-    raise Exception(f"All Gemini models failed. Last error: {last_error}")
+                if is_invalid:
+                    # Model doesn't exist or not accessible — skip immediately, no point retrying
+                    logger.warning(f"Model {model} not available (404) — skipping.")
+                    break
+
+                if is_quota and attempt < MAX_RETRIES:
+                    logger.warning(
+                        f"Model {model} quota hit (attempt {attempt}/{MAX_RETRIES}) — "
+                        f"retrying in {delay}s…"
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= BACKOFF_MULT
+                    continue
+
+                # Any other error or final retry — log and move to next model
+                logger.warning(f"Model {model} failed (attempt {attempt}): {err_str[:120]}")
+                break
+
+    raise Exception(f"All Gemini models failed after retries. Last error: {last_error}")
 
 
 # ─────────────────────────────────────────────
