@@ -55,9 +55,14 @@ async def ensure_trivia_database(pool):
                 timeout_secs INT DEFAULT 60
             )
         ''')
+        # ⚠️ AUTO-HEAL: Forcefully add missing columns if the user's table is corrupted/old
         await conn.execute('''
             ALTER TABLE active_trivia ADD COLUMN IF NOT EXISTS timeout_secs INT DEFAULT 60
         ''')
+        await conn.execute('''
+            ALTER TABLE active_trivia ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE
+        ''')
+        
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS trivia_config (
                 key VARCHAR(100) PRIMARY KEY,
@@ -833,7 +838,12 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
 
     for r in rooms:
         try:
-            expires_at = r['expires_at']
+            expires_at = r.get('expires_at')
+            if not expires_at:
+                # Fallback safeguard if row exists but is orphaned/broken
+                await close_trivia_round(context.bot, r['chat_id'], "⏱️ Time Limit Reached", pool)
+                continue
+
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
             
