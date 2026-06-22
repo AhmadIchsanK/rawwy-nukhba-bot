@@ -53,7 +53,7 @@ Nukhba offers total granular control for management:
 • **Real-Time Audit Logs:** A complete diagnostic tracker. View real-time logs of exactly who did what, or receive an automated daily AI-digested audit report every night.
 • **Super Owner Privileges:** God-mode controls to promote/demote admins, securely offboard leaving members (moving their data to the "Graveyard"), pause the system, or execute factory database wipes.
 
-_[RW] Nukhba Manager isn't just managing the chat—it's managing the success, morale, and efficiency of the entire team. Type /help to dive in!_"""
+_[RAWWY] Nukhba Manager isn't just managing the chat—it's managing the success, morale, and efficiency of the entire team. Type /help to dive in!_"""
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
