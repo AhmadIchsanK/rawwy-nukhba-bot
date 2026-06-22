@@ -33,7 +33,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     admin  = [c for c in COMMANDS if c.get('admin') and not c.get('super')]
     superc = [c for c in COMMANDS if c.get('super')]
 
-    text  = "📖 **[RW] Nukhba Manager Manual**\n\n"
+    text  = "📖 **[RAWWY] Nukhba Manager Manual**\n\n"
     text += "*(If your `/` menu looks outdated, log out of Telegram and back in, or clear the app cache — Telegram caches command lists locally!)*\n\n"
 
     # ── USER COMMANDS ──────────────────────────────────────────────────────
