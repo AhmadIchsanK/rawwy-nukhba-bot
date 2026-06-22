@@ -247,7 +247,7 @@ async def total_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pts = await conn.fetchval('SELECT all_time_points FROM kudos WHERE username=$1', user)
     await update.message.reply_text(f"✅ All-Time Stars: **{pts or 0}**", parse_mode="Markdown")
 
-async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def leaderboard_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from core import delete_cmd
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -363,6 +363,26 @@ async def list_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"• {'🔒' if r['is_private'] else '📂'} `{r['name']}`\n"
             
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def del_lib(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from core import delete_cmd
+    await delete_cmd(update)
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+    try:
+        name = context.args[0].lower().strip()
+    except Exception:
+        return await update.message.reply_text("❌ Format: `/dellib [Name]`", parse_mode="Markdown")
+        
+    async with pool.acquire() as conn:
+        asset = await conn.fetchrow('SELECT added_by FROM library WHERE name=$1', name)
+        if not asset:
+            return await update.message.reply_text("❌ Not found.")
+        if asset['added_by'] != username and not await is_bot_admin(username, pool):
+            return await update.message.reply_text("❌ Unauthorized.")
+        await conn.execute('DELETE FROM library WHERE name=$1', name)
+        
+    await update.message.reply_text(f"✅ Deleted **'{name}'**.", parse_mode="Markdown")
 
 async def assign_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
