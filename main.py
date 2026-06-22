@@ -75,6 +75,11 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if await cmd_admin.handle_admin_text_input(update, context):
             return
 
+    # 3. Schedule config custom input
+    if hasattr(cmd_admin, 'handle_schcfg_text_input'):
+        if await cmd_admin.handle_schcfg_text_input(update, context):
+            return
+
     # 3. System-level text handlers
     if hasattr(cmd_system, 'global_tracker'):
         await cmd_system.global_tracker(update, context)
@@ -87,12 +92,14 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def post_init_wrapper(application: Application):
     await init_db(application)
 
-    # Schedule birthday announcements (self-rescheduling daily job)
+    # Schedule birthday, KP leaderboard, and Stars leaderboard cron jobs
     try:
-        from crons import schedule_bday_job
+        from crons import schedule_bday_job, schedule_kp_job, schedule_star_job
         await schedule_bday_job(application)
+        await schedule_kp_job(application)
+        await schedule_star_job(application)
     except Exception as e:
-        logger.warning(f"Birthday scheduler setup failed: {e}")
+        logger.warning(f"Scheduler setup failed: {e}")
 
     public_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
     try:
@@ -218,6 +225,7 @@ def main():
     # ⚙️ ADMIN SYSTEM CONFIG
     # ─────────────────────────────────────────
     app.add_handler(CommandHandler("botconfig",   safe_cmd(cmd_admin, "bot_config")))
+    app.add_handler(CommandHandler("schedconfig", safe_cmd(cmd_admin, "sched_config")))
     app.add_handler(CommandHandler("setchannel",  safe_cmd(cmd_admin, "set_channel")))
     app.add_handler(CommandHandler("unsetchannel",safe_cmd(cmd_admin, "unset_channel")))
     app.add_handler(CommandHandler("groupid",     safe_cmd(cmd_admin, "check_group_id")))
@@ -288,6 +296,7 @@ def main():
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_user,   "rsvp_callback"),    pattern="^rsvp_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_user,   "poll_callback"),    pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "config_callback"),  pattern="^cfg_"))
+    app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "sched_config_callback"), pattern="^schcfg_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "manage_users_callback"), pattern="^mu_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "newsched_callback"), pattern="^nsched_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_trivia, "trivia_callback"),  pattern="^tcfg_|trivans_|tcancel_"))
@@ -321,11 +330,7 @@ def main():
     if hasattr(cmd_admin, 'process_schedules'):
         app.job_queue.run_repeating(cmd_admin.process_schedules, interval=30)
 
-    if hasattr(cmd_trivia, 'run_monthly_trivia_reset'):
-        app.job_queue.run_daily(
-            cmd_trivia.run_monthly_trivia_reset,
-            time=datetime.time(hour=13, minute=0, tzinfo=WIB)
-        )
+    # run_monthly_trivia_reset is now scheduled dynamically via schedule_kp_job in post_init_wrapper
 
     if hasattr(cmd_admin, 'send_daily_audit_digest'):
         app.job_queue.run_daily(
@@ -334,10 +339,10 @@ def main():
         )
 
     try:
-        from crons import daily_morning_log, poll_cleanup, monthly_leaderboard
+        from crons import daily_morning_log, poll_cleanup
         app.job_queue.run_daily(daily_morning_log, datetime.time(hour=7, minute=0, tzinfo=WIB))
         app.job_queue.run_repeating(poll_cleanup, interval=3600)
-        app.job_queue.run_daily(monthly_leaderboard, datetime.time(hour=0, minute=5, tzinfo=WIB))
+        # monthly_leaderboard and kp reset are now scheduled via schedule_star_job / schedule_kp_job in post_init_wrapper
     except ImportError:
         logger.warning("Optional crons.py not found — skipping daily logs and poll cleanup.")
 

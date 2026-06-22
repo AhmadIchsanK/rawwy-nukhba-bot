@@ -33,3 +33,31 @@ async def ensure_cheer_profile_column(pool):
     """Safely upgrades the users table column schema at startup."""
     async with pool.acquire() as conn:
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS cheer_profile TEXT;")
+
+async def set_cheer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Save the user's personal cheer profile text."""
+    username = update.effective_user.username or str(update.effective_user.id)
+    pool = context.bot_data.get('db_pool')
+
+    if not context.args:
+        return await update.message.reply_text(
+            "💬 *Usage:* `/setcheer <your vibe / intro text>`\n\n"
+            "Example: `/setcheer I'm a night-owl developer who loves coffee and deadlines`",
+            parse_mode="Markdown"
+        )
+
+    profile = " ".join(context.args).strip()
+    if len(profile) > 300:
+        return await update.message.reply_text("❌ Profile too long — keep it under 300 characters.")
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO users (username, cheer_profile) VALUES ($1, $2) "
+            "ON CONFLICT (username) DO UPDATE SET cheer_profile=$2",
+            username, profile
+        )
+
+    await update.message.reply_text(
+        f"✅ Cheer profile saved!\n\n_\"{profile}\"_\n\nRun /cheerme anytime to get your boost! 🎉",
+        parse_mode="Markdown"
+    )

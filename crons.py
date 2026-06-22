@@ -51,21 +51,26 @@ async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Failed to run daily morning log: {e}")
 
-async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
+async def monthly_star_leaderboard(context):
+    """Announces top RAWWY Star earner and resets monthly points. Runs on 1st of month."""
+    import datetime as _dt
     now = datetime.datetime.now(WIB)
     if now.day != 1:
-        return 
-    
+        return
+
     month_name = (now - datetime.timedelta(days=1)).strftime("%B")
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn:
-        top_earner = await conn.fetchrow('SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 1')
-        groups = await conn.fetch('SELECT chat_id FROM active_groups')
+        top_earner    = await conn.fetchrow('SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 1')
+        groups        = await conn.fetch('SELECT chat_id FROM active_groups')
         stars_channel = await conn.fetchval("SELECT value FROM config WHERE key='stars_channel'")
-        
+
         if top_earner:
-            msg = f"🏆 **Best star earner this month ({month_name}) is @{top_earner['username']}!** 🏆\n\nTotal **{top_earner['monthly_points']} RAWWY Stars** earned. Absolutely incredible work! 🌟 Keep up the amazing momentum, team!"
-            
+            msg = (
+                f"\U0001f3c6 **Best RAWWY Star earner this month ({month_name}) is @{top_earner['username']}!** \U0001f3c6\n\n"
+                f"Total **{top_earner['monthly_points']} RAWWY Stars** earned. Absolutely incredible work! "
+                "\U0001f31f Keep up the amazing momentum, team!"
+            )
             if stars_channel:
                 try:
                     await context.bot.send_message(int(stars_channel), msg, parse_mode="Markdown")
@@ -78,6 +83,10 @@ async def monthly_leaderboard(context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
         await conn.execute("UPDATE kudos SET monthly_points = 0")
+
+# Legacy alias so existing code that imports monthly_leaderboard still works
+monthly_leaderboard = monthly_star_leaderboard
+
 
 async def weekly_quota_reset(context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
@@ -150,3 +159,50 @@ async def poll_cleanup(context: ContextTypes.DEFAULT_TYPE):
             await conn.execute("DELETE FROM poll_drafts WHERE pid NOT IN (SELECT user_id FROM active_polls) AND hours IS NOT NULL AND hours < 1")
     except Exception as e:
         logger.error(f"poll_cleanup error: {e}")
+
+
+async def schedule_kp_job(app):
+    """Schedule (or reschedule) the monthly KP leaderboard cron based on DB config."""
+    pool = app.bot_data.get('db_pool')
+    hour, minute = 13, 0
+    try:
+        async with pool.acquire() as conn:
+            t_val = await conn.fetchval("SELECT value FROM config WHERE key='kp_lb_time'")
+        if t_val:
+            hour, minute = map(int, t_val.split(':'))
+    except Exception:
+        pass
+
+    for job in app.job_queue.get_jobs_by_name('kp_lb_cron'):
+        job.schedule_removal()
+
+    import cmd_trivia
+    app.job_queue.run_daily(
+        cmd_trivia.run_monthly_trivia_reset,
+        datetime.time(hour=hour, minute=minute, tzinfo=WIB),
+        name='kp_lb_cron'
+    )
+    logger.info(f"✅ KP leaderboard reset scheduled for {hour:02d}:{minute:02d} WIB.")
+
+
+async def schedule_star_job(app):
+    """Schedule (or reschedule) the monthly Stars leaderboard cron based on DB config."""
+    pool = app.bot_data.get('db_pool')
+    hour, minute = 0, 5
+    try:
+        async with pool.acquire() as conn:
+            t_val = await conn.fetchval("SELECT value FROM config WHERE key='star_lb_time'")
+        if t_val:
+            hour, minute = map(int, t_val.split(':'))
+    except Exception:
+        pass
+
+    for job in app.job_queue.get_jobs_by_name('star_lb_cron'):
+        job.schedule_removal()
+
+    app.job_queue.run_daily(
+        monthly_star_leaderboard,
+        datetime.time(hour=hour, minute=minute, tzinfo=WIB),
+        name='star_lb_cron'
+    )
+    logger.info(f"✅ Stars leaderboard reset scheduled for {hour:02d}:{minute:02d} WIB.")

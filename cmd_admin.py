@@ -413,6 +413,410 @@ async def unset_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────────────────────────────────────
+# /schedconfig — SCHEDULE & CHANNEL CONFIG PANEL
+# ─────────────────────────────────────────────
+
+async def sched_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Interactive panel for Birthday, KP Leaderboard, and Stars Leaderboard schedule + channel."""
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    if update.effective_chat.type != "private":
+        try:
+            await context.bot.send_message(
+                update.effective_chat.id,
+                "🔒 Please run `/schedconfig` in my Direct Messages for security.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    async with pool.acquire() as conn:
+        bday_time  = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'")   or "10:00"
+        bday_ch    = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'") or ""
+        kp_time    = await conn.fetchval("SELECT value FROM config WHERE key='kp_lb_time'")  or "13:00"
+        kp_ch      = await conn.fetchval("SELECT value FROM config WHERE key='kp_channel'")  or ""
+        star_time  = await conn.fetchval("SELECT value FROM config WHERE key='star_lb_time'") or "00:05"
+        star_ch    = await conn.fetchval("SELECT value FROM config WHERE key='stars_channel'") or ""
+
+    context.user_data['schcfg_owner'] = update.effective_user.id
+    context.user_data['schcfg_draft'] = {
+        'bday_time': bday_time, 'bday_ch': bday_ch,
+        'kp_time':   kp_time,   'kp_ch':   kp_ch,
+        'star_time': star_time, 'star_ch': star_ch,
+    }
+    for flag in ['awaiting_schcfg_bday_time','awaiting_schcfg_bday_ch',
+                 'awaiting_schcfg_kp_time',  'awaiting_schcfg_kp_ch',
+                 'awaiting_schcfg_star_time', 'awaiting_schcfg_star_ch']:
+        context.user_data.pop(flag, None)
+
+    msg = await context.bot.send_message(
+        update.effective_chat.id,
+        _schcfg_text(context.user_data['schcfg_draft']),
+        reply_markup=_schcfg_kb(),
+        parse_mode="Markdown"
+    )
+    context.user_data['schcfg_msg_id'] = msg.message_id
+
+
+def _schcfg_text(d):
+    def ch(val): return f"`{val}`" if val else "`Not Set`"
+    return (
+        "🗓️ *SCHEDULE & CHANNEL CONFIGURATION*\n"
+        "──────────────────────────────\n"
+        "🎂 *Birthday Announcements*\n"
+        f"   ⏰ Time: `{d['bday_time']} WIB`\n"
+        f"   📡 Channel: {ch(d['bday_ch'])}\n\n"
+        "🏅 *Monthly KP Leaderboard*\n"
+        f"   ⏰ Time: `{d['kp_time']} WIB` *(runs on 1st of month)*\n"
+        f"   📡 Channel: {ch(d['kp_ch'])}\n\n"
+        "⭐ *Monthly Stars Leaderboard*\n"
+        f"   ⏰ Time: `{d['star_time']} WIB` *(runs on 1st of month)*\n"
+        f"   📡 Channel: {ch(d['star_ch'])}\n\n"
+        "⚠️ _Nothing saves until you press ✅ Save_"
+    )
+
+
+def _schcfg_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎂 Birthday Time  ─────────────────", callback_data="schcfg_noop")],
+        [
+            InlineKeyboardButton("−1h", callback_data="schcfg_bday_tsub"),
+            InlineKeyboardButton("+1h", callback_data="schcfg_bday_tadd"),
+            InlineKeyboardButton("✏️ Custom", callback_data="schcfg_bday_tcus"),
+        ],
+        [InlineKeyboardButton("📡 Set Birthday Channel", callback_data="schcfg_bday_ch")],
+        [InlineKeyboardButton("🏅 KP Leaderboard  ─────────────", callback_data="schcfg_noop")],
+        [
+            InlineKeyboardButton("−1h", callback_data="schcfg_kp_tsub"),
+            InlineKeyboardButton("+1h", callback_data="schcfg_kp_tadd"),
+            InlineKeyboardButton("✏️ Custom", callback_data="schcfg_kp_tcus"),
+        ],
+        [InlineKeyboardButton("📡 Set KP Channel", callback_data="schcfg_kp_ch")],
+        [InlineKeyboardButton("⭐ Stars Leaderboard  ──────────", callback_data="schcfg_noop")],
+        [
+            InlineKeyboardButton("−1h", callback_data="schcfg_star_tsub"),
+            InlineKeyboardButton("+1h", callback_data="schcfg_star_tadd"),
+            InlineKeyboardButton("✏️ Custom", callback_data="schcfg_star_tcus"),
+        ],
+        [InlineKeyboardButton("📡 Set Stars Channel", callback_data="schcfg_star_ch")],
+        [
+            InlineKeyboardButton("✅ Save", callback_data="schcfg_save"),
+            InlineKeyboardButton("❌ Cancel", callback_data="schcfg_cancel"),
+        ],
+    ])
+
+
+async def _schcfg_refresh(query, context):
+    d = context.user_data.get('schcfg_draft')
+    if not d:
+        return
+    try:
+        await query.edit_message_text(_schcfg_text(d), reply_markup=_schcfg_kb(), parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+async def _schcfg_refresh_from_input(update, context, d):
+    chat_id = update.effective_chat.id
+    msg_id  = context.user_data.get('schcfg_msg_id')
+    try:
+        if msg_id:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=_schcfg_text(d), reply_markup=_schcfg_kb(), parse_mode="Markdown"
+            )
+        else:
+            msg = await context.bot.send_message(chat_id, _schcfg_text(d), reply_markup=_schcfg_kb(), parse_mode="Markdown")
+            context.user_data['schcfg_msg_id'] = msg.message_id
+    except Exception as e:
+        logger.warning(f"schcfg input refresh error: {e}")
+
+
+def _bump_time(t_str, delta_hours):
+    h, m = map(int, t_str.split(":"))
+    return f"{(h + delta_hours) % 24:02d}:{m:02d}"
+
+
+async def sched_config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles all schcfg_ callbacks for the schedule config panel."""
+    q    = update.callback_query
+    pool = context.bot_data.get('db_pool')
+    data = q.data
+
+    if not await is_bot_admin(q.from_user.username, pool):
+        return await q.answer("❌ Admins only.", show_alert=True)
+    owner = context.user_data.get('schcfg_owner')
+    if owner and q.from_user.id != owner:
+        return await q.answer("❌ This config belongs to another admin.", show_alert=True)
+
+    d   = context.user_data.get('schcfg_draft')
+    act = data[7:]  # strip "schcfg_"
+
+    if act == "noop":
+        return await q.answer()
+
+    if act == "cancel":
+        context.user_data.pop('schcfg_draft', None)
+        context.user_data.pop('schcfg_owner', None)
+        await q.answer("Cancelled.")
+        try:
+            await q.edit_message_text("❌ *Schedule config cancelled. No changes saved.*", parse_mode="Markdown")
+        except Exception:
+            pass
+        return
+
+    if not d:
+        return await q.answer("⚠️ Session expired. Run /schedconfig again.", show_alert=True)
+
+    # ── Time adjustments ──────────────────────────────────────────────────────
+    if act == "bday_tsub":
+        d['bday_time'] = _bump_time(d['bday_time'], -1)
+        await q.answer(f"Birthday time → {d['bday_time']}")
+        return await _schcfg_refresh(q, context)
+
+    if act == "bday_tadd":
+        d['bday_time'] = _bump_time(d['bday_time'], +1)
+        await q.answer(f"Birthday time → {d['bday_time']}")
+        return await _schcfg_refresh(q, context)
+
+    if act == "bday_tcus":
+        context.user_data['awaiting_schcfg_bday_time'] = True
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                "⏰ *Type Birthday announcement time* in `HH:MM` (24-hour WIB):\n\nExample: `09:30`",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    if act == "kp_tsub":
+        d['kp_time'] = _bump_time(d['kp_time'], -1)
+        await q.answer(f"KP time → {d['kp_time']}")
+        return await _schcfg_refresh(q, context)
+
+    if act == "kp_tadd":
+        d['kp_time'] = _bump_time(d['kp_time'], +1)
+        await q.answer(f"KP time → {d['kp_time']}")
+        return await _schcfg_refresh(q, context)
+
+    if act == "kp_tcus":
+        context.user_data['awaiting_schcfg_kp_time'] = True
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                "⏰ *Type KP Leaderboard reset time* in `HH:MM` (24-hour WIB):\n\nExample: `13:00`",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    if act == "star_tsub":
+        d['star_time'] = _bump_time(d['star_time'], -1)
+        await q.answer(f"Stars time → {d['star_time']}")
+        return await _schcfg_refresh(q, context)
+
+    if act == "star_tadd":
+        d['star_time'] = _bump_time(d['star_time'], +1)
+        await q.answer(f"Stars time → {d['star_time']}")
+        return await _schcfg_refresh(q, context)
+
+    if act == "star_tcus":
+        context.user_data['awaiting_schcfg_star_time'] = True
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                "⏰ *Type Stars Leaderboard reset time* in `HH:MM` (24-hour WIB):\n\nExample: `00:05`",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    # ── Channel input prompts ─────────────────────────────────────────────────
+    if act == "bday_ch":
+        context.user_data['awaiting_schcfg_bday_ch'] = True
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                "📡 *Set Birthday Channel*\n\n"
+                "Forward a message from the target channel/group, *or* type its chat ID directly.\n"
+                "_Supergroups start with_ `-100`",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    if act == "kp_ch":
+        context.user_data['awaiting_schcfg_kp_ch'] = True
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                "📡 *Set KP Leaderboard Channel*\n\n"
+                "Forward a message from the target channel/group, *or* type its chat ID directly.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    if act == "star_ch":
+        context.user_data['awaiting_schcfg_star_ch'] = True
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                "📡 *Set Stars Leaderboard Channel*\n\n"
+                "Forward a message from the target channel/group, *or* type its chat ID directly.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    # ── Save ─────────────────────────────────────────────────────────────────
+    if act == "save":
+        async with pool.acquire() as conn:
+            pairs = [
+                ('bday_time',    d['bday_time']),
+                ('bday_channel', d['bday_ch']),
+                ('kp_lb_time',   d['kp_time']),
+                ('kp_channel',   d['kp_ch']),
+                ('star_lb_time', d['star_time']),
+                ('stars_channel',d['star_ch']),
+            ]
+            for key, val in pairs:
+                if val:
+                    await conn.execute(
+                        "INSERT INTO config (key, value) VALUES ($1, $2) "
+                        "ON CONFLICT (key) DO UPDATE SET value=$2",
+                        key, str(val)
+                    )
+                else:
+                    await conn.execute("DELETE FROM config WHERE key=$1", key)
+
+        # Reschedule live jobs
+        from crons import schedule_bday_job, schedule_kp_job, schedule_star_job
+        from telegram.ext import Application
+        app = context.application
+        await schedule_bday_job(app)
+        await schedule_kp_job(app)
+        await schedule_star_job(app)
+
+        context.user_data.pop('schcfg_draft', None)
+        context.user_data.pop('schcfg_owner', None)
+        context.user_data.pop('schcfg_msg_id', None)
+        await q.answer("✅ Saved & rescheduled!")
+        try:
+            def ch(val): return val if val else "Not Set"
+            await q.edit_message_text(
+                "✅ *Schedule Config Saved!*\n\n"
+                f"🎂 Birthday: `{d['bday_time']} WIB` → `{ch(d['bday_ch'])}`\n"
+                f"🏅 KP LB: `{d['kp_time']} WIB` → `{ch(d['kp_ch'])}`\n"
+                f"⭐ Stars LB: `{d['star_time']} WIB` → `{ch(d['star_ch'])}`",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        return
+
+    await q.answer()
+
+
+async def handle_schcfg_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Called from global_text_router. Returns True if we consumed the input."""
+    d = context.user_data.get('schcfg_draft')
+    if not d:
+        return False
+
+    text = (update.message.text or "").strip()
+
+    def parse_time(t):
+        parts = t.replace(".", ":").split(":")
+        if len(parts) == 2 and all(p.isdigit() for p in parts):
+            h, m = int(parts[0]), int(parts[1])
+            if 0 <= h < 24 and 0 <= m < 60:
+                return f"{h:02d}:{m:02d}"
+        return None
+
+    def parse_chat_id(msg):
+        # Accept forwarded messages or raw typed IDs
+        if msg.forward_origin:
+            chat = getattr(msg.forward_origin, 'chat', None)
+            if chat:
+                return str(chat.id)
+        t = msg.text.strip() if msg.text else ""
+        if t.lstrip("-").isdigit():
+            return t
+        return None
+
+    consumed = False
+
+    if context.user_data.pop('awaiting_schcfg_bday_time', False):
+        t = parse_time(text)
+        if t:
+            d['bday_time'] = t
+            await update.message.reply_text(f"✅ Birthday time set to `{t} WIB`", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Invalid format. Use `HH:MM` (e.g. `09:30`)", parse_mode="Markdown")
+        consumed = True
+
+    elif context.user_data.pop('awaiting_schcfg_kp_time', False):
+        t = parse_time(text)
+        if t:
+            d['kp_time'] = t
+            await update.message.reply_text(f"✅ KP Leaderboard time set to `{t} WIB`", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Invalid format. Use `HH:MM` (e.g. `13:00`)", parse_mode="Markdown")
+        consumed = True
+
+    elif context.user_data.pop('awaiting_schcfg_star_time', False):
+        t = parse_time(text)
+        if t:
+            d['star_time'] = t
+            await update.message.reply_text(f"✅ Stars Leaderboard time set to `{t} WIB`", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Invalid format. Use `HH:MM` (e.g. `00:05`)", parse_mode="Markdown")
+        consumed = True
+
+    elif context.user_data.pop('awaiting_schcfg_bday_ch', False):
+        cid = parse_chat_id(update.message)
+        if cid:
+            d['bday_ch'] = cid
+            await update.message.reply_text(f"✅ Birthday channel set to `{cid}`", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Could not read a chat ID. Forward a message or type the ID directly.")
+        consumed = True
+
+    elif context.user_data.pop('awaiting_schcfg_kp_ch', False):
+        cid = parse_chat_id(update.message)
+        if cid:
+            d['kp_ch'] = cid
+            await update.message.reply_text(f"✅ KP channel set to `{cid}`", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Could not read a chat ID. Forward a message or type the ID directly.")
+        consumed = True
+
+    elif context.user_data.pop('awaiting_schcfg_star_ch', False):
+        cid = parse_chat_id(update.message)
+        if cid:
+            d['star_ch'] = cid
+            await update.message.reply_text(f"✅ Stars channel set to `{cid}`", parse_mode="Markdown")
+        else:
+            await update.message.reply_text("❌ Could not read a chat ID. Forward a message or type the ID directly.")
+        consumed = True
+
+    if consumed:
+        await _schcfg_refresh_from_input(update, context, d)
+    return consumed
+
+
+# ─────────────────────────────────────────────
 # /auditlog — PULL DIAGNOSTIC LOGS
 # ─────────────────────────────────────────────
 
