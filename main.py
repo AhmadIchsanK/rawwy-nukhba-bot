@@ -159,11 +159,11 @@ def main():
     # ─────────────────────────────────────────
     # ⭐ RAWWY STARS
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("thanks",      safe_cmd(cmd_user, "give_thanks")))
-    app.add_handler(CommandHandler("myquota",     safe_cmd(cmd_user, "my_quota")))
-    app.add_handler(CommandHandler("mystar",      safe_cmd(cmd_user, "my_star")))
-    app.add_handler(CommandHandler("totalstar",   safe_cmd(cmd_user, "total_star")))
-    app.add_handler(CommandHandler("leaderboard", safe_cmd(cmd_user, "leaderboard")))
+    app.add_handler(CommandHandler("thanks",           safe_cmd(cmd_user, "give_thanks")))
+    app.add_handler(CommandHandler("myquota",          safe_cmd(cmd_user, "my_quota")))
+    app.add_handler(CommandHandler("mystar",           safe_cmd(cmd_user, "my_star")))
+    app.add_handler(CommandHandler("totalstar",        safe_cmd(cmd_user, "total_star")))
+    app.add_handler(CommandHandler("leaderboard_star", safe_cmd(cmd_user, "leaderboard_star")))
 
     # ─────────────────────────────────────────
     # 📚 LIBRARY
@@ -192,7 +192,8 @@ def main():
     # ─────────────────────────────────────────
     # 🎮 TRIVIA — USER
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("mypoint", safe_cmd(cmd_trivia, "my_point")))
+    app.add_handler(CommandHandler("mypoint",        safe_cmd(cmd_trivia, "my_point")))
+    app.add_handler(CommandHandler("leaderboard_kp", safe_cmd(cmd_trivia, "leaderboard_kp")))
 
     # ─────────────────────────────────────────
     # 🎮 TRIVIA — ADMIN
