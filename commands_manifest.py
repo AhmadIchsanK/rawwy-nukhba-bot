@@ -11,6 +11,7 @@ COMMANDS = [
     # ─────────────────────────────────────────
     {"name": "start",    "desc": "Start interaction",         "public": True,  "category": "💬 General", "emoji": "🚀"},
     {"name": "help",     "desc": "View Nukhba Manual",        "public": True,  "category": "💬 General", "emoji": "📖"},
+    {"name": "command",  "desc": "Interactive command browser","public": True,  "category": "💬 General", "emoji": "🗂️"},
     {"name": "about",    "desc": "About Nukhba Manager",      "public": True,  "category": "💬 General", "emoji": "ℹ️"},
     {"name": "feedback", "desc": "Submit Feedback",           "format": "`/feedback We need a longer timer`", "public": True, "category": "💬 General", "emoji": "💡"},
 

@@ -13,6 +13,7 @@ import cmd_system
 import cmd_user
 import cmd_admin
 import cmd_trivia
+import cmd_command_nav
 
 # Safe fallback imports for recently separated modules
 try:
@@ -150,6 +151,7 @@ def main():
     # ─────────────────────────────────────────
     app.add_handler(CommandHandler("start",    safe_cmd(cmd_system, "start")))
     app.add_handler(CommandHandler("help",     safe_cmd(cmd_system_help, "help_command")))
+    app.add_handler(CommandHandler("command",  cmd_command_nav.command_nav))
     app.add_handler(CommandHandler("about",    safe_cmd(cmd_system, "about_command")))
     app.add_handler(CommandHandler("wdim",     safe_cmd(cmd_system, "what_did_i_miss")))
     app.add_handler(CommandHandler("feedback", safe_cmd(cmd_system, "submit_feedback")))
@@ -295,6 +297,7 @@ def main():
     # ─────────────────────────────────────────
     # 🖱️ INTERACTIVE CALLBACK ROUTERS
     # ─────────────────────────────────────────
+    app.add_handler(CallbackQueryHandler(cmd_command_nav.command_nav_callback, pattern="^cmenu_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_user,   "rsvp_callback"),    pattern="^rsvp_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_user,   "poll_callback"),    pattern="^pollst_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "config_callback"),  pattern="^cfg_"))
