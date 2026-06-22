@@ -218,31 +218,38 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Global tracker error: {e}")
 
 
-async def _generate_content_with_retry(client, model_name, contents, max_retries=3, base_delay=5):
+async def _generate_content_with_retry(client, contents, max_retries=3, base_delay=5):
     """
-    Wraps the Gemini API call in an exponential backoff loop. 
+    Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
     Crucial for surviving 429 RESOURCE_EXHAUSTED errors on free tiers.
     """
-    delay = base_delay
+    # Prioritize 1.5-flash as it has the most generous and stable free tier
+    models_to_try = ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash-8b']
     last_err = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            return await asyncio.to_thread(
-                client.models.generate_content,
-                model=model_name,
-                contents=contents
-            )
-        except Exception as e:
-            last_err = e
-            err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                if attempt < max_retries:
-                    logger.warning(f"Gemini API Rate Limit hit (Attempt {attempt}/{max_retries}). Retrying in {delay}s...")
-                    await asyncio.sleep(delay)
-                    delay *= 2
-                    continue
-            # If it's a 400 error or we exhausted retries, break loop and raise
+    
+    for model_name in models_to_try:
+        delay = base_delay
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=contents
+                )
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                    if attempt < max_retries:
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
+                break # Break out if it's a hard error or we exhausted retries for this model
+        
+        # If the error was NOT a rate limit, don't bother trying other models
+        if last_err and not ("429" in str(last_err) or "RESOURCE_EXHAUSTED" in str(last_err)):
             break
+            
     raise last_err
 
 
@@ -275,7 +282,7 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         client = genai.Client(api_key=GEMINI_API_KEY)
-        resp = await _generate_content_with_retry(client, 'gemini-2.0-flash', prompt)
+        resp = await _generate_content_with_retry(client, prompt)
         await context.bot.send_message(update.effective_user.id, f"📝 **What You Missed in {update.effective_chat.title}:**\n\n{resp.text}", parse_mode="Markdown")
         await temp.delete()
     except Exception as e:
@@ -419,9 +426,9 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
         else:
             system_prompt = "⚠️ STRICT RULE: Your response must NEVER exceed 3000 characters. Be concise.\n\nUser Prompt: " + prompt
             
-        # Call AI with robust async retry handler
+        # Call AI with robust async retry handler and model fallback
         response = await asyncio.wait_for(
-            _generate_content_with_retry(client, 'gemini-2.0-flash', system_prompt),
+            _generate_content_with_retry(client, system_prompt),
             timeout=120.0
         )
         
