@@ -24,7 +24,7 @@ THEME_MAP = {
 }
 
 # Gemini model — fallback chain prioritizing the most stable models
-GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-1.5-flash"]
+GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
 
 
 
