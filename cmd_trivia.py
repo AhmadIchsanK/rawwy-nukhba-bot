@@ -664,7 +664,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
         f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
-        f"NO code blocks, NO backticks. Just the JSON: "
+        f"NO code blocks. Just the JSON: "
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
@@ -722,25 +722,30 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         return
 
     try:
+        # Calculate exactly in Python UTC to avoid database timezone mismatch entirely
+        expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=timeout)
+        
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-            # Use make_interval for robust compatibility across asyncpg versions
             await conn.execute(
                 "INSERT INTO active_trivia "
                 "(chat_id, message_id, question, options, correct_index, explanation, "
                 "is_super, timeout_secs, expires_at) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + make_interval(secs => $8))",
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
                 chat_id, sent.message_id,
                 data['question'], json.dumps(data['options']),
                 data['correct_index'], data['explanation'],
-                is_super_round, timeout
+                is_super_round, timeout, expires_at
             )
     except Exception as e:
         logger.error(f"Trivia Database Insert Failed! {e}")
         try:
             await bot.delete_message(chat_id, sent.message_id)
-            await bot.send_message(chat_id, "⚠️ Database error when starting trivia. Please try again.")
-        except:
+        except Exception:
+            pass
+        try:
+            await bot.send_message(chat_id, f"⚠️ Database error when starting trivia: {e}")
+        except Exception:
             pass
         return
 
@@ -817,17 +822,22 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
     if not pool:
         return
 
-    async with pool.acquire() as conn:
-        db_now_epoch = await conn.fetchval("SELECT EXTRACT(EPOCH FROM NOW())")
-        rooms = await conn.fetch("SELECT *, EXTRACT(EPOCH FROM expires_at) as exp_epoch FROM active_trivia")
+    now = datetime.datetime.now(datetime.timezone.utc)
 
-    if not db_now_epoch:
+    try:
+        async with pool.acquire() as conn:
+            rooms = await conn.fetch("SELECT * FROM active_trivia")
+    except Exception as e:
+        logger.error(f"Sweeper fetch error: {e}")
         return
 
     for r in rooms:
         try:
-            exp_epoch = float(r['exp_epoch']) if r['exp_epoch'] else 0.0
-            rem = int(exp_epoch - float(db_now_epoch))
+            expires_at = r['expires_at']
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+            
+            rem = int((expires_at - now).total_seconds())
 
             if rem <= 0:
                 await close_trivia_round(context.bot, r['chat_id'], "⏱️ Time Limit Reached", pool)
