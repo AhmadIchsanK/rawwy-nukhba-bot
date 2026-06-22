@@ -459,7 +459,10 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"📋 **Audit Log (Last {limit} entries)**\n"]
     for r in rows:
-        ts = r['timestamp'].astimezone(WIB).strftime('%m/%d %H:%M')
+        ts_val = r['timestamp']
+        if ts_val.tzinfo is None:
+            ts_val = ts_val.replace(tzinfo=datetime.timezone.utc)
+        ts = ts_val.astimezone(WIB).strftime('%m/%d %H:%M')
         lines.append(f"`[{ts}]` **{r['category']}** — {r['status']}\n  _{r['detail']}_")
 
     await send_md(context, update.effective_user.id, "\n".join(lines))
@@ -1127,6 +1130,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checks = [
         ("start",           cmd_system,      "start"),
         ("help",            cmd_system_help, "help_command"),
+        ("about",           cmd_system,      "about_command"),
         ("wdim",            cmd_system,      "what_did_i_miss"),
         ("feedback",        cmd_system,      "submit_feedback"),
         ("ask",             cmd_system,      "ask_bot"),
@@ -1142,7 +1146,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("myquota",         cmd_user,        "my_quota"),
         ("mystar",          cmd_user,        "my_star"),
         ("totalstar",       cmd_user,        "total_star"),
-        ("leaderboard_star",cmd_user,        "leaderboard_star"),
+        ("leaderboard",     cmd_user,        "leaderboard"),
         ("addlib",          cmd_user,        "add_lib"),
         ("editlib",         cmd_user,        "edit_lib"),
         ("dellib",          cmd_user,        "del_lib"),
@@ -1156,7 +1160,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ("cheerme",         cmd_cheer,       "cheer_me"),
         ("setcheer",        cmd_cheer,       "set_cheer"),
         ("mypoint",         cmd_trivia,      "my_point"),
-        ("leaderboard_kp",  cmd_trivia,      "leaderboard_kp"),
         ("triviaconfig",    cmd_trivia,      "trivia_config"),
         ("forcetrivia",     cmd_trivia,      "force_trivia"),
         ("forcesupertrivia",cmd_trivia,      "force_super_trivia"),
@@ -1564,6 +1567,131 @@ async def check_quota(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             r   = await conn.fetchval('SELECT quota FROM kudos WHERE username=$1', target)
             msg = f"✅ @{target} — Stars quota left: `{r}`" if r is not None else "❌ User not found."
+    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+
+
+async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        parts = [p.strip() for p in " ".join(context.args).split(",", 3)]
+        t     = parts[0].replace("@", "").lower()
+        field = parts[1].lower()
+        act   = parts[2].lower()
+        amt   = int(parts[3])
+        col   = {'monthly': 'monthly_points', 'total': 'all_time_points', 'quota': 'quota'}.get(field, 'quota')
+    except Exception:
+        return await context.bot.send_message(
+            update.effective_user.id,
+            "❌ Format: `/admin_stars @user , quota|monthly|total , set|add|sub , amount`",
+            parse_mode="Markdown"
+        )
+    async with pool.acquire() as conn:
+        await conn.execute('INSERT INTO kudos (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
+        if act == "add":
+            await conn.execute(f'UPDATE kudos SET {col}={col}+$1 WHERE username=$2', amt, t)
+        elif act == "sub":
+            await conn.execute(f'UPDATE kudos SET {col}=GREATEST(0,{col}-$1) WHERE username=$2', amt, t)
+        else:
+            await conn.execute(f'UPDATE kudos SET {col}=$1 WHERE username=$2', amt, t)
+    await context.bot.send_message(update.effective_user.id, f"✅ Stars for @{t} updated.")
+
+
+async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_super(update.effective_user.username):
+        return
+    async with pool.acquire() as conn:
+        g = await conn.fetch("SELECT chat_id, title FROM active_groups")
+        u = await conn.fetchval("SELECT COUNT(*) FROM users")
+        t = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE status='Pending'")
+        l = await conn.fetchval("SELECT COUNT(*) FROM library")
+        b = await conn.fetchval("SELECT COUNT(*) FROM birthdays")
+        ver = await conn.fetchval("SELECT version FROM bot_version ORDER BY id DESC LIMIT 1") or "1.0"
+    await context.bot.send_message(
+        update.effective_user.id,
+        f"📊 **NUKHBA BOT STATUS**\n"
+        f"──────────────────────────────\n"
+        f"📦 Version: `{ver}`\n"
+        f"👥 Users tracked: `{u}`\n"
+        f"📋 Pending tasks: `{t}`\n"
+        f"📚 Library assets: `{l}`\n"
+        f"🎂 Birthdays: `{b}`\n"
+        f"🏠 Active groups: `{len(g)}`",
+        parse_mode="Markdown"
+    )
+
+
+async def force_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    try:
+        target = context.args[0].replace("@", "").lower()
+    except Exception:
+        return await context.bot.send_message(update.effective_user.id, "❌ Usage: `/forceback @user`", parse_mode="Markdown")
+    async with pool.acquire() as conn:
+        status = await conn.fetchrow('SELECT * FROM away_status WHERE username=$1', target)
+        if not status:
+            return await context.bot.send_message(update.effective_user.id, f"❌ @{target} is not away.")
+    for j in context.job_queue.get_jobs_by_name(f"away_{target}"):
+        j.schedule_removal()
+    import cmd_user
+    msg = await cmd_user.process_return(target, pool, context.bot)
+    await log_action(pool, update.effective_user.id, update.effective_chat.id, "Away Status", "Force Removed", f"@{update.effective_user.username} forced @{target} back")
+    async with pool.acquire() as conn:
+        uid = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", target)
+    if uid:
+        try:
+            await context.bot.send_message(uid, f"⚠️ An admin removed your Away status.\n\n{msg}", parse_mode="Markdown")
+        except Exception as e:
+            logger.debug(f"Could not notify user of forced return: {e}")
+    await context.bot.send_message(update.effective_user.id, f"✅ @{target} forced back to Available.")
+
+
+async def attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    now = datetime.datetime.now(WIB)
+    async with pool.acquire() as conn:
+        aways = await conn.fetch('SELECT username, end_time FROM away_status')
+    msg = "📊 **Team Attendance**\n\n"
+    if aways:
+        msg += "🔴 **Currently Away:**\n"
+        for a in aways:
+            rem = a['end_time'].astimezone(WIB) - now
+            d   = rem.days
+            h   = rem.seconds // 3600
+            m   = (rem.seconds % 3600) // 60
+            msg += f"• @{a['username']} — returns in {f'{d}d {h}h {m}m' if d > 0 else f'{h}h {m}m'}\n"
+        msg += "\n🟢 *Everyone else is Available.*"
+    else:
+        msg += "🟢 Everyone is currently Available!"
+    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+
+
+async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    now = datetime.datetime.now(WIB)
+    async with pool.acquire() as conn:
+        tasks = await conn.fetch(
+            "SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks WHERE status='Pending' ORDER BY deadline"
+        )
+    if not tasks:
+        return await context.bot.send_message(update.effective_user.id, "✅ 🎉 No pending tasks.")
+    msg = "📋 **Global Pending Tasks**\n\n"
+    for t in tasks:
+        rem  = int((t['deadline'] - now).total_seconds() / 60)
+        msg += f"🔹 `{t['id']}` | **{t['task_desc']}**\nTo: @{t['assignee']} | By: @{t['assigned_by']} | ⏳ {'OVERDUE' if rem <= 0 else f'{rem}m left'}\n\n"
     await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 
