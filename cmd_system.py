@@ -223,8 +223,8 @@ async def _generate_content_with_retry(client, contents, max_retries=3, base_del
     Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
     Survives rate limits and guarantees the primary error is reported.
     """
-    # 2.0-flash is primary, 2.0-flash-lite is the high-availability fallback
-    models_to_try = ['gemini-2.0-flash', 'gemini-2.0-flash-lite']
+    # Put 1.5-flash-8b first as it is the most stable free-tier model available
+    models_to_try = ['gemini-1.5-flash-8b', 'gemini-2.0-flash', 'gemini-2.0-flash-lite']
     primary_err = None
     
     for model_name in models_to_try:
@@ -237,27 +237,22 @@ async def _generate_content_with_retry(client, contents, max_retries=3, base_del
                     contents=contents
                 )
             except Exception as e:
-                # Capture the very first error (the true rate limit) so it doesn't get masked
                 if primary_err is None:
                     primary_err = e 
                     
                 err_str = str(e)
                 
-                # If model isn't found/supported (404), stop retrying this model
                 if "404" in err_str or "NOT_FOUND" in err_str:
                     break 
                     
-                # If Rate Limited (429), wait and retry
                 if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                     if attempt < max_retries:
                         await asyncio.sleep(delay)
                         delay *= 2
                         continue
                         
-                # Any other fatal error -> break out of this model's retry loop
                 break 
                 
-    # If all models fail, raise the primary 429 error, NOT the fallback 404 error
     raise primary_err
 
 
