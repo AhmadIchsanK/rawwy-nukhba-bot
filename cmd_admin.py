@@ -2379,12 +2379,32 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if t in ["library", "all"]: await conn.execute("TRUNCATE library CASCADE")
                 if t in ["tasks", "all"]: await conn.execute("TRUNCATE tasks CASCADE")
                 if t in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
-                if t in ["channels", "all"]: 
-                    await conn.execute("DELETE FROM config WHERE key IN ('bday_channel', 'stars_channel', 'feedback_channel')")
-                    await conn.execute("DELETE FROM trivia_config WHERE key='target_chat_id'")
-                if t in ["schedules", "all"]: await conn.execute("TRUNCATE scheduled_announcements CASCADE")
-                if t in ["feedback", "all"]: await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
-                if t in ["stats", "all"]: await conn.execute("TRUNCATE bot_stats, chat_history, active_groups CASCADE")
+                if t in ["channels", "all"]:
+
+    # Keep rows alive, only clear values
+    await conn.execute("""
+        INSERT INTO config(key,value)
+        VALUES
+        ('bday_channel',''),
+        ('stars_channel',''),
+        ('feedback_channel','')
+        ON CONFLICT (key)
+        DO UPDATE SET value=''
+    """)
+
+    await conn.execute("""
+        INSERT INTO trivia_config(key,value)
+        VALUES ('target_chat_id','')
+        ON CONFLICT (key)
+        DO UPDATE SET value=''
+    """)
+
+if t in ["stats", "all"]:
+
+    # DO NOT DELETE active_groups
+    await conn.execute("""
+        TRUNCATE bot_stats, chat_history CASCADE
+    """)
                 if t in ["trivia", "all"]: 
                     await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
                     import cmd_trivia
