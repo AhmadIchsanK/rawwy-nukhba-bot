@@ -290,6 +290,50 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"cfg_callback edit error: {e}")
 
 
+async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    owner = context.user_data.get('cfg_owner')
+    if owner and update.effective_user.id != owner:
+        return False
+
+    field = context.user_data.get('awaiting_cfg_field')
+    if not field:
+        return False
+
+    text = update.message.text.strip() if update.message and update.message.text else ""
+    if not text:
+        return False
+
+    try:
+        val = int(text)
+        if val < 1:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ Must be a positive whole number.")
+        return True
+
+    context.user_data.pop('awaiting_cfg_field')
+    d = context.user_data.get('cfg_draft')
+    if d:
+        d[field] = str(val)
+
+    try:
+        await update.message.delete()
+    except Exception as e:
+        logger.debug(f"Could not delete message: {e}")
+
+    try:
+        chat_id = update.effective_chat.id
+        msg_id  = context.user_data.get('cfg_msg_id')
+        if msg_id and d:
+            await context.bot.edit_message_text(
+                chat_id=chat_id, message_id=msg_id,
+                text=_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown"
+            )
+    except Exception as e:
+        logger.warning(f"cfg text input refresh error: {e}")
+    return True
+
+
 # ─────────────────────────────────────────────
 # /setchannel & /unsetchannel
 # ─────────────────────────────────────────────
@@ -761,7 +805,7 @@ async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📦 **Version:** `{new_ver}`\n"
         f"📅 **Date:** {datetime.datetime.now(WIB).strftime('%d %b %Y, %H:%M WIB')}\n\n"
         f"📝 **What's New:**\n{changelog}\n\n"
-        f"Type /updateinfo to see the full changelog."
+        f"Type /update to see the full changelog."
     )
 
     sent_count = 0
@@ -1131,6 +1175,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "config_callback": _self_module, "manage_users_callback": _self_module,
         "newsched_callback": _self_module, "super_callback": _self_module,
         "handle_admin_text_input": _self_module,
+        "register_group": _self_module,
     }
 
     # Command → handler function name (matches main.py registrations)
@@ -1157,6 +1202,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "triviaend": "end_trivia", "admin_kp": "admin_kp",
         "botconfig": "bot_config", "setchannel": "set_channel",
         "unsetchannel": "unset_channel", "groupid": "check_group_id",
+        "registergroup": "register_group",
         "auditlog": "get_audit_log", "audittime": "set_audit_time",
         "manageusers": "manage_users", "checkquota": "check_quota",
         "admin_stars": "admin_stars", "checklimit": "check_limit",
@@ -1211,58 +1257,35 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────────────────────────────────────
-# GLOBAL TEXT INPUT ROUTER FOR ADMIN PANELS
+# RESTORED MISSING COMMANDS (WITH ASYNC RETRY FOR AI)
 # ─────────────────────────────────────────────
 
-async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    pool = context.bot_data.get('db_pool')
-
-    if context.user_data.get('awaiting_cfg_field'):
-        owner = context.user_data.get('cfg_owner')
-        if not owner or update.effective_user.id == owner:
-            field = context.user_data.get('awaiting_cfg_field')
-            text  = update.message.text.strip() if update.message and update.message.text else ""
-            try:
-                val = int(text)
-                if val < 1:
-                    raise ValueError
-            except ValueError:
-                await update.message.reply_text("❌ Must be a positive whole number.")
-                return True
-            context.user_data.pop('awaiting_cfg_field')
-            d = context.user_data.get('cfg_draft')
-            if d:
-                d[field] = str(val)
-            try:
-                await update.message.delete()
-            except Exception as e:
-                logger.debug(f"Failed to delete user message: {e}")
-            try:
-                chat_id = update.effective_chat.id
-                msg_id  = context.user_data.get('cfg_msg_id')
-                if msg_id and d:
-                    await context.bot.edit_message_text(
-                        chat_id=chat_id, message_id=msg_id,
-                        text=_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to update config panel: {e}")
-            return True
-
-    if context.user_data.get('awaiting_mu_input'):
-        return await _handle_mu_text(update, context, pool)
-
-    if any(context.user_data.get(k) for k in [
-        'awaiting_nsched_target', 'awaiting_nsched_time', 'awaiting_nsched_message'
-    ]):
-        return await _handle_nsched_text(update, context)
-
-    return False
-
-
-# ─────────────────────────────────────────────
-# RESTORED MISSING COMMANDS
-# ─────────────────────────────────────────────
+async def _generate_content_with_retry(client, model_name, contents, max_retries=3, base_delay=5):
+    """
+    Wraps the Gemini API call in an exponential backoff loop. 
+    Crucial for surviving 429 RESOURCE_EXHAUSTED errors on free tiers.
+    """
+    delay = base_delay
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            return await asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=contents
+            )
+        except Exception as e:
+            last_err = e
+            err_str = str(e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                if attempt < max_retries:
+                    logger.warning(f"Gemini API Rate Limit hit (Attempt {attempt}/{max_retries}). Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+            # If it's a 400 error or we exhausted retries, break loop and raise
+            break
+    raise last_err
 
 async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1309,16 +1332,18 @@ async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     try:
         client   = genai.Client(api_key=GEMINI_API_KEY)
-        response = await asyncio.to_thread(
-            client.models.generate_content, model='gemini-2.0-flash', contents=ai_prompt
-        )
+        response = await _generate_content_with_retry(client, 'gemini-2.0-flash', ai_prompt)
         await temp.delete()
         await send_md(
             context, update.effective_user.id,
             f"✅ 🤖 **Gemini Feedback Analysis ({range_desc})**\n\n{response.text}"
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ Analysis failed: {e}")
+        err_str = str(e)
+        if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+             await temp.edit_text("⏳ **Gemini Rate Limited.** The AI is overloaded right now. Please try your analysis again in a few minutes.")
+        else:
+             await temp.edit_text(f"❌ Analysis failed: {err_str[:200]}")
 
 
 async def unpin_event(context):
@@ -1709,7 +1734,6 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(update.effective_user.id, "✅ Announcement deleted.")
 
 
-
 async def register_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manually register the current group into active_groups. Run this if the bot was
     added before the tracking fix or after a database wipe."""
@@ -1737,6 +1761,7 @@ async def register_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     await log_action(pool, update.effective_user.id, chat.id, "System", "Group Registered", f"Manual register by @{update.effective_user.username}")
+
 
 async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
@@ -1959,7 +1984,10 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if t in ["schedules", "all"]: await conn.execute("TRUNCATE scheduled_announcements CASCADE")
                 if t in ["feedback", "all"]: await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
                 if t in ["stats", "all"]: await conn.execute("TRUNCATE bot_stats, chat_history, active_groups CASCADE")
-                if t in ["trivia", "all"]: await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
+                if t in ["trivia", "all"]: 
+                    await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
+                    import cmd_trivia
+                    await cmd_trivia.restore_trivia_config_defaults(pool)
                 await q.edit_message_text(f"✅ Wiped `{t}` database.")
             except Exception as e:
                 await q.edit_message_text(f"❌ Error wiping `{t}`: {e}")
