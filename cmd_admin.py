@@ -2176,7 +2176,7 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 m = await context.bot.send_message(
                     t['chat_id'],
-                    f"📢 **[RW] NUKHBA BROADCAST**\n\n{message}",
+                    f"📢 **[RAWWY] NUKHBA BROADCAST**\n\n{message}",
                     parse_mode="Markdown"
                 )
                 await conn.execute(
@@ -2205,7 +2205,7 @@ async def edit_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for m in msgs:
             try:
                 await context.bot.edit_message_text(
-                    f"📢 **[RW] NUKHBA BROADCAST**\n\n{text}",
+                    f"📢 **[RAWWY] NUKHBA BROADCAST**\n\n{text}",
                     chat_id=m['chat_id'], message_id=m['message_id'], parse_mode="Markdown"
                 )
             except Exception as e:
