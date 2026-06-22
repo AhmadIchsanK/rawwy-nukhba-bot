@@ -664,7 +664,7 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         f"Generate 1 multiple choice trivia question. Theme: {theme}. "
         f"Provide exactly {num_options} answer options. "
         f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
-        f"NO code blocks. Just the JSON: "
+        f"NO code blocks, NO backticks. Just the JSON: "
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
@@ -677,9 +677,9 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         )
         raw = resp.text.strip()
         
-        # 100% immune to markdown UI parser cutting
-        raw = re.sub(r'^\`\`\`(?:json)?\s*', '', raw, flags=re.IGNORECASE)
-        raw = re.sub(r'\s*\`\`\`$', '', raw)
+        # 100% immune to markdown UI parser cutting. We use {3} multiplier instead of typing 3 backticks.
+        raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+        raw = re.sub(r'\s*`{3}$', '', raw)
         data = json.loads(raw.strip())
 
         assert 'question' in data and 'options' in data
@@ -724,12 +724,12 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
     try:
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-            # Guaranteed precision timezone-free tracking using Postgres backend time
+            # Use make_interval for robust compatibility across asyncpg versions
             await conn.execute(
                 "INSERT INTO active_trivia "
                 "(chat_id, message_id, question, options, correct_index, explanation, "
                 "is_super, timeout_secs, expires_at) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + interval '1 second' * $8)",
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + make_interval(secs => $8))",
                 chat_id, sent.message_id,
                 data['question'], json.dumps(data['options']),
                 data['correct_index'], data['explanation'],
