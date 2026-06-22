@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────
 
 async def send_md(context, chat_id, text):
-    """Send long markdown text in safe chunks."""
     chunk = ""
     for line in text.split('\n'):
         if len(chunk) + len(line) + 1 > 3800:
@@ -85,7 +84,6 @@ async def _ensure_version_table(pool):
                 message_id BIGINT
             )
         ''')
-        # Seed version 1.0 if table is empty
         count = await conn.fetchval("SELECT COUNT(*) FROM bot_version")
         if count == 0:
             await conn.execute(
@@ -95,12 +93,10 @@ async def _ensure_version_table(pool):
 
 
 def _next_version(current: str) -> str:
-    """Auto-increment version: 1.0→1.1, 1.9→2.0, 1.15→1.2 (always one decimal step)."""
     try:
         parts = current.strip().split(".")
         major = int(parts[0])
         minor = int(parts[1]) if len(parts) > 1 else 0
-        # If minor >= 9, roll over
         if minor >= 9:
             return f"{major + 1}.0"
         return f"{major}.{minor + 1}"
@@ -125,7 +121,6 @@ async def bot_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ma = await conn.fetchval("SELECT value FROM config WHERE key='max_away_days'") or '14'
         me = await conn.fetchval("SELECT value FROM config WHERE key='max_events'") or '5'
 
-    # Store owner so only they interact
     context.user_data['cfg_owner'] = update.effective_user.id
     context.user_data['cfg_draft'] = {
         'gemini_weekly_limit': gl,
@@ -295,50 +290,6 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"cfg_callback edit error: {e}")
 
 
-async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    owner = context.user_data.get('cfg_owner')
-    if owner and update.effective_user.id != owner:
-        return False
-
-    field = context.user_data.get('awaiting_cfg_field')
-    if not field:
-        return False
-
-    text = update.message.text.strip() if update.message and update.message.text else ""
-    if not text:
-        return False
-
-    try:
-        val = int(text)
-        if val < 1:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("❌ Must be a positive whole number.")
-        return True
-
-    context.user_data.pop('awaiting_cfg_field')
-    d = context.user_data.get('cfg_draft')
-    if d:
-        d[field] = str(val)
-
-    try:
-        await update.message.delete()
-    except Exception as e:
-        logger.debug(f"Could not delete message: {e}")
-
-    try:
-        chat_id = update.effective_chat.id
-        msg_id  = context.user_data.get('cfg_msg_id')
-        if msg_id and d:
-            await context.bot.edit_message_text(
-                chat_id=chat_id, message_id=msg_id,
-                text=_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown"
-            )
-    except Exception as e:
-        logger.warning(f"cfg text input refresh error: {e}")
-    return True
-
-
 # ─────────────────────────────────────────────
 # /setchannel & /unsetchannel
 # ─────────────────────────────────────────────
@@ -374,8 +325,8 @@ async def set_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if target not in CHANNEL_MAP:
         return await update.message.reply_text(
-            "❌ **Usage:** `/setchannel bday|trivia|stars|feedback`\n\n"
-            "Run this command inside the target group.",
+            "❌ **Usage:** `/setchannel <bday|trivia|stars|feedback>`\n\n"
+            "Run this command inside the target group to bind the feature to it.",
             parse_mode="Markdown"
         )
 
@@ -404,7 +355,7 @@ async def unset_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if target not in CHANNEL_MAP:
         return await update.message.reply_text(
-            "❌ **Usage:** `/unsetchannel bday|trivia|stars|feedback`",
+            "❌ **Usage:** `/unsetchannel <bday|trivia|stars|feedback>`",
             parse_mode="Markdown"
         )
 
@@ -444,10 +395,10 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 detail TEXT
             )
         ''')
-        # Timezone crash fix: Force AT TIME ZONE inside Postgres
+        # Timezone crash fix: cast the timestamp strictly
         rows = await conn.fetch(
-            "SELECT timestamp AT TIME ZONE 'Asia/Jakarta' as ts_wib, category, status, detail "
-            "FROM audit_logs ORDER BY timestamp DESC LIMIT $1",
+            "SELECT timestamp AT TIME ZONE 'Asia/Jakarta' as wib_ts, category, status, detail FROM audit_logs "
+            "ORDER BY timestamp DESC LIMIT $1",
             limit
         )
 
@@ -460,7 +411,7 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"📋 **Audit Log (Last {limit} entries)**\n"]
     for r in rows:
-        ts = r['ts_wib'].strftime('%m/%d %H:%M')
+        ts = r['wib_ts'].strftime('%m/%d %H:%M')
         lines.append(f"`[{ts}]` **{r['category']}** — {r['status']}\n  _{r['detail']}_")
 
     await send_md(context, update.effective_user.id, "\n".join(lines))
@@ -1281,7 +1232,34 @@ async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_
     if context.user_data.get('awaiting_cfg_field'):
         owner = context.user_data.get('cfg_owner')
         if not owner or update.effective_user.id == owner:
-            return await handle_admin_text_input(update, context)
+            field = context.user_data.get('awaiting_cfg_field')
+            text  = update.message.text.strip() if update.message and update.message.text else ""
+            try:
+                val = int(text)
+                if val < 1:
+                    raise ValueError
+            except ValueError:
+                await update.message.reply_text("❌ Must be a positive whole number.")
+                return True
+            context.user_data.pop('awaiting_cfg_field')
+            d = context.user_data.get('cfg_draft')
+            if d:
+                d[field] = str(val)
+            try:
+                await update.message.delete()
+            except Exception as e:
+                logger.debug(f"Failed to delete user message: {e}")
+            try:
+                chat_id = update.effective_chat.id
+                msg_id  = context.user_data.get('cfg_msg_id')
+                if msg_id and d:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id, message_id=msg_id,
+                        text=_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to update config panel: {e}")
+            return True
 
     if context.user_data.get('awaiting_mu_input'):
         return await _handle_mu_text(update, context, pool)
@@ -1291,41 +1269,11 @@ async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_
     ]):
         return await _handle_nsched_text(update, context)
 
-    if context.user_data.get('awaiting_cfg_field'):
-        field = context.user_data.get('awaiting_cfg_field')
-        text  = update.message.text.strip() if update.message and update.message.text else ""
-        try:
-            val = int(text)
-            if val < 1:
-                raise ValueError
-        except ValueError:
-            await update.message.reply_text("❌ Must be a positive whole number.")
-            return True
-        context.user_data.pop('awaiting_cfg_field')
-        d = context.user_data.get('cfg_draft')
-        if d:
-            d[field] = str(val)
-        try:
-            await update.message.delete()
-        except Exception as e:
-            logger.debug(f"Failed to delete user message: {e}")
-        try:
-            chat_id = update.effective_chat.id
-            msg_id  = context.user_data.get('cfg_msg_id')
-            if msg_id and d:
-                await context.bot.edit_message_text(
-                    chat_id=chat_id, message_id=msg_id,
-                    text=_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to update config panel: {e}")
-        return True
-
     return False
 
 
 # ─────────────────────────────────────────────
-# REMAINING ADMIN COMMANDS (Fully Restored)
+# RESTORED MISSING COMMANDS
 # ─────────────────────────────────────────────
 
 async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1597,56 +1545,6 @@ async def admin_stars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(update.effective_user.id, f"✅ Stars for @{t} updated.")
 
 
-async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return
-    if update.effective_chat.type in ['group', 'supergroup']:
-        await context.bot.send_message(
-            update.effective_chat.id,
-            f"📌 **Group Info**\nTitle: `{update.effective_chat.title}`\nID: `{update.effective_chat.id}`",
-            parse_mode="Markdown"
-        )
-    else:
-        async with pool.acquire() as conn:
-            groups = await conn.fetch("SELECT chat_id, title FROM active_groups")
-        msg = ("📈 **Tracked Groups:**\n\n" + "\n".join([f"• `{g['chat_id']}` — {g['title']}" for g in groups])) if groups else "❌ No active groups tracked yet."
-        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-
-async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return
-    async with pool.acquire() as conn:
-        b = await conn.fetch('SELECT username, bday FROM birthdays ORDER BY bday')
-    if not b:
-        return await context.bot.send_message(update.effective_user.id, "🎂 No birthdays registered yet.")
-    msg = "🎂 **Birthday Registry**\n\n" + "\n".join([f"• @{x['username']}: `{x['bday']}`" for x in b])
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
-
-
-async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return
-    async with pool.acquire() as conn:
-        recs = await conn.fetch(
-            "SELECT username, report, created_at FROM bug_reports "
-            "WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC"
-        )
-    if not recs:
-        return await context.bot.send_message(update.effective_user.id, "🪹 No feedback in the last 7 days.")
-    msg = "📋 **Feedback — Last 7 Days**\n\n"
-    for r in recs:
-        ts   = r['created_at'].astimezone(WIB).strftime('%m/%d %H:%M')
-        msg += f"• `[{ts}]` @{r['username']}: {r['report']}\n"
-    await send_md(context, update.effective_user.id, msg)
-
-
 async def add_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
@@ -1696,6 +1594,38 @@ async def del_bday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with pool.acquire() as conn:
         await conn.execute("DELETE FROM birthdays WHERE lower(username)=$1", u)
     await context.bot.send_message(update.effective_user.id, f"✅ Birthday for @{u} removed.")
+
+
+async def list_bdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    async with pool.acquire() as conn:
+        b = await conn.fetch('SELECT username, bday FROM birthdays ORDER BY bday')
+    if not b:
+        return await context.bot.send_message(update.effective_user.id, "🎂 No birthdays registered yet.")
+    msg = "🎂 **Birthday Registry**\n\n" + "\n".join([f"• @{x['username']}: `{x['bday']}`" for x in b])
+    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+
+
+async def feedback_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    async with pool.acquire() as conn:
+        recs = await conn.fetch(
+            "SELECT username, report, created_at FROM bug_reports "
+            "WHERE created_at >= NOW() - INTERVAL '7 days' ORDER BY created_at ASC"
+        )
+    if not recs:
+        return await context.bot.send_message(update.effective_user.id, "🪹 No feedback in the last 7 days.")
+    msg = "📋 **Feedback — Last 7 Days**\n\n"
+    for r in recs:
+        ts   = r['created_at'].astimezone(WIB).strftime('%m/%d %H:%M')
+        msg += f"• `[{ts}]` @{r['username']}: {r['report']}\n"
+    await send_md(context, update.effective_user.id, msg)
 
 
 async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1775,6 +1705,24 @@ async def del_announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.warning(f"Delete broadcast failed for {m['chat_id']}: {e}")
         await conn.execute("DELETE FROM announcements WHERE id=$1", a_id)
     await context.bot.send_message(update.effective_user.id, "✅ Announcement deleted.")
+
+
+async def check_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await delete_cmd(update)
+    pool = context.bot_data.get('db_pool')
+    if not await is_bot_admin(update.effective_user.username, pool):
+        return
+    if update.effective_chat.type in ['group', 'supergroup']:
+        await context.bot.send_message(
+            update.effective_chat.id,
+            f"📌 **Group Info**\nTitle: `{update.effective_chat.title}`\nID: `{update.effective_chat.id}`",
+            parse_mode="Markdown"
+        )
+    else:
+        async with pool.acquire() as conn:
+            groups = await conn.fetch("SELECT chat_id, title FROM active_groups")
+        msg = ("📈 **Tracked Groups:**\n\n" + "\n".join([f"• `{g['chat_id']}` — {g['title']}" for g in groups])) if groups else "❌ No active groups tracked yet."
+        await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
 
 
 async def bot_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1875,19 +1823,27 @@ async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _super_reset_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("☢️ WIPE ALL DATA ☢️", callback_data="sup_confirmwipe_all")],
-        [InlineKeyboardButton("⭐ Stars", callback_data="sup_confirmwipe_stars"),
-         InlineKeyboardButton("🎂 Birthdays", callback_data="sup_confirmwipe_birthdays"),
-         InlineKeyboardButton("📅 Events", callback_data="sup_confirmwipe_events")],
-        [InlineKeyboardButton("📊 Polls", callback_data="sup_confirmwipe_polls"),
-         InlineKeyboardButton("📚 Library", callback_data="sup_confirmwipe_library"),
-         InlineKeyboardButton("⚡ Tasks", callback_data="sup_confirmwipe_tasks")],
-        [InlineKeyboardButton("🏖️ Away", callback_data="sup_confirmwipe_away"),
-         InlineKeyboardButton("📍 Channels", callback_data="sup_confirmwipe_channels"),
-         InlineKeyboardButton("🗓️ Schedules", callback_data="sup_confirmwipe_schedules")],
-        [InlineKeyboardButton("💡 Feedback", callback_data="sup_confirmwipe_feedback"),
-         InlineKeyboardButton("📈 Stats", callback_data="sup_confirmwipe_stats"),
-         InlineKeyboardButton("🧠 Trivia", callback_data="sup_confirmwipe_trivia")],
+        [InlineKeyboardButton("☢️ WIPE ALL DATA ☢️", callback_data="sup_reset_all")],
+        [
+            InlineKeyboardButton("⭐ Stars", callback_data="sup_reset_stars"),
+            InlineKeyboardButton("🎂 Birthdays", callback_data="sup_reset_birthdays"),
+            InlineKeyboardButton("📅 Events", callback_data="sup_reset_events")
+        ],
+        [
+            InlineKeyboardButton("📊 Polls", callback_data="sup_reset_polls"),
+            InlineKeyboardButton("📚 Library", callback_data="sup_reset_library"),
+            InlineKeyboardButton("⚡ Tasks", callback_data="sup_reset_tasks")
+        ],
+        [
+            InlineKeyboardButton("🏖️ Away", callback_data="sup_reset_away"),
+            InlineKeyboardButton("📍 Channels", callback_data="sup_reset_channels"),
+            InlineKeyboardButton("🗓️ Schedules", callback_data="sup_reset_schedules")
+        ],
+        [
+            InlineKeyboardButton("💡 Feedback", callback_data="sup_reset_feedback"),
+            InlineKeyboardButton("📈 Stats", callback_data="sup_reset_stats"),
+            InlineKeyboardButton("🧠 Trivia", callback_data="sup_reset_trivia")
+        ],
         [InlineKeyboardButton("❌ Cancel", callback_data="sup_cancel")]
     ])
 
@@ -1896,7 +1852,6 @@ async def super_reset_req(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     if not await is_super(update.effective_user.username):
         return
-
     await context.bot.send_message(
         update.effective_user.id,
         "☢️ **FACTORY WIPE MENU**\n\nSelect a database section to wipe. *This action is destructive and permanent.*",
@@ -1943,11 +1898,9 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if q.data == "sup_cancel":
         await q.answer("Cancelled.")
         return await q.edit_message_text("❌ Action cancelled.")
-        
     parts = q.data.split("_")
     act   = parts[1]
     t     = parts[2] if len(parts) > 2 else ""
-    
     async with pool.acquire() as conn:
         if act == "addadmin":
             await conn.execute('INSERT INTO bot_admins (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
@@ -1960,51 +1913,22 @@ async def super_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await conn.execute('DELETE FROM birthdays WHERE username=$1', t)
             await conn.execute('INSERT INTO graveyard (username) VALUES ($1) ON CONFLICT DO NOTHING', t)
             await q.edit_message_text(f"✅ @{t} offboarded and moved to Graveyard.")
-        elif act == "confirmwipe":
-            await q.answer()
-            await q.edit_message_text(
-                f"⚠️ **Factory Wipe Confirmation**\n\nAre you sure you want to wipe `{t}`?\n\n**This cannot be undone.**",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⚠️ Confirm Wipe", callback_data=f"sup_reset_{t}"),
-                    InlineKeyboardButton("🔙 Back", callback_data="sup_resetmenu_back")
-                ]]),
-                parse_mode="Markdown"
-            )
-        elif act == "resetmenu":
-            await q.answer()
-            await q.edit_message_text(
-                "☢️ **FACTORY WIPE MENU**\n\nSelect a database section to wipe. *This action is destructive and permanent.*",
-                reply_markup=_super_reset_kb(),
-                parse_mode="Markdown"
-            )
         elif act == "reset":
             try:
-                if t in ["stars", "all"]:
-                    await conn.execute("TRUNCATE kudos CASCADE")
-                if t in ["birthdays", "all"]:
-                    await conn.execute("TRUNCATE birthdays CASCADE")
-                if t in ["events", "all"]:
-                    await conn.execute("TRUNCATE events, rsvps CASCADE")
-                if t in ["polls", "all"]:
-                    await conn.execute("TRUNCATE poll_drafts, active_polls CASCADE")
-                if t in ["library", "all"]:
-                    await conn.execute("TRUNCATE library CASCADE")
-                if t in ["tasks", "all"]:
-                    await conn.execute("TRUNCATE tasks CASCADE")
-                if t in ["away", "all"]:
-                    await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
-                if t in ["channels", "all"]:
+                if t in ["stars", "all"]: await conn.execute("TRUNCATE kudos CASCADE")
+                if t in ["birthdays", "all"]: await conn.execute("TRUNCATE birthdays CASCADE")
+                if t in ["events", "all"]: await conn.execute("TRUNCATE events, rsvps CASCADE")
+                if t in ["polls", "all"]: await conn.execute("TRUNCATE poll_drafts, active_polls CASCADE")
+                if t in ["library", "all"]: await conn.execute("TRUNCATE library CASCADE")
+                if t in ["tasks", "all"]: await conn.execute("TRUNCATE tasks CASCADE")
+                if t in ["away", "all"]: await conn.execute("TRUNCATE away_status, away_mentions CASCADE")
+                if t in ["channels", "all"]: 
                     await conn.execute("DELETE FROM config WHERE key IN ('bday_channel', 'stars_channel', 'feedback_channel')")
                     await conn.execute("DELETE FROM trivia_config WHERE key='target_chat_id'")
-                if t in ["schedules", "all"]:
-                    await conn.execute("TRUNCATE scheduled_announcements CASCADE")
-                if t in ["feedback", "all"]:
-                    await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
-                if t in ["stats", "all"]:
-                    await conn.execute("TRUNCATE bot_stats, chat_history, active_groups CASCADE")
-                if t in ["trivia", "all"]:
-                    await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
-                    
+                if t in ["schedules", "all"]: await conn.execute("TRUNCATE scheduled_announcements CASCADE")
+                if t in ["feedback", "all"]: await conn.execute("TRUNCATE bug_reports, feedback_drafts CASCADE")
+                if t in ["stats", "all"]: await conn.execute("TRUNCATE bot_stats, chat_history, active_groups CASCADE")
+                if t in ["trivia", "all"]: await conn.execute("TRUNCATE active_trivia, trivia_scores CASCADE")
                 await q.edit_message_text(f"✅ Wiped `{t}` database.")
             except Exception as e:
                 await q.edit_message_text(f"❌ Error wiping `{t}`: {e}")
@@ -2102,18 +2026,6 @@ async def process_schedules(context: ContextTypes.DEFAULT_TYPE):
                 await conn.execute(
                     "UPDATE scheduled_announcements SET last_run=$1 WHERE id=$2", now, s['id']
                 )
-
-
-async def schedule_announcement(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Legacy text command. /newsched is the preferred inline keyboard version."""
-    await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
-        return
-    await update.message.reply_text(
-        "ℹ️ Please use `/newsched` for the interactive broadcast scheduler.",
-        parse_mode="Markdown"
-    )
 
 
 async def list_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE):
