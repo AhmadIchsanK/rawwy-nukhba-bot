@@ -276,7 +276,8 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _generate_content_with_retry(client, contents, max_retries=3, base_delay=5):
     """
     Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
-    Survives rate limits and guarantees the primary error is reported.
+    Survives rate limits (429), service unavailability (503), and guarantees
+    the primary error is reported.
     """
     # Updated 2026-06: 1.5/2.0 models are fully shut down; use 2.5 generation
     models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash']
@@ -299,9 +300,19 @@ async def _generate_content_with_retry(client, contents, max_retries=3, base_del
                 
                 if "404" in err_str or "NOT_FOUND" in err_str:
                     break 
-                    
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                
+                # Retry on rate limits (429) AND temporary server errors (503)
+                is_retryable = (
+                    "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
+                    "503" in err_str or "UNAVAILABLE" in err_str
+                )
+                if is_retryable:
                     if attempt < max_retries:
+                        logger.warning(
+                            f"Gemini API transient error on {model_name} "
+                            f"(attempt {attempt}/{max_retries}): {err_str[:80]}. "
+                            f"Retrying in {delay}s..."
+                        )
                         await asyncio.sleep(delay)
                         delay *= 2
                         continue

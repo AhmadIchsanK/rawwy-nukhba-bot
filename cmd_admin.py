@@ -1888,8 +1888,8 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _generate_content_with_retry(client, model_name, contents, max_retries=3, base_delay=5):
     """
-    Wraps the Gemini API call in an exponential backoff loop. 
-    Crucial for surviving 429 RESOURCE_EXHAUSTED errors on free tiers.
+    Wraps the Gemini API call in an exponential backoff loop.
+    Handles 429 RESOURCE_EXHAUSTED and 503 UNAVAILABLE (high demand) errors.
     """
     delay = base_delay
     last_err = None
@@ -1903,13 +1903,21 @@ async def _generate_content_with_retry(client, model_name, contents, max_retries
         except Exception as e:
             last_err = e
             err_str = str(e)
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+            # Retry on rate limits (429) AND temporary server errors (503)
+            is_retryable = (
+                "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
+                "503" in err_str or "UNAVAILABLE" in err_str
+            )
+            if is_retryable:
                 if attempt < max_retries:
-                    logger.warning(f"Gemini API Rate Limit hit (Attempt {attempt}/{max_retries}). Retrying in {delay}s...")
+                    logger.warning(
+                        f"Gemini API transient error (attempt {attempt}/{max_retries}): "
+                        f"{err_str[:80]}. Retrying in {delay}s..."
+                    )
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
-            # If it's a 400 error or we exhausted retries, break loop and raise
+            # For 400 errors, non-retryable errors, or exhausted retries, stop
             break
     raise last_err
 
