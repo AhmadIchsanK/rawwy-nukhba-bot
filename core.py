@@ -240,3 +240,101 @@ async def log_action(pool, user_id: int, chat_id: int, category: str, status: st
 
 async def update_user_menu(user_id: int, username: str, pool, bot):
     pass
+
+# ─────────────────────────────────────────────────────────────────
+# ⏱️ INLINE KEYBOARD TIMEOUT & OWNERSHIP UTILITIES
+# ─────────────────────────────────────────────────────────────────
+KEYBOARD_TIMEOUT = 120  # seconds
+
+def kb_key(chat_id: int, msg_id: int) -> str:
+    return f"kb_owner_{chat_id}_{msg_id}"
+
+def register_kb_owner(context, chat_id: int, msg_id: int, user_id: int, prompt_msg_id: int = None):
+    """Register who owns an inline keyboard and schedule its auto-expiry."""
+    context.bot_data.setdefault('kb_owners', {})[kb_key(chat_id, msg_id)] = {
+        'user_id': user_id,
+        'prompt_msg_id': prompt_msg_id,
+    }
+
+def get_kb_owner(context, chat_id: int, msg_id: int) -> int:
+    """Return the user_id who owns a keyboard, or None."""
+    entry = context.bot_data.get('kb_owners', {}).get(kb_key(chat_id, msg_id))
+    return entry['user_id'] if entry else None
+
+def pop_kb_owner(context, chat_id: int, msg_id: int):
+    """Remove and return the kb owner entry."""
+    return context.bot_data.get('kb_owners', {}).pop(kb_key(chat_id, msg_id), None)
+
+CANCELLED_TEXT = "⏰ This panel was closed due to 120 seconds of inactivity."
+
+async def keyboard_timeout_callback(context):
+    """Job callback: expire an inline keyboard after KEYBOARD_TIMEOUT seconds."""
+    job = context.job
+    chat_id = job.data['chat_id']
+    msg_id  = job.data['msg_id']
+    bot     = context.bot
+
+    entry = pop_kb_owner(context, chat_id, msg_id)
+    if entry is None:
+        return  # already dismissed
+
+    # 1. Remove the keyboard from the original message
+    try:
+        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
+    except Exception:
+        pass
+
+    # 2. Send the cancellation notice
+    try:
+        await bot.send_message(chat_id, CANCELLED_TEXT)
+    except Exception:
+        pass
+
+    # 3. Delete any pending "awaiting input" prompt message
+    prompt_msg_id = entry.get('prompt_msg_id')
+    if prompt_msg_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=prompt_msg_id)
+        except Exception:
+            pass
+
+async def schedule_kb_timeout(context, chat_id: int, msg_id: int, user_id: int, prompt_msg_id: int = None):
+    """Register ownership + schedule auto-expiry. Call after sending any personal inline keyboard."""
+    register_kb_owner(context, chat_id, msg_id, user_id, prompt_msg_id)
+    job_name = f"kb_timeout_{chat_id}_{msg_id}"
+    for j in context.job_queue.get_jobs_by_name(job_name):
+        j.schedule_removal()
+    context.job_queue.run_once(
+        keyboard_timeout_callback,
+        when=KEYBOARD_TIMEOUT,
+        data={'chat_id': chat_id, 'msg_id': msg_id},
+        name=job_name
+    )
+
+def cancel_kb_timeout(context, chat_id: int, msg_id: int):
+    """Cancel the timeout job when a keyboard is dismissed normally."""
+    pop_kb_owner(context, chat_id, msg_id)
+    job_name = f"kb_timeout_{chat_id}_{msg_id}"
+    for j in context.job_queue.get_jobs_by_name(job_name):
+        j.schedule_removal()
+
+async def check_kb_ownership(query, context) -> bool:
+    """
+    Call at the top of any personal callback handler.
+    Returns True (allowed) or False (blocked + answered).
+    Public keyboards (trivia answers, polls, rsvp) should NOT call this.
+    """
+    chat_id = query.message.chat.id
+    msg_id  = query.message.message_id
+    owner   = get_kb_owner(context, chat_id, msg_id)
+    if owner is None:
+        # No owner registered (e.g. public kb) — allow
+        return True
+    if query.from_user.id != owner:
+        await query.answer("❌ This panel belongs to someone else.", show_alert=True)
+        return False
+    return True
+
+async def dismiss_kb_timeout_on_action(context, chat_id: int, msg_id: int):
+    """Call when user successfully dismisses/saves a panel — cancels the timeout cleanly."""
+    cancel_kb_timeout(context, chat_id, msg_id)

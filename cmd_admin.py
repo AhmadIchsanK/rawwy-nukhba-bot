@@ -7,7 +7,7 @@ from google import genai
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delete_cmd, log_action
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, CANCELLED_TEXT
 from cmd_system import _generate_content_with_retry
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,22 @@ async def _ensure_version_table(pool):
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
         ''')
+        # Seed v1.2 entry if this is the first run at this version
+        count = await conn.fetchval("SELECT COUNT(*) FROM bot_version WHERE version='1.2'")
+        if not count:
+            await conn.execute(
+                "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
+                "1.2",
+                "• Inline keyboards auto-expire after 120s of inactivity\n"
+                "• Inline keyboard panels are now owner-locked (only opener can interact)\n"
+                "• /newsched Set Target Group by ID bug fixed — panel now properly restores after input\n"
+                "• /getlib now supports multi-word asset names (e.g. /getlib Company Logo)\n"
+                "• /assign supports multiple assignees: /assign @user1 @user2 , Mins , Task\n"
+                "• /complete shows per-person progress (1/2, 2/2) for group tasks\n"
+                "• /botconfig is now All-in-One: includes User Manager + Group IDs + Sched Config\n"
+                "• /manageusers redirects to /botconfig (merged & deprecated)\n"
+                "• Library lookups are case-insensitive and support partial matching"
+            )
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bot_admins (
                 username VARCHAR(100) PRIMARY KEY
@@ -137,6 +153,7 @@ async def bot_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     context.user_data['cfg_msg_id'] = msg.message_id
+    await schedule_kb_timeout(context, update.effective_chat.id, msg.message_id, update.effective_user.id)
 
 
 def _cfg_text(d):
@@ -185,6 +202,11 @@ def _cfg_kb(d):
             InlineKeyboardButton("✏️", callback_data="cfg_away_cus"),
         ],
         [
+            InlineKeyboardButton("👥 Manage Users", callback_data="cfg_goto_users"),
+            InlineKeyboardButton("🗓️ Sched Config", callback_data="cfg_goto_sched"),
+        ],
+        [
+            InlineKeyboardButton("🆔 Group IDs", callback_data="cfg_show_groups"),
             InlineKeyboardButton("✅ Save", callback_data="cfg_save"),
             InlineKeyboardButton("❌ Cancel", callback_data="cfg_cancel"),
         ],
@@ -270,10 +292,11 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer(f"→ {d[db_key]}")
     elif action == 'cus':
         context.user_data['awaiting_cfg_field'] = db_key
+        context.user_data['cfg_msg_id'] = q.message.message_id  # ensure it's up to date
         await q.answer()
         try:
             await q.edit_message_text(
-                f"✏️ **Type a new value for `{field}`:**\n\nCurrent: `{d[db_key]}`",
+                f"✏️ **Type a new value for `{field}`:**\n\nCurrent: `{d[db_key]}`\n\n_Reply will restore this panel automatically._",
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -963,18 +986,19 @@ async def send_daily_audit_digest(context: ContextTypes.DEFAULT_TYPE):
 # ─────────────────────────────────────────────
 
 async def manage_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Alias — /manageusers is now merged into /botconfig. Kept for backward compat."""
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return
-
-    context.user_data['mu_owner'] = update.effective_user.id
     await update.message.reply_text(
-        "👥 **USER MANAGER**\n\n"
-        "Choose what you'd like to manage:",
-        reply_markup=_mu_main_kb(),
+        "ℹ️ `/manageusers` has been merged into `/botconfig`.\n\n"
+        "Please use `/botconfig` and tap **👥 Manage Users** from the panel.",
         parse_mode="Markdown"
     )
+    # Auto-open user manager directly for convenience
+    # The full user manager logic is now accessed via /botconfig → Manage Users button
+    return
 
 
 def _mu_main_kb():
@@ -1314,11 +1338,14 @@ async def new_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'message': '',
     }
 
-    await update.message.reply_text(
+    msg = await update.message.reply_text(
         _nsched_text(context.user_data['nsched_draft']),
         reply_markup=_nsched_kb(context.user_data['nsched_draft']),
         parse_mode="Markdown"
     )
+    context.user_data['nsched_msg_id']  = msg.message_id
+    context.user_data['nsched_chat_id'] = update.effective_chat.id
+    await schedule_kb_timeout(context, update.effective_chat.id, msg.message_id, update.effective_user.id)
 
 
 def _nsched_text(d):
@@ -1376,6 +1403,7 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = q.data
 
     if data == "nsched_cancel":
+        cancel_kb_timeout(context, q.message.chat.id, q.message.message_id)
         context.user_data.pop('nsched_draft', None)
         context.user_data.pop('nsched_owner', None)
         await q.answer("Cancelled.")
@@ -1398,6 +1426,7 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 d['chat_id'], d['frequency'], d['run_time'], d['mention'],
                 d['message'], q.from_user.username
             )
+        cancel_kb_timeout(context, q.message.chat.id, q.message.message_id)
         context.user_data.pop('nsched_draft', None)
         context.user_data.pop('nsched_owner', None)
         await q.answer("✅ Scheduled!")
@@ -1412,12 +1441,16 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "nsched_target":
         context.user_data['awaiting_nsched_target'] = True
+        # Store chat_id + msg_id so we can restore the panel after user replies
+        context.user_data['nsched_msg_id']  = q.message.message_id
+        context.user_data['nsched_chat_id'] = q.message.chat.id
         await q.answer()
         try:
             await q.edit_message_text(
                 "📡 **Set Target Chat**\n\n"
                 "Type `all` to broadcast to all groups,\n"
-                "or type a specific chat ID (e.g. `-1001234567890`):",
+                "or type a specific Group ID (e.g. `-1001234567890`).\n\n"
+                "_Run /groupid or /registergroup inside the target group to get its ID._",
                 parse_mode="Markdown"
             )
         except Exception as e:
@@ -1440,6 +1473,8 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "nsched_time_cus":
         context.user_data['awaiting_nsched_time'] = True
+        context.user_data['nsched_msg_id']  = q.message.message_id
+        context.user_data['nsched_chat_id'] = q.message.chat.id
         await q.answer()
         try:
             await q.edit_message_text(
@@ -1456,6 +1491,8 @@ async def newsched_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "nsched_message":
         context.user_data['awaiting_nsched_message'] = True
+        context.user_data['nsched_msg_id']  = q.message.message_id
+        context.user_data['nsched_chat_id'] = q.message.chat.id
         await q.answer()
         try:
             await q.edit_message_text(
@@ -1521,9 +1558,24 @@ async def _handle_nsched_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             await update.message.delete()
         except Exception as e:
             logger.debug(f"Failed to delete user message: {e}")
-        await update.message.reply_text(
-            _nsched_text(d), reply_markup=_nsched_kb(d), parse_mode="Markdown"
+
+        # Try to edit the original panel message back; fall back to new message
+        msg_id  = context.user_data.get('nsched_msg_id')
+        chat_id = context.user_data.get('nsched_chat_id') or update.effective_chat.id
+        if msg_id:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id, message_id=msg_id,
+                    text=_nsched_text(d), reply_markup=_nsched_kb(d), parse_mode="Markdown"
+                )
+                return True
+            except Exception as e:
+                logger.debug(f"nsched restore edit failed: {e}")
+        # Fallback: send a new panel and update stored msg_id
+        m = await context.bot.send_message(
+            chat_id, _nsched_text(d), reply_markup=_nsched_kb(d), parse_mode="Markdown"
         )
+        context.user_data['nsched_msg_id'] = m.message_id
         return True
 
     return False
