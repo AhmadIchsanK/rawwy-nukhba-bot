@@ -133,22 +133,52 @@ async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYP
     result = update.my_chat_member
     if not result:
         return
-    chat = result.chat
-    status = result.new_chat_member.status
-    pool = context.bot_data.get('db_pool')
-    
-    if status in ['member', 'administrator']:
+    chat   = result.chat
+    pool   = context.bot_data.get('db_pool')
+
+    old_status = result.old_chat_member.status  # what the bot was before
+    new_status = result.new_chat_member.status  # what the bot is now
+
+    # ── Bot was just added (wasn't a member before) ───────────────────────────
+    if old_status in ('left', 'kicked') and new_status in ('member', 'administrator'):
         inviter = result.from_user.username or str(result.from_user.id)
-        if not await is_bot_admin(inviter, pool):
+        invited_by_admin = await is_bot_admin(inviter, pool)
+        if not invited_by_admin:
+            # Unauthorised add — leave immediately
             try:
-                await context.bot.send_message(chat.id, "❌ **Access Denied.** Leaving chat.")
+                await context.bot.send_message(
+                    chat.id,
+                    "❌ **Access Denied.**\n\nI can only be added by authorised administrators. Leaving now."
+                )
+            except Exception:
+                pass
+            try:
                 await context.bot.leave_chat(chat.id)
             except Exception:
                 pass
             return
+        # Authorised add — register the group
         async with pool.acquire() as conn:
-            await conn.execute('INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2', chat.id, chat.title)
-    elif status in ['left', 'kicked']:
+            await conn.execute(
+                'INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2',
+                chat.id, chat.title
+            )
+        return
+
+    # ── Bot was promoted to admin by someone (was already a member) ───────────
+    # This covers the case where the bot was added by a Super Admin as a plain
+    # member, and later someone (admin/owner of the group) promotes it.
+    # We ALLOW this — the bot stays and updates its group record.
+    if old_status == 'member' and new_status == 'administrator':
+        async with pool.acquire() as conn:
+            await conn.execute(
+                'INSERT INTO active_groups (chat_id, title) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET title=$2',
+                chat.id, chat.title
+            )
+        return
+
+    # ── Bot was demoted or left ───────────────────────────────────────────────
+    if new_status in ('left', 'kicked'):
         async with pool.acquire() as conn:
             await conn.execute('DELETE FROM active_groups WHERE chat_id=$1', chat.id)
 

@@ -79,7 +79,6 @@ COMMANDS = [
     {"name": "audittime",    "desc": "Set daily audit digest time",         "format": "`/audittime 23:50`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "⏰"},
 
     # 👥 ADMIN — USER MANAGEMENT
-    {"name": "manageusers", "desc": "⚠️ Merged into /botconfig",           "public": False, "admin": True, "category": "👥 User Management", "emoji": "⚠️"},
     {"name": "checkquota",  "desc": "Check user star quota",                "format": "`/checkquota @user` or `all`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🔍"},
     {"name": "admin_stars", "desc": "Manually edit user stars",             "format": "`/admin_stars @user , <quota|monthly|total> , <set|add|sub> , <amt>`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "⭐"},
     {"name": "checklimit",  "desc": "Check AI limit",                       "format": "`/checklimit @user` or `all`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🔍"},
@@ -122,7 +121,7 @@ COMMANDS = [
     # ==========================================
     # 👑 SUPER OWNER EXCLUSIVES
     # ==========================================
-    {"name": "update",          "desc": "View latest bot version log",      "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔄"},
+    {"name": "update",          "desc": "View latest bot version log",      "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🔄"},
     {"name": "pushupdate",      "desc": "Push auto-increment version log",  "format": "`/pushupdate Fixed bugs and UI`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🚀"},
     {"name": "updatechange",    "desc": "Set manual version and log",       "format": "`/updatechange 2.0 , Massive overhaul`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔄"},
     {"name": "allcommandtest",  "desc": "Test all commands",                "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🧪"},

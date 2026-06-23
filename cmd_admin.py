@@ -211,8 +211,9 @@ def _cfg_kb(d):
 
 
 async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
+    q    = update.callback_query
     pool = context.bot_data.get('db_pool')
+    data = q.data
 
     if not await is_bot_admin(q.from_user.username, pool):
         return await q.answer("❌ Admins only.", show_alert=True)
@@ -221,8 +222,7 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if owner and q.from_user.id != owner:
         return await q.answer("❌ This panel was opened by another admin.", show_alert=True)
 
-    data = q.data
-
+    # ── Static actions (no draft needed) ─────────────────────────────────────
     if data == "cfg_noop":
         return await q.answer()
 
@@ -234,7 +234,7 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await q.edit_message_text("❌ Config cancelled. No changes saved.")
         except Exception as e:
-            logger.debug(f"Failed to edit message on config cancel: {e}")
+            logger.debug(f"cfg_cancel edit failed: {e}")
         return
 
     if data == "cfg_save":
@@ -257,63 +257,10 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logger.debug(f"Failed to update menu text on save: {e}")
+            logger.debug(f"cfg_save edit failed: {e}")
         return
 
-    d = context.user_data.get('cfg_draft')
-    if not d:
-        return await q.answer("Session expired. Run /botconfig again.", show_alert=True)
-
-    parts = data.split("_")
-    if len(parts) < 3:
-        return await q.answer()
-
-    field_key_map = {
-        'gemini': 'gemini_weekly_limit',
-        'stars':  'star_quota',
-        'tasks':  'max_tasks',
-        'events': 'max_events',
-        'away':   'max_away_days',
-    }
-    field  = parts[1]
-    action = parts[2]
-    db_key = field_key_map.get(field)
-
-    if not db_key:
-        return await q.answer()
-
-    if action == 'add':
-        d[db_key] = str(int(d[db_key]) + 1)
-        await q.answer(f"→ {d[db_key]}")
-    elif action == 'sub':
-        new_val = max(1, int(d[db_key]) - 1)
-        d[db_key] = str(new_val)
-        await q.answer(f"→ {d[db_key]}")
-    elif action == 'cus':
-        context.user_data['awaiting_cfg_field'] = db_key
-        context.user_data['cfg_msg_id'] = q.message.message_id  # ensure it's up to date
-        await q.answer()
-        field_labels = {
-            'gemini_weekly_limit': 'AI Queries/Week',
-            'star_quota':          'Star Quota/Week',
-            'max_tasks':           'Max Pending Tasks',
-            'max_events':          'Max Active Events',
-            'max_away_days':       'Max Away Days',
-        }
-        label = field_labels.get(db_key, db_key)
-        try:
-            await q.edit_message_text(
-                f"✏️ **Set Custom Value — {label}**\n\n"
-                f"Current: `{d[db_key]}`\n\n"
-                f"Type a positive whole number and send it here.\n"
-                f"_The panel will restore automatically after your reply._",
-                parse_mode="Markdown"
-            )
-        except Exception as e:
-            logger.debug(f"Failed to edit custom config prompt: {e}")
-        return
-
-    # ── Navigation buttons ────────────────────────────────────────────────────
+    # ── Navigation buttons (open sub-panels) ─────────────────────────────────
     if data == "cfg_goto_users":
         await q.answer()
         context.user_data['mu_owner'] = q.from_user.id
@@ -330,22 +277,22 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cfg_goto_sched":
         await q.answer()
         async with pool.acquire() as conn:
-            bday_time  = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'")   or "10:00"
-            bday_ch    = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'") or ""
-            kp_time    = await conn.fetchval("SELECT value FROM config WHERE key='kp_lb_time'")  or "13:00"
-            kp_ch      = await conn.fetchval("SELECT value FROM config WHERE key='kp_channel'")  or ""
-            star_time  = await conn.fetchval("SELECT value FROM config WHERE key='star_lb_time'") or "00:05"
-            star_ch    = await conn.fetchval("SELECT value FROM config WHERE key='stars_channel'") or ""
-        context.user_data['schcfg_owner'] = q.from_user.id
-        context.user_data['schcfg_draft'] = {
+            bday_time = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'")    or "10:00"
+            bday_ch   = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'") or ""
+            kp_time   = await conn.fetchval("SELECT value FROM config WHERE key='kp_lb_time'")   or "13:00"
+            kp_ch     = await conn.fetchval("SELECT value FROM config WHERE key='kp_channel'")   or ""
+            star_time = await conn.fetchval("SELECT value FROM config WHERE key='star_lb_time'") or "00:05"
+            star_ch   = await conn.fetchval("SELECT value FROM config WHERE key='stars_channel'") or ""
+        context.user_data['schcfg_owner']  = q.from_user.id
+        context.user_data['schcfg_msg_id'] = q.message.message_id
+        context.user_data['schcfg_draft']  = {
             'bday_time': bday_time, 'bday_ch': bday_ch,
             'kp_time':   kp_time,   'kp_ch':   kp_ch,
             'star_time': star_time, 'star_ch': star_ch,
         }
-        context.user_data['schcfg_msg_id'] = q.message.message_id
-        for flag in ['awaiting_schcfg_bday_time','awaiting_schcfg_bday_ch',
-                     'awaiting_schcfg_kp_time',  'awaiting_schcfg_kp_ch',
-                     'awaiting_schcfg_star_time', 'awaiting_schcfg_star_ch']:
+        for flag in ['awaiting_schcfg_bday_time', 'awaiting_schcfg_bday_ch',
+                     'awaiting_schcfg_kp_time',   'awaiting_schcfg_kp_ch',
+                     'awaiting_schcfg_star_time',  'awaiting_schcfg_star_ch']:
             context.user_data.pop(flag, None)
         try:
             await q.edit_message_text(
@@ -365,12 +312,16 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lines = ["🆔 **Registered Group IDs**\n"]
             for g in groups:
                 lines.append(f"• `{g['chat_id']}` — {g['title']}")
-            msg = "\n".join(lines)
+            body = "\n".join(lines)
         else:
-            msg = "🆔 **Registered Group IDs**\n\n_No groups registered yet._\n\nRun `/registergroup` inside a group to add it."
+            body = (
+                "🆔 **Registered Group IDs**\n\n"
+                "_No groups registered yet._\n\n"
+                "Run `/registergroup` inside a group to add it."
+            )
         try:
             await q.edit_message_text(
-                msg + "\n\n_Press Back to return to config._",
+                body + "\n\n_Press Back to return to config._",
                 reply_markup=InlineKeyboardMarkup([
                     [InlineKeyboardButton("◀️ Back to Config", callback_data="cfg_back")]
                 ]),
@@ -381,26 +332,83 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "cfg_back":
+        d = context.user_data.get('cfg_draft')
+        if not d:
+            return await q.answer("Session expired. Run /botconfig again.", show_alert=True)
         await q.answer()
         try:
-            await q.edit_message_text(
-                _cfg_text(d),
-                reply_markup=_cfg_kb(d),
-                parse_mode="Markdown"
-            )
+            await q.edit_message_text(_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown")
         except Exception as e:
             logger.debug(f"cfg_back failed: {e}")
         return
 
+    # ── Field +/− /custom buttons (require draft) ────────────────────────────
+    d = context.user_data.get('cfg_draft')
+    if not d:
+        return await q.answer("Session expired. Run /botconfig again.", show_alert=True)
+
+    # callback_data format: cfg_<field>_<action>
+    # field names: gemini, stars, tasks, events, away
+    # actions: add, sub, cus
+    field_key_map = {
+        'gemini': 'gemini_weekly_limit',
+        'stars':  'star_quota',
+        'tasks':  'max_tasks',
+        'events': 'max_events',
+        'away':   'max_away_days',
+    }
+    field_labels = {
+        'gemini_weekly_limit': 'AI Queries/Week',
+        'star_quota':          'Star Quota/Week',
+        'max_tasks':           'Max Pending Tasks',
+        'max_events':          'Max Active Events',
+        'max_away_days':       'Max Away Days',
+    }
+
+    # Strip prefix "cfg_" then split into field + action
+    # e.g. "cfg_gemini_add" → "gemini_add" → field="gemini", action="add"
+    # e.g. "cfg_events_cus" → "events_cus" → field="events", action="cus"
+    stripped = data[4:]  # remove "cfg_"
+    # action is always the last segment; field is everything before
+    segments = stripped.rsplit("_", 1)
+    if len(segments) != 2:
+        return await q.answer()
+    field, action = segments[0], segments[1]
+    db_key = field_key_map.get(field)
+    if not db_key or action not in ('add', 'sub', 'cus'):
+        return await q.answer()
+
+    if action == 'add':
+        d[db_key] = str(int(d[db_key]) + 1)
+        await q.answer(f"→ {d[db_key]}")
+
+    elif action == 'sub':
+        d[db_key] = str(max(1, int(d[db_key]) - 1))
+        await q.answer(f"→ {d[db_key]}")
+
+    elif action == 'cus':
+        context.user_data['awaiting_cfg_field'] = db_key
+        context.user_data['cfg_msg_id'] = q.message.message_id
+        label = field_labels.get(db_key, db_key)
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                f"✏️ **Set Custom Value — {label}**\n\n"
+                f"Current value: `{d[db_key]}`\n\n"
+                f"Send a positive whole number.\n"
+                f"_The config panel will restore automatically after your reply._",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.debug(f"cfg custom prompt edit failed: {e}")
+        return  # Don't fall through to the refresh below
+
+    # Refresh the panel for add/sub actions
     try:
-        await q.edit_message_text(
-            _cfg_text(d),
-            reply_markup=_cfg_kb(d),
-            parse_mode="Markdown"
-        )
+        await q.edit_message_text(_cfg_text(d), reply_markup=_cfg_kb(d), parse_mode="Markdown")
     except BadRequest as e:
         if "Message is not modified" not in str(e):
-            logger.warning(f"cfg_callback edit error: {e}")
+            logger.warning(f"cfg_callback refresh error: {e}")
 
 
 async def handle_admin_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
@@ -1113,7 +1121,23 @@ async def manage_users_callback(update: Update, context: ContextTypes.DEFAULT_TY
     data = q.data
 
     if data == "mu_close":
+        cancel_kb_timeout(context, q.message.chat.id, q.message.message_id)
+        context.user_data.pop('mu_owner', None)
+        context.user_data.pop('mu_section', None)
+        context.user_data.pop('awaiting_mu_input', None)
         await q.answer("Closed.")
+        # If we came from /botconfig, restore the config panel
+        cfg_draft = context.user_data.get('cfg_draft')
+        if cfg_draft:
+            try:
+                await q.edit_message_text(
+                    _cfg_text(cfg_draft),
+                    reply_markup=_cfg_kb(cfg_draft),
+                    parse_mode="Markdown"
+                )
+                return
+            except Exception as e:
+                logger.debug(f"mu_close restore cfg panel failed: {e}")
         try:
             await q.edit_message_text("👥 User Manager closed.")
         except Exception as e:
@@ -1782,7 +1806,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "about": "about_command",
         "wdim": "what_did_i_miss", "feedback": "submit_feedback",
         "ask": "ask_bot", "gemini": "ask_gemini",
-        "update": "update_info", "pushupdate": "push_update",
+        "pushupdate": "push_update",
         "updatechange": "update_change",
         "newevent": "create_event", "editevent": "edit_event",
         "events": "list_events", "poll": "create_poll",
@@ -1798,13 +1822,13 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "triviaconfig": "trivia_config", "forcetrivia": "force_trivia",
         "forcesupertrivia": "force_super_trivia",
         "canceltrivia": "cancel_trivia", "endtrivia": "end_trivia",
-        "triviaend": "end_trivia", "admin_kp": "admin_kp",
+        "admin_kp": "admin_kp",
         "botconfig": "bot_config", "schedconfig": "sched_config",
         "setchannel": "set_channel",
         "unsetchannel": "unset_channel", "groupid": "check_group_id",
         "registergroup": "register_group",
         "auditlog": "get_audit_log", "audittime": "set_audit_time",
-        "manageusers": "manage_users", "checkquota": "check_quota",
+        "update": "update_info", "checkquota": "check_quota",
         "admin_stars": "admin_stars", "checklimit": "check_limit",
         "admin_limit": "admin_limit", "addbday": "add_bday",
         "editbday": "edit_bday", "delbday": "del_bday",
