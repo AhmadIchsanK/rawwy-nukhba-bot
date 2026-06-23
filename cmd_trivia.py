@@ -3,11 +3,12 @@ import logging
 import json
 import re
 import asyncio
-from google import genai
+from openai import OpenAI as GroqClient
+from google import genai  # fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-from core import WIB, GEMINI_API_KEY, is_bot_admin, is_super, delete_cmd
+from core import WIB, GEMINI_API_KEY, GROQ_API_KEY, is_bot_admin, is_super, delete_cmd
 
 logger = logging.getLogger(__name__)
 
@@ -675,55 +676,91 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
     )
 
-    if not GEMINI_API_KEY:
-        logger.error("GEMINI_API_KEY is not set.")
+    if not GROQ_API_KEY and not GEMINI_API_KEY:
+        logger.error("No AI API key configured (GROQ_API_KEY or GEMINI_API_KEY).")
         return
 
-    client = genai.Client(api_key=GEMINI_API_KEY)
     data = None
     primary_error = None
 
-    for model_name in GEMINI_MODELS:
-        delay = 5
-        for attempt in range(1, 4):
-            try:
-                resp = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=prompt
-                )
-                raw = resp.text.strip()
-                
-                # 100% immune to markdown UI parser cutting.
-                raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
-                raw = re.sub(r'\s*`{3}$', '', raw)
-                
-                parsed_data = json.loads(raw.strip())
-                assert 'question' in parsed_data and 'options' in parsed_data
-                assert 'correct_index' in parsed_data and 'explanation' in parsed_data
-                assert len(parsed_data['options']) >= 2
-                
-                data = parsed_data
-                break # Success, break attempt loop
-            except Exception as e:
-                if primary_error is None:
-                    primary_error = e
-                    
-                err_str = str(e)
-                
-                if "404" in err_str or "NOT_FOUND" in err_str:
-                    break # Model not supported, break attempt loop immediately and try next model
-                    
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    if attempt < 3:
+    # --- Groq primary (Llama) ---
+    groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    if GROQ_API_KEY:
+        for model_name in groq_models:
+            delay = 5
+            for attempt in range(1, 4):
+                try:
+                    groq_client = GroqClient(
+                        api_key=GROQ_API_KEY,
+                        base_url="https://api.groq.com/openai/v1"
+                    )
+                    resp = await asyncio.to_thread(
+                        groq_client.chat.completions.create,
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500,
+                    )
+                    raw = resp.choices[0].message.content.strip()
+                    raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+                    raw = re.sub(r'\s*`{3}$', '', raw)
+                    parsed_data = json.loads(raw.strip())
+                    assert 'question' in parsed_data and 'options' in parsed_data
+                    assert 'correct_index' in parsed_data and 'explanation' in parsed_data
+                    assert len(parsed_data['options']) >= 2
+                    data = parsed_data
+                    break
+                except Exception as e:
+                    if primary_error is None:
+                        primary_error = e
+                    err_str = str(e)
+                    is_retryable = (
+                        "429" in err_str or "rate_limit" in err_str.lower() or
+                        "503" in err_str or "unavailable" in err_str.lower()
+                    )
+                    if is_retryable and attempt < 3:
                         await asyncio.sleep(delay)
                         delay *= 2
                         continue
-                
-                break # Other fatal error, break attempt loop
+                    break
+            if data:
+                break
 
-        if data:
-            break # We got data, break model loop
+    # --- Gemini fallback ---
+    if not data and GEMINI_API_KEY:
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        for model_name in GEMINI_MODELS:
+            delay = 5
+            for attempt in range(1, 3):
+                try:
+                    resp = await asyncio.to_thread(
+                        gemini_client.models.generate_content,
+                        model=model_name,
+                        contents=prompt
+                    )
+                    raw = resp.text.strip()
+                    raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+                    raw = re.sub(r'\s*`{3}$', '', raw)
+                    parsed_data = json.loads(raw.strip())
+                    assert 'question' in parsed_data and 'options' in parsed_data
+                    assert 'correct_index' in parsed_data and 'explanation' in parsed_data
+                    assert len(parsed_data['options']) >= 2
+                    data = parsed_data
+                    break
+                except Exception as e:
+                    if primary_error is None:
+                        primary_error = e
+                    err_str = str(e)
+                    if "404" in err_str or "NOT_FOUND" in err_str:
+                        break
+                    if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
+                            "503" in err_str or "UNAVAILABLE" in err_str):
+                        if attempt < 2:
+                            await asyncio.sleep(delay)
+                            delay *= 2
+                            continue
+                    break
+            if data:
+                break
 
     if not data:
         logger.error(f"Trivia AI generation failed: {primary_error}")

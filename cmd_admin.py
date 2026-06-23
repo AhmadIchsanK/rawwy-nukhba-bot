@@ -3,11 +3,12 @@ import logging
 import json
 import re
 import asyncio
-from google import genai
+from openai import OpenAI as GroqClient
+from google import genai  # fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, CANCELLED_TEXT
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, GROQ_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, CANCELLED_TEXT
 from cmd_system import _generate_content_with_retry
 
 logger = logging.getLogger(__name__)
@@ -1888,46 +1889,20 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _generate_content_with_retry(client, model_name, contents, max_retries=3, base_delay=5):
     """
-    Wraps the Gemini API call in an exponential backoff loop.
-    Handles 429 RESOURCE_EXHAUSTED and 503 UNAVAILABLE (high demand) errors.
+    Groq-primary AI call with Gemini fallback.
+    `client` and `model_name` params kept for API compatibility but are unused;
+    providers and models are selected internally.
     """
-    delay = base_delay
-    last_err = None
-    for attempt in range(1, max_retries + 1):
-        try:
-            return await asyncio.to_thread(
-                client.models.generate_content,
-                model=model_name,
-                contents=contents
-            )
-        except Exception as e:
-            last_err = e
-            err_str = str(e)
-            # Retry on rate limits (429) AND temporary server errors (503)
-            is_retryable = (
-                "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
-                "503" in err_str or "UNAVAILABLE" in err_str
-            )
-            if is_retryable:
-                if attempt < max_retries:
-                    logger.warning(
-                        f"Gemini API transient error (attempt {attempt}/{max_retries}): "
-                        f"{err_str[:80]}. Retrying in {delay}s..."
-                    )
-                    await asyncio.sleep(delay)
-                    delay *= 2
-                    continue
-            # For 400 errors, non-retryable errors, or exhausted retries, stop
-            break
-    raise last_err
+    from cmd_system import _generate_content_with_retry as _sys_retry
+    return await _sys_retry(None, contents, max_retries=max_retries, base_delay=base_delay)
 
 async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
     if not await is_bot_admin(update.effective_user.username, pool):
         return
-    if not GEMINI_API_KEY:
-        return await update.message.reply_text("❌ Gemini API Key missing.")
+    if not GROQ_API_KEY and not GEMINI_API_KEY:
+        return await update.message.reply_text("❌ No AI API key configured. Set GROQ_API_KEY in environment variables.")
 
     arg = " ".join(context.args).strip() if context.args else ""
     try:
@@ -1965,12 +1940,11 @@ async def analyze_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Data:\n{raw_data}"
     )
     try:
-        client   = genai.Client(api_key=GEMINI_API_KEY)
-        response = await _generate_content_with_retry(client, ai_prompt)
+        response = await _generate_content_with_retry(None, None, ai_prompt)
         await temp.delete()
         await send_md(
             context, update.effective_user.id,
-            f"✅ 🤖 **Gemini Feedback Analysis ({range_desc})**\n\n{response.text}"
+            f"✅ 🤖 **AI Feedback Analysis ({range_desc})**\n\n{response.text}"
         )
     except Exception as e:
         await update.message.reply_text(f"❌ Analysis failed: {e}")

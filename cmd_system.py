@@ -5,11 +5,11 @@ import re
 import asyncio
 import sys
 import importlib
-from google import genai
-from google.genai.errors import APIError
+from openai import OpenAI as GroqClient          # Groq uses OpenAI-compatible SDK
+from google import genai                           # Gemini kept as fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, GROQ_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
 import cmd_user 
 import cmd_system_help
 
@@ -273,53 +273,112 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Global tracker error: {e}")
 
 
-async def _generate_content_with_retry(client, contents, max_retries=3, base_delay=5):
+class _AIResponse:
+    """Thin wrapper so callers can always do response.text regardless of provider."""
+    def __init__(self, text: str):
+        self.text = text
+
+
+async def _call_groq(prompt: str, max_retries: int = 3, base_delay: int = 5) -> _AIResponse:
     """
-    Wraps the Gemini API call in an exponential backoff loop WITH Model Fallback.
-    Survives rate limits (429), service unavailability (503), and guarantees
-    the primary error is reported.
+    Call Groq API (primary AI provider).
+    Uses llama-3.3-70b-versatile as primary, falls back to llama-3.1-8b-instant.
+    Groq is OpenAI-SDK-compatible and free with no credit card required.
     """
-    # Updated 2026-06: 1.5/2.0 models are fully shut down; use 2.5 generation
-    models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash']
-    primary_err = None
-    
+    models_to_try = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    last_err = None
+
     for model_name in models_to_try:
         delay = base_delay
         for attempt in range(1, max_retries + 1):
             try:
-                return await asyncio.to_thread(
+                client = GroqClient(
+                    api_key=GROQ_API_KEY,
+                    base_url="https://api.groq.com/openai/v1"
+                )
+                resp = await asyncio.to_thread(
+                    client.chat.completions.create,
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=1500,
+                )
+                return _AIResponse(resp.choices[0].message.content)
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                is_retryable = (
+                    "429" in err_str or "rate_limit" in err_str.lower() or
+                    "503" in err_str or "unavailable" in err_str.lower() or
+                    "502" in err_str or "connection" in err_str.lower()
+                )
+                if is_retryable and attempt < max_retries:
+                    logger.warning(
+                        f"Groq transient error on {model_name} "
+                        f"(attempt {attempt}/{max_retries}): {err_str[:80]}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                break  # non-retryable or exhausted → try next model
+
+    raise last_err
+
+
+async def _call_gemini_fallback(prompt: str, max_retries: int = 2, base_delay: int = 5) -> _AIResponse:
+    """
+    Gemini fallback — only used when Groq is completely unavailable.
+    """
+    models_to_try = ['gemini-2.5-flash-lite', 'gemini-2.5-flash']
+    last_err = None
+
+    for model_name in models_to_try:
+        delay = base_delay
+        for attempt in range(1, max_retries + 1):
+            try:
+                client = genai.Client(api_key=GEMINI_API_KEY)
+                resp = await asyncio.to_thread(
                     client.models.generate_content,
                     model=model_name,
-                    contents=contents
+                    contents=prompt
                 )
+                return _AIResponse(resp.text)
             except Exception as e:
-                if primary_err is None:
-                    primary_err = e 
-                    
+                last_err = e
                 err_str = str(e)
-                
                 if "404" in err_str or "NOT_FOUND" in err_str:
-                    break 
-                
-                # Retry on rate limits (429) AND temporary server errors (503)
+                    break
                 is_retryable = (
                     "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
                     "503" in err_str or "UNAVAILABLE" in err_str
                 )
-                if is_retryable:
-                    if attempt < max_retries:
-                        logger.warning(
-                            f"Gemini API transient error on {model_name} "
-                            f"(attempt {attempt}/{max_retries}): {err_str[:80]}. "
-                            f"Retrying in {delay}s..."
-                        )
-                        await asyncio.sleep(delay)
-                        delay *= 2
-                        continue
-                        
-                break 
-                
-    raise primary_err
+                if is_retryable and attempt < max_retries:
+                    await asyncio.sleep(delay)
+                    delay *= 2
+                    continue
+                break
+
+    raise last_err
+
+
+async def _generate_content_with_retry(client, contents, max_retries=3, base_delay=5) -> _AIResponse:
+    """
+    Main AI dispatch: Groq (primary) → Gemini (fallback).
+    The `client` param is kept for backwards compatibility but is no longer used;
+    clients are created internally per provider.
+    """
+    # Try Groq first (free, fast, generous daily quota)
+    if GROQ_API_KEY:
+        try:
+            return await _call_groq(contents, max_retries=max_retries, base_delay=base_delay)
+        except Exception as groq_err:
+            logger.warning(f"Groq failed, falling back to Gemini: {groq_err}")
+
+    # Fall back to Gemini if Groq unavailable or key missing
+    if GEMINI_API_KEY:
+        return await _call_gemini_fallback(contents, max_retries=2, base_delay=base_delay)
+
+    raise RuntimeError("No AI provider available. Set GROQ_API_KEY (recommended) or GEMINI_API_KEY.")
 
 
 async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -350,8 +409,7 @@ async def what_did_i_miss(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prompt = f"You are Nukhba Manager. Summarize this group chat history concisely. Focus ONLY on main topics discussed, announcements, events mentioned, polls, trivia, and notable activity. Do not output a raw message dump. Be conversational and highly readable.\n\n{raw_text[:25000]}"
     
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-        resp = await _generate_content_with_retry(client, prompt)
+        resp = await _generate_content_with_retry(None, prompt)
         await context.bot.send_message(update.effective_user.id, f"📝 **What You Missed in {update.effective_chat.title}:**\n\n{resp.text}", parse_mode="Markdown")
         await temp.delete()
     except Exception as e:
@@ -416,8 +474,8 @@ async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str, is_bot_query: bool = False):
     if not prompt:
         return await update.message.reply_text("❌ Please provide a prompt.")
-    if not GEMINI_API_KEY:
-        return await update.message.reply_text("❌ GEMINI_API_KEY unconfigured.")
+    if not GROQ_API_KEY and not GEMINI_API_KEY:
+        return await update.message.reply_text("❌ No AI API key configured. Set GROQ_API_KEY in environment variables.")
     
     username = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
@@ -447,7 +505,7 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
 
     temp = await update.message.reply_text("⏳ Thinking...")
     try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+        client = None  # clients are managed inside _generate_content_with_retry
         
         bt = "`" * 3
         
@@ -524,8 +582,8 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
             dm_len_str = await conn.fetchval("SELECT value FROM config WHERE key='dm_length'")
             dm_len = int(dm_len_str) if dm_len_str and dm_len_str.isdigit() else 1000
 
-        prefix = "🤖 **About Me:**\n\n" if is_bot_query else "🤖 **Gemini AI Response:**\n\n"
-        inline_prefix = "🤖 **Nukhba Manager:** " if is_bot_query else "🤖 **Gemini:** "
+        prefix = "🤖 **About Me:**\n\n" if is_bot_query else "🤖 **AI Response:**\n\n"
+        inline_prefix = "🤖 **Nukhba Manager:** " if is_bot_query else "🤖 **AI:** "
         
         final_reply = reply + config_msg
         
@@ -565,33 +623,39 @@ async def process_gemini_request(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         err_str = str(e)
         # Detect true API-key exhaustion vs transient rate limit vs other errors
-        is_resource_exhausted = "RESOURCE_EXHAUSTED" in err_str or "429" in err_str
-        is_key_invalid = "API_KEY_INVALID" in err_str or "API key not valid" in err_str or "invalid" in err_str.lower() and "key" in err_str.lower()
-        
-        if is_key_invalid:
+        is_resource_exhausted = "RESOURCE_EXHAUSTED" in err_str or "429" in err_str or "rate_limit" in err_str.lower()
+        is_key_invalid = "API_KEY_INVALID" in err_str or "API key not valid" in err_str or ("invalid" in err_str.lower() and "key" in err_str.lower())
+        is_no_provider = "No AI provider available" in err_str
+
+        if is_no_provider:
             try:
-                await temp.edit_text("❌ **Gemini API Key Invalid.** Please update `GEMINI_API_KEY` in Railway environment variables and redeploy.")
+                await temp.edit_text("❌ **No AI key configured.** Please set `GROQ_API_KEY` in your Railway environment variables.")
+            except Exception:
+                pass
+        elif is_key_invalid:
+            try:
+                await temp.edit_text("❌ **AI API Key Invalid.** Please update `GROQ_API_KEY` in Railway environment variables and redeploy.")
             except Exception:
                 pass
             async with pool.acquire() as conn:
                 super_id = await conn.fetchval("SELECT user_id FROM users WHERE username=$1", SUPER_OWNER)
             if super_id:
                 try:
-                    await context.bot.send_message(super_id, f"⚠️ **CRITICAL:** Gemini API key is invalid or expired.\n\nError: `{err_str[:300]}`\n\nUpdate `GEMINI_API_KEY` in Railway and redeploy.", parse_mode="Markdown")
+                    await context.bot.send_message(super_id, f"⚠️ **CRITICAL:** AI API key is invalid or expired.\n\nError: `{err_str[:300]}`\n\nUpdate `GROQ_API_KEY` in Railway and redeploy.", parse_mode="Markdown")
                 except Exception:
                     pass
         elif is_resource_exhausted:
             try:
-                await temp.edit_text("⏳ **Gemini Rate Limited.** Free-tier request quota exceeded. The AI is overloaded right now. Please wait a minute and try again.")
+                await temp.edit_text("⏳ **AI Rate Limited.** Daily free-tier quota reached. Please try again later (resets at midnight UTC).")
             except Exception:
                 pass
-            logger.warning(f"Gemini rate limit hit: {err_str[:200]}")
+            logger.warning(f"AI rate limit hit: {err_str[:200]}")
         else:
             try:
                 await temp.edit_text(f"❌ AI Error: {err_str[:300]}")
             except Exception:
                 pass
-            logger.error(f"Gemini unexpected error: {err_str}")
+            logger.error(f"AI unexpected error: {err_str}")
             
         if not is_adm:
             async with pool.acquire() as conn:
