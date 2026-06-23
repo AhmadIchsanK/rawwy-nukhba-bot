@@ -7,27 +7,71 @@ logger = logging.getLogger(__name__)
 
 async def generate_audit_report(pool, target_date: datetime.date) -> str:
     now = datetime.datetime.now(WIB)
-    start_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.min))
-    end_dt = WIB.localize(datetime.datetime.combine(target_date, datetime.time.max))
-    
+
+    # Build start/end as UTC-aware boundaries (PostgreSQL TIMESTAMPTZ stores in UTC)
+    # We construct them as WIB midnight/end-of-day and let Python handle the UTC offset.
+    import pytz
+    _wib = pytz.timezone('Asia/Jakarta')
+
+    start_naive = datetime.datetime.combine(target_date, datetime.time.min)
+    end_naive   = datetime.datetime.combine(target_date, datetime.time.max)
+    start_dt    = _wib.localize(start_naive)   # WIB midnight → UTC-aware
+    end_dt      = _wib.localize(end_naive)     # WIB end-of-day → UTC-aware
+
     async with pool.acquire() as conn:
-        active_groups = await conn.fetchval("SELECT COUNT(*) FROM active_groups")
-        away_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Away Status' AND status='Set' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        back_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Away Status' AND status='Removed' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        events_created = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Event Created' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        events_updated = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Event Updated' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        rsvp_count = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='RSVP' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        ann_sent = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Announcement' AND status='Success' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        ann_failed = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE category='Announcement' AND status='Failed' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        sys_errors = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Error' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        sys_warns = await conn.fetchval("SELECT COUNT(*) FROM audit_logs WHERE status='Warning' AND timestamp >= $1 AND timestamp <= $2", start_dt, end_dt)
-        
-    msg = f"✅ 🌅 **Daily Diagnostic Audit Report**\nDate: {target_date.strftime('%m/%d/%Y')} | Time: {now.strftime('%H:%M')} WIB\n\n"
-    msg += f"**Groups:**\n• Total Active Groups: {active_groups}\n\n"
-    msg += f"**Users:**\n• Away Count: {away_count}\n• Back Count: {back_count}\n\n"
-    msg += f"**Events:**\n• Created: {events_created}\n• Updated: {events_updated}\n• RSVP Count: {rsvp_count}\n\n"
-    msg += f"**Announcements:**\n• Sent: {ann_sent}\n• Failed: {ann_failed}\n\n"
-    msg += f"**System:**\n• Errors: {sys_errors}\n• Warnings: {sys_warns}"
+        # Ensure audit_logs exists before querying
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                user_id BIGINT,
+                chat_id BIGINT,
+                category VARCHAR(50),
+                status VARCHAR(50),
+                detail TEXT
+            )
+        ''')
+
+        active_groups   = await conn.fetchval("SELECT COUNT(*) FROM active_groups")
+        away_count      = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='Away Status' AND status='Set' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        back_count      = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='Away Status' AND status='Removed' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        events_created  = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='Event Created' AND status='Success' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        events_updated  = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='Event Updated' AND status='Success' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        rsvp_count      = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='RSVP' AND status='Success' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        ann_sent        = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='Announcement' AND status='Success' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        ann_failed      = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE category='Announcement' AND status='Failed' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        sys_errors      = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE status='Error' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        sys_warns       = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE status='Warning' AND timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+        total_logs      = await conn.fetchval(
+            "SELECT COUNT(*) FROM audit_logs WHERE timestamp >= $1 AND timestamp <= $2",
+            start_dt, end_dt)
+
+    msg  = f"✅ 🌅 **Daily Diagnostic Audit Report**\n"
+    msg += f"Date: {target_date.strftime('%m/%d/%Y')} | Generated: {now.strftime('%H:%M')} WIB\n\n"
+    msg += f"**Groups:**\n• Active Groups: {active_groups}\n\n"
+    msg += f"**Team Activity:**\n• Away Set: {away_count}  |  Returned: {back_count}\n\n"
+    msg += f"**Events:**\n• Created: {events_created}  |  Updated: {events_updated}  |  RSVPs: {rsvp_count}\n\n"
+    msg += f"**Announcements:**\n• Sent: {ann_sent}  |  Failed: {ann_failed}\n\n"
+    msg += f"**System:**\n• Errors: {sys_errors}  |  Warnings: {sys_warns}\n"
+    msg += f"• Total log entries today: {total_logs}"
     return msg
 
 async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):

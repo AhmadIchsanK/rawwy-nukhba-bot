@@ -844,24 +844,30 @@ async def get_audit_log(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 detail TEXT
             )
         ''')
-        # Timezone crash fix: cast the timestamp strictly
+        # Fetch raw TIMESTAMPTZ — asyncpg returns tz-aware datetime objects.
+        # Use .astimezone() to convert to WIB — never AT TIME ZONE (returns naive in asyncpg).
         rows = await conn.fetch(
-            "SELECT timestamp AT TIME ZONE 'Asia/Jakarta' as wib_ts, category, status, detail FROM audit_logs "
+            "SELECT timestamp, category, status, detail FROM audit_logs "
             "ORDER BY timestamp DESC LIMIT $1",
             limit
         )
 
-    if not rows:
-        return await context.bot.send_message(
-            update.effective_user.id,
-            "📋 **Audit Log**\n\nNo entries found. The log is empty.",
-            parse_mode="Markdown"
-        )
+    import pytz
+    _wib = pytz.timezone('Asia/Jakarta')
 
-    lines = [f"📋 **Audit Log (Last {limit} entries)**\n"]
+    if not rows:
+        msg = (
+            "📋 **Audit Log**\n\n"
+            "_No entries found — the log is empty._\n\n"
+            "Actions are logged as they happen. Try running some commands first."
+        )
+        return await send_md(context, update.effective_user.id, msg)
+
+    lines = [f"📋 **Audit Log** _(last {len(rows)} of {limit} requested)_\n"]
     for r in rows:
-        ts = r['wib_ts'].strftime('%m/%d %H:%M')
-        lines.append(f"`[{ts}]` **{r['category']}** — {r['status']}\n  _{r['detail']}_")
+        ts_wib = r['timestamp'].astimezone(_wib)
+        ts_str = ts_wib.strftime('%m/%d %H:%M')
+        lines.append(f"`[{ts_str}]` **{r['category']}** — {r['status']}\n  _{r['detail']}_")
 
     await send_md(context, update.effective_user.id, "\n".join(lines))
 
@@ -908,27 +914,48 @@ async def send_daily_audit_digest(context: ContextTypes.DEFAULT_TYPE):
         return
 
     now = datetime.datetime.now(WIB)
-    async with pool.acquire() as conn:
-        audit_time = await conn.fetchval("SELECT value FROM config WHERE key='audit_digest_time'") or "23:50"
-        super_uid  = await conn.fetchval("SELECT user_id FROM users WHERE LOWER(username)=$1", SUPER_OWNER.lower())
 
-    h, m = map(int, audit_time.split(":"))
-    if now.hour != h or now.minute != m:
-        return
-    if not super_uid:
+    # Look up the super owner's user_id for DM delivery
+    async with pool.acquire() as conn:
+        super_uid = await conn.fetchval(
+            "SELECT user_id FROM users WHERE LOWER(username)=$1", SUPER_OWNER.lower()
+        )
+        # Also send to all bot admins who have can_dm=TRUE
+        admin_ids = await conn.fetch(
+            "SELECT u.user_id FROM users u "
+            "INNER JOIN bot_admins a ON LOWER(u.username) = LOWER(a.username) "
+            "WHERE u.can_dm = TRUE AND u.user_id IS NOT NULL"
+        )
+
+    if not super_uid and not admin_ids:
+        logger.warning("Audit digest: no recipients with a known user_id. "
+                       "Admins must /start the bot in DM at least once.")
         return
 
     try:
         from crons import generate_audit_report
         msg = await generate_audit_report(pool, now.date())
     except Exception as e:
-        logger.error(f"Audit report generation failed: {e}")
-        msg = f"📋 **Daily Audit Digest** — {now.strftime('%m/%d/%Y')}\n\nFailed to generate report."
+        logger.error(f"Audit report generation failed: {e}", exc_info=True)
+        msg = (
+            f"📋 **Daily Audit Digest** — {now.strftime('%m/%d/%Y')}\n\n"
+            f"⚠️ Report generation failed: `{e}`\n"
+            f"Check Railway logs for full traceback."
+        )
 
-    try:
-        await context.bot.send_message(super_uid, msg, parse_mode="Markdown")
-    except Exception as e:
-        logger.error(f"Audit digest send failed: {e}")
+    # Build recipient set — super owner + all can_dm admins
+    recipient_ids: set[int] = set()
+    if super_uid:
+        recipient_ids.add(super_uid)
+    for row in admin_ids:
+        if row['user_id']:
+            recipient_ids.add(row['user_id'])
+
+    for uid in recipient_ids:
+        try:
+            await context.bot.send_message(uid, msg, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning(f"Audit digest: failed to DM user_id {uid}: {e}")
 
 
 # ─────────────────────────────────────────────

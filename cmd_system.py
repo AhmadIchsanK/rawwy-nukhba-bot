@@ -57,10 +57,35 @@ _[RAWWY] Nukhba Manager isn't just managing the chat—it's managing the success
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
+    user_id  = update.effective_user.id
+    pool     = context.bot_data.get('db_pool')
+
     if update.effective_chat.type == "private":
-        await update_user_menu(update.effective_user.id, username, pool, context.bot)
-    await update.message.reply_text("✅ **Hello! [RAWWY] Nukhba Manager is fully operational.** Type `/help` to see the command manual or /command to see all the available commands.", parse_mode="Markdown")
+        # ✅ Mark this user as DM-able — they've started a private chat with the bot.
+        # This is the ONLY reliable way to know Telegram allows us to DM them.
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO users (username, user_id, can_dm) VALUES ($1, $2, TRUE) "
+                "ON CONFLICT (username) DO UPDATE SET user_id=$2, can_dm=TRUE",
+                username, user_id
+            )
+        await update_user_menu(user_id, username, pool, context.bot)
+
+        # Handle deep-link payloads — /start <payload>
+        payload = context.args[0] if context.args else ""
+        if payload == "open_help":
+            await cmd_system_help.help_command(update, context)
+            return
+        if payload == "open_command":
+            import cmd_command_nav
+            await cmd_command_nav.command_nav(update, context)
+            return
+
+    await update.message.reply_text(
+        "✅ **Hello! [RAWWY] Nukhba Manager is fully operational.**\n\n"
+        "Type `/help` to see the command manual or `/command` to browse all available commands.",
+        parse_mode="Markdown"
+    )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_system_help.help_command(update, context)

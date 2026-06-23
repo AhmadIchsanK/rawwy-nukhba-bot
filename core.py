@@ -90,8 +90,13 @@ async def init_db(app: Application):
                     username    VARCHAR(100) PRIMARY KEY,
                     user_id     BIGINT,
                     gemini_quota INT DEFAULT 10,
-                    last_about  TIMESTAMP WITH TIME ZONE
+                    last_about  TIMESTAMP WITH TIME ZONE,
+                    can_dm      BOOLEAN DEFAULT FALSE
                 )
+            ''')
+            # Migration: add can_dm if upgrading from an older schema
+            await conn.execute('''
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS can_dm BOOLEAN DEFAULT FALSE
             ''')
             # ── KUDOS / RAWWY STARS ───────────────────────────────────────────
             await conn.execute('''
