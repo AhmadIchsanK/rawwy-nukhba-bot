@@ -53,15 +53,12 @@ async def _ensure_version_table(pool):
             await conn.execute(
                 "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
                 "1.2",
-                "• Inline keyboards auto-expire after 120s of inactivity\n"
-                "• Inline keyboard panels are now owner-locked (only opener can interact)\n"
-                "• /newsched Set Target Group by ID bug fixed — panel now properly restores after input\n"
-                "• /getlib now supports multi-word asset names (e.g. /getlib Company Logo)\n"
-                "• /assign supports multiple assignees: /assign @user1 @user2 , Mins , Task\n"
-                "• /complete shows per-person progress (1/2, 2/2) for group tasks\n"
-                "• /botconfig is now All-in-One: includes User Manager + Group IDs + Sched Config\n"
-                "• /manageusers redirects to /botconfig (merged & deprecated)\n"
-                "• Library lookups are case-insensitive and support partial matching"
+                "⏱️ Inline keyboards auto-expire after 120s\n"
+                "🔒 Panel owner-lock: only opener can interact\n"
+                "🐛 /newsched group ID input fixed (panel now restores after reply)\n"
+                "📚 /getlib fixed for multi-word names + case-insensitive search\n"
+                "👥 /assign now supports multiple assignees with shared progress tracking\n"
+                "🛠️ /botconfig merged User Manager + Group IDs + Sched Config in one panel"
             )
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bot_admins (
@@ -230,6 +227,7 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await q.answer()
 
     if data == "cfg_cancel":
+        cancel_kb_timeout(context, q.message.chat.id, q.message.message_id)
         context.user_data.pop('cfg_draft', None)
         context.user_data.pop('cfg_owner', None)
         await q.answer("Cancelled.")
@@ -249,6 +247,7 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2",
                     key, str(val)
                 )
+        cancel_kb_timeout(context, q.message.chat.id, q.message.message_id)
         context.user_data.pop('cfg_draft', None)
         context.user_data.pop('cfg_owner', None)
         await q.answer("✅ Saved!")
@@ -294,13 +293,103 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['awaiting_cfg_field'] = db_key
         context.user_data['cfg_msg_id'] = q.message.message_id  # ensure it's up to date
         await q.answer()
+        field_labels = {
+            'gemini_weekly_limit': 'AI Queries/Week',
+            'star_quota':          'Star Quota/Week',
+            'max_tasks':           'Max Pending Tasks',
+            'max_events':          'Max Active Events',
+            'max_away_days':       'Max Away Days',
+        }
+        label = field_labels.get(db_key, db_key)
         try:
             await q.edit_message_text(
-                f"✏️ **Type a new value for `{field}`:**\n\nCurrent: `{d[db_key]}`\n\n_Reply will restore this panel automatically._",
+                f"✏️ **Set Custom Value — {label}**\n\n"
+                f"Current: `{d[db_key]}`\n\n"
+                f"Type a positive whole number and send it here.\n"
+                f"_The panel will restore automatically after your reply._",
                 parse_mode="Markdown"
             )
         except Exception as e:
             logger.debug(f"Failed to edit custom config prompt: {e}")
+        return
+
+    # ── Navigation buttons ────────────────────────────────────────────────────
+    if data == "cfg_goto_users":
+        await q.answer()
+        context.user_data['mu_owner'] = q.from_user.id
+        try:
+            await q.edit_message_text(
+                "👥 **USER MANAGER**\n\nChoose what you'd like to manage:",
+                reply_markup=_mu_main_kb(),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.debug(f"cfg_goto_users nav failed: {e}")
+        return
+
+    if data == "cfg_goto_sched":
+        await q.answer()
+        async with pool.acquire() as conn:
+            bday_time  = await conn.fetchval("SELECT value FROM config WHERE key='bday_time'")   or "10:00"
+            bday_ch    = await conn.fetchval("SELECT value FROM config WHERE key='bday_channel'") or ""
+            kp_time    = await conn.fetchval("SELECT value FROM config WHERE key='kp_lb_time'")  or "13:00"
+            kp_ch      = await conn.fetchval("SELECT value FROM config WHERE key='kp_channel'")  or ""
+            star_time  = await conn.fetchval("SELECT value FROM config WHERE key='star_lb_time'") or "00:05"
+            star_ch    = await conn.fetchval("SELECT value FROM config WHERE key='stars_channel'") or ""
+        context.user_data['schcfg_owner'] = q.from_user.id
+        context.user_data['schcfg_draft'] = {
+            'bday_time': bday_time, 'bday_ch': bday_ch,
+            'kp_time':   kp_time,   'kp_ch':   kp_ch,
+            'star_time': star_time, 'star_ch': star_ch,
+        }
+        context.user_data['schcfg_msg_id'] = q.message.message_id
+        for flag in ['awaiting_schcfg_bday_time','awaiting_schcfg_bday_ch',
+                     'awaiting_schcfg_kp_time',  'awaiting_schcfg_kp_ch',
+                     'awaiting_schcfg_star_time', 'awaiting_schcfg_star_ch']:
+            context.user_data.pop(flag, None)
+        try:
+            await q.edit_message_text(
+                _schcfg_text(context.user_data['schcfg_draft']),
+                reply_markup=_schcfg_kb(),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.debug(f"cfg_goto_sched nav failed: {e}")
+        return
+
+    if data == "cfg_show_groups":
+        await q.answer()
+        async with pool.acquire() as conn:
+            groups = await conn.fetch("SELECT chat_id, title FROM active_groups ORDER BY title")
+        if groups:
+            lines = ["🆔 **Registered Group IDs**\n"]
+            for g in groups:
+                lines.append(f"• `{g['chat_id']}` — {g['title']}")
+            msg = "\n".join(lines)
+        else:
+            msg = "🆔 **Registered Group IDs**\n\n_No groups registered yet._\n\nRun `/registergroup` inside a group to add it."
+        try:
+            await q.edit_message_text(
+                msg + "\n\n_Press Back to return to config._",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("◀️ Back to Config", callback_data="cfg_back")]
+                ]),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.debug(f"cfg_show_groups failed: {e}")
+        return
+
+    if data == "cfg_back":
+        await q.answer()
+        try:
+            await q.edit_message_text(
+                _cfg_text(d),
+                reply_markup=_cfg_kb(d),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logger.debug(f"cfg_back failed: {e}")
         return
 
     try:
@@ -1207,25 +1296,27 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT version, changelog, updated_at FROM bot_version ORDER BY id DESC LIMIT 10"
+            "SELECT version, changelog, updated_at FROM bot_version ORDER BY id ASC"
         )
 
     if not rows:
         return await update.message.reply_text("ℹ️ No version info available yet.")
 
-    latest = rows[0]
-    lines  = [
-        f"🤖 **Nukhba Manager Bot**\n"
-        f"📦 Current Version: `{latest['version']}`\n"
-        f"📅 Last Updated: `{latest['updated_at'].astimezone(WIB).strftime('%d %b %Y, %H:%M WIB')}`\n\n"
+    latest = rows[-1]  # last entry = newest
+    # Header block — exact format as specified
+    header = (
+        f"🤖 Nukhba Manager Bot\n"
+        f"📦 Current Version: {latest['version']}\n"
+        f"📅 Last Updated: {latest['updated_at'].astimezone(WIB).strftime('%d %b %Y')}, WIB\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📜 **Changelog:**\n"
-    ]
+        f"📜 Changelog:\n"
+    )
+    changelog_lines = []
     for r in rows:
         ts = r['updated_at'].astimezone(WIB).strftime('%d %b %Y')
-        lines.append(f"\n🔖 **v{r['version']}** — _{ts}_\n{r['changelog']}")
+        changelog_lines.append(f"\n🔖 v{r['version']} — {ts}\n{r['changelog']}")
 
-    await send_md(context, update.effective_chat.id, "\n".join(lines))
+    await send_md(context, update.effective_chat.id, header + "\n".join(changelog_lines))
 
 
 async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1256,11 +1347,14 @@ async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "SELECT DISTINCT user_id FROM users WHERE user_id IS NOT NULL"
         )
 
+    now_str = datetime.datetime.now(WIB).strftime('%d %b %Y')
     broadcast_text = (
-        f"🤖 **Nukhba Manager Bot — Update Released!**\n\n"
-        f"📦 **Version:** `{new_ver}`\n"
-        f"📅 **Date:** {datetime.datetime.now(WIB).strftime('%d %b %Y, %H:%M WIB')}\n\n"
-        f"📝 **What's New:**\n{changelog}\n\n"
+        f"🤖 Nukhba Manager Bot\n"
+        f"📦 Current Version: {new_ver}\n"
+        f"📅 Last Updated: {now_str}, WIB\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📦 New update released!\n\n"
+        f"📝 What's New:\n{changelog}\n\n"
         f"Type /update to see the full changelog."
     )
 
@@ -1529,8 +1623,22 @@ async def _handle_nsched_text(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if context.user_data.get('awaiting_nsched_target'):
         context.user_data.pop('awaiting_nsched_target')
-        d['chat_id'] = text
-        consumed = True
+        normalized = text.strip()
+        if normalized.lower() == 'all':
+            d['chat_id'] = 'all'
+            consumed = True
+        elif normalized.lstrip('-').isdigit():
+            d['chat_id'] = normalized
+            consumed = True
+        else:
+            await update.message.reply_text(
+                "❌ **Invalid target.**\n\n"
+                "Type `all` to broadcast to all groups, or a numeric Group ID (e.g. `-1001234567890`).\n\n"
+                "_Run /groupid inside the target group to get its ID._",
+                parse_mode="Markdown"
+            )
+            context.user_data['awaiting_nsched_target'] = True  # keep waiting
+            return True
 
     elif context.user_data.get('awaiting_nsched_time'):
         context.user_data.pop('awaiting_nsched_time')
@@ -1605,6 +1713,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Map handler function names back to their modules
     # Key: (handler_func_name,) → module
+    import cmd_command_nav
     module_registry = {
         # system
         "start": cmd_system, "about_command": cmd_system,
@@ -1615,6 +1724,8 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "security_track_chats": cmd_system,
         # system_help
         "help_command": cmd_system_help,
+        # command nav
+        "command_nav": cmd_command_nav,
         # user
         "create_event": cmd_user, "edit_event": cmd_user,
         "list_events": cmd_user, "create_poll": cmd_user,
@@ -1637,6 +1748,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # admin (self)
         "update_info": _self_module, "push_update": _self_module,
         "update_change": _self_module, "bot_config": _self_module,
+        "sched_config": _self_module,
         "set_channel": _self_module, "unset_channel": _self_module,
         "check_group_id": _self_module, "get_audit_log": _self_module,
         "set_audit_time": _self_module, "manage_users": _self_module,
@@ -1644,6 +1756,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "check_limit": _self_module, "admin_limit": _self_module,
         "add_bday": _self_module, "edit_bday": _self_module,
         "del_bday": _self_module, "list_bdays": _self_module,
+        "bulk_add_bday": _self_module, "bulk_del_bday": _self_module,
         "attendance": _self_module, "force_back": _self_module,
         "group_tasks": _self_module, "cancel_event": _self_module,
         "cancel_task": _self_module, "cancel_poll_admin": _self_module,
@@ -1664,7 +1777,9 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Command → handler function name (matches main.py registrations)
     CMD_TO_FUNC = {
-        "start": "start", "help": "help_command", "about": "about_command",
+        "start": "start", "help": "help_command",
+        "command": "command_nav",
+        "about": "about_command",
         "wdim": "what_did_i_miss", "feedback": "submit_feedback",
         "ask": "ask_bot", "gemini": "ask_gemini",
         "update": "update_info", "pushupdate": "push_update",
@@ -1684,7 +1799,8 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "forcesupertrivia": "force_super_trivia",
         "canceltrivia": "cancel_trivia", "endtrivia": "end_trivia",
         "triviaend": "end_trivia", "admin_kp": "admin_kp",
-        "botconfig": "bot_config", "setchannel": "set_channel",
+        "botconfig": "bot_config", "schedconfig": "sched_config",
+        "setchannel": "set_channel",
         "unsetchannel": "unset_channel", "groupid": "check_group_id",
         "registergroup": "register_group",
         "auditlog": "get_audit_log", "audittime": "set_audit_time",
@@ -1692,7 +1808,9 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "admin_stars": "admin_stars", "checklimit": "check_limit",
         "admin_limit": "admin_limit", "addbday": "add_bday",
         "editbday": "edit_bday", "delbday": "del_bday",
-        "listbdays": "list_bdays", "attendance": "attendance",
+        "listbdays": "list_bdays",
+        "bulkaddbday": "bulk_add_bday", "bulkdelbday": "bulk_del_bday",
+        "attendance": "attendance",
         "forceback": "force_back", "grouptasks": "group_tasks",
         "cancelevent": "cancel_event", "canceltask": "cancel_task",
         "cancelpoll": "cancel_poll_admin", "newsched": "new_schedule",
