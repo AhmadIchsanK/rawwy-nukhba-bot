@@ -81,7 +81,12 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if await cmd_admin.handle_schcfg_text_input(update, context):
             return
 
-    # 3. System-level text handlers
+    # 4. /newsched interactive text input (target chat, time, message)
+    if hasattr(cmd_admin, '_handle_nsched_text'):
+        if await cmd_admin._handle_nsched_text(update, context):
+            return
+
+    # 5. System-level text handlers
     if hasattr(cmd_system, 'global_tracker'):
         await cmd_system.global_tracker(update, context)
 
@@ -232,8 +237,6 @@ def main():
     app.add_handler(CommandHandler("unsetchannel",safe_cmd(cmd_admin, "unset_channel")))
     app.add_handler(CommandHandler("groupid",     safe_cmd(cmd_admin, "check_group_id")))
     app.add_handler(CommandHandler("registergroup", safe_cmd(cmd_admin, "register_group")))
-    app.add_handler(CommandHandler("auditlog",    safe_cmd(cmd_admin, "get_audit_log")))
-    app.add_handler(CommandHandler("audittime",   safe_cmd(cmd_admin, "set_audit_time")))
 
     # ─────────────────────────────────────────
     # 👥 USER MANAGEMENT

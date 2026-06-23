@@ -75,8 +75,6 @@ COMMANDS = [
     {"name": "unsetchannel", "desc": "Remove feature target channel",       "format": "`/unsetchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🔕"},
     {"name": "groupid",      "desc": "Check current chat group ID",         "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🆔"},
     {"name": "registergroup","desc": "Manually register current group",     "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🏠"},
-    {"name": "auditlog",     "desc": "Pull diagnostic logs",                "format": "`/auditlog 15`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📑"},
-    {"name": "audittime",    "desc": "Set daily audit digest time",         "format": "`/audittime 23:50`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "⏰"},
 
     # 👥 ADMIN — USER MANAGEMENT
     {"name": "checkquota",  "desc": "Check user star quota",                "format": "`/checkquota @user` or `all`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🔍"},
