@@ -9,62 +9,59 @@ COMMANDS = [
     # ─────────────────────────────────────────
     # 💬 GENERAL
     # ─────────────────────────────────────────
-    {"name": "start",    "desc": "Start interaction",         "public": True,  "category": "💬 General", "emoji": "🚀"},
-    {"name": "help",     "desc": "View Nukhba Manual",        "public": True,  "category": "💬 General", "emoji": "📖"},
-    {"name": "command",  "desc": "Interactive command browser","public": True,  "category": "💬 General", "emoji": "🗂️"},
-    {"name": "about",    "desc": "About Nukhba Manager",      "public": True,  "category": "💬 General", "emoji": "ℹ️"},
-    {"name": "feedback", "desc": "Submit Feedback",           "format": "`/feedback We need a longer timer`", "public": True, "category": "💬 General", "emoji": "💡"},
+    {"name": "start",    "desc": "Start interaction",         "public": True,  "category": "💬 General", "emoji": "🚀", "explanation": "Registers you with the bot and opens the welcome menu."},
+    {"name": "help",     "desc": "View Nukhba Manual",        "public": True,  "category": "💬 General", "emoji": "📖", "explanation": "Shows a full list of all available commands by category."},
+    {"name": "command",  "desc": "Interactive command browser","public": True,  "category": "💬 General", "emoji": "🗂️", "explanation": "Opens an interactive inline menu to browse and discover commands."},
+    {"name": "about",    "desc": "About Nukhba Manager",      "public": True,  "category": "💬 General", "emoji": "ℹ️", "explanation": "Shows information about Nukhba Manager and its version."},
+    {"name": "feedback", "desc": "Submit Feedback",           "format": "`/feedback We need a longer timer`", "public": True, "category": "💬 General", "emoji": "💡", "explanation": "Sends your feedback or suggestion directly to the admin team."},
 
     # ─────────────────────────────────────────
     # 📅 EVENTS & POLLS
     # ─────────────────────────────────────────
-    {"name": "newevent",  "desc": "Schedule an event",  "format": "`/newevent Title , MM/DD/YYYY HH:MM , RemMins`",          "public": True, "category": "📅 Events & Polls", "emoji": "📅"},
-    {"name": "editevent", "desc": "Edit an event",      "format": "`/editevent ID , Title , MM/DD/YYYY HH:MM , RemMins`",    "public": True, "category": "📅 Events & Polls", "emoji": "✏️"},
-    {"name": "events",    "desc": "Upcoming events",                                                                          "public": True, "category": "📅 Events & Polls", "emoji": "🗓️"},
-    {"name": "poll",      "desc": "Interactive Team Poll", "format": "`/poll Where to eat? , Pizza , Sushi`",                "public": True, "category": "📅 Events & Polls", "emoji": "📊"},
+    {"name": "newevent",  "desc": "Schedule an event",  "format": "`/newevent Title , MM/DD/YYYY HH:MM , RemMins`",          "public": True, "category": "📅 Events & Polls", "emoji": "📅", "explanation": "Creates a new team event with a reminder. Event is pinned in the group."},
+    {"name": "editevent", "desc": "Edit an event",      "format": "`/editevent ID , Title , MM/DD/YYYY HH:MM , RemMins`",    "public": True, "category": "📅 Events & Polls", "emoji": "✏️", "explanation": "Updates the title, time, or reminder of an existing event you created."},
+    {"name": "events",    "desc": "Upcoming events",                                                                          "public": True, "category": "📅 Events & Polls", "emoji": "🗓️", "explanation": "Lists all upcoming events scheduled in this group."},
+    {"name": "poll",      "desc": "Interactive Team Poll", "format": "`/poll Where to eat? , Pizza , Sushi`",                "public": True, "category": "📅 Events & Polls", "emoji": "📊", "explanation": "Creates a team poll with custom options and settings (anon, multi, quiz)."},
 
     # ─────────────────────────────────────────
     # ⭐ RAWWY STARS
     # ─────────────────────────────────────────
-    {"name": "thanks",           "desc": "Give a Star",         "format": "Reply to a msg with `/thanks`", "public": True, "category": "⭐ RAWWY Stars", "emoji": "⭐"},
-    {"name": "myquota",          "desc": "Check Star Quota",                                                "public": True, "category": "⭐ RAWWY Stars", "emoji": "📉"},
-    {"name": "mystar",           "desc": "Monthly Stars",                                                   "public": True, "category": "⭐ RAWWY Stars", "emoji": "🌟"},
-    {"name": "totalstar",        "desc": "All-time Stars",                                                  "public": True, "category": "⭐ RAWWY Stars", "emoji": "🌠"},
-    {"name": "leaderboard_star", "desc": "Top RAWWY Stars",                                                 "public": True, "category": "⭐ RAWWY Stars", "emoji": "🏆"},
+    {"name": "thanks",           "desc": "Give a Star",         "format": "Reply to a msg with `/thanks`", "public": True, "category": "⭐ RAWWY Stars", "emoji": "⭐", "explanation": "Give a RAWWY Star to someone whose message you replied to."},
+    {"name": "myquota",          "desc": "Check Star Quota",                                                "public": True, "category": "⭐ RAWWY Stars", "emoji": "📉", "explanation": "Check how many Stars you have left to give this week."},
+    {"name": "mystar",           "desc": "Monthly Stars",                                                   "public": True, "category": "⭐ RAWWY Stars", "emoji": "🌟", "explanation": "See how many Stars you have received this month and all-time."},
+    {"name": "leaderboard_star", "desc": "Top RAWWY Stars",                                                 "public": True, "category": "⭐ RAWWY Stars", "emoji": "🏆", "explanation": "Shows the top 5 RAWWY Star earners this month and all-time."},
 
     # ─────────────────────────────────────────
     # 🎮 TRIVIA
     # ─────────────────────────────────────────
-    {"name": "mypoint",        "desc": "View Knowledge Points", "public": True, "category": "🎮 Trivia", "emoji": "🧠"},
-    {"name": "leaderboard_kp", "desc": "Top Knowledge Points",  "public": True, "category": "🎮 Trivia", "emoji": "🏅"},
+    {"name": "mypoint",        "desc": "View Knowledge Points", "public": True, "category": "🎮 Trivia", "emoji": "🧠", "explanation": "View your current Knowledge Point (KP) total from trivia."},
+    {"name": "leaderboard_kp", "desc": "Top Knowledge Points",  "public": True, "category": "🎮 Trivia", "emoji": "🏅", "explanation": "Shows the top 5 Knowledge Point earners this month."},
 
     # ─────────────────────────────────────────
     # 📚 LIBRARY
     # ─────────────────────────────────────────
-    {"name": "library", "desc": "Browse Library",    "public": True, "category": "📚 Library", "emoji": "🗂️"},
-    {"name": "getlib",  "desc": "Retrieve an asset", "format": "`/getlib Company Logo`",        "public": True, "category": "📚 Library", "emoji": "📤"},
-    {"name": "addlib",  "desc": "Save an asset",     "format": "`/addlib Logo , content`",      "public": True, "category": "📚 Library", "emoji": "📥"},
-    {"name": "editlib", "desc": "Edit an asset",     "format": "`/editlib Logo , <new content>`", "public": True, "category": "📚 Library", "emoji": "✏️"},
-    {"name": "dellib",  "desc": "Delete an asset",   "format": "`/dellib Logo`",                "public": True, "category": "📚 Library", "emoji": "🗑️"},
+    {"name": "library", "desc": "Browse Library",    "public": True, "category": "📚 Library", "emoji": "🗂️", "explanation": "Browse all saved team assets (links, text, files) in the library."},
+    {"name": "getlib",  "desc": "Retrieve an asset", "format": "`/getlib Company Logo`",        "public": True, "category": "📚 Library", "emoji": "📤", "explanation": "Retrieve a specific asset from the library by name."},
+    {"name": "addlib",  "desc": "Save an asset",     "format": "`/addlib Logo , content`",      "public": True, "category": "📚 Library", "emoji": "📥", "explanation": "Save a new asset to the library. Add ', private' at the end to keep it private."},
+    {"name": "editlib", "desc": "Edit an asset",     "format": "`/editlib Logo , <new content>`", "public": True, "category": "📚 Library", "emoji": "✏️", "explanation": "Update the content of an asset you own."},
+    {"name": "dellib",  "desc": "Delete an asset",   "format": "`/dellib Logo`",                "public": True, "category": "📚 Library", "emoji": "🗑️", "explanation": "Delete an asset you own from the library."},
 
     # ─────────────────────────────────────────
     # ⚡ TASKS & AWAY
     # ─────────────────────────────────────────
-    {"name": "mytasks",  "desc": "Active Tasks",          "public": True, "category": "⚡ Tasks & Away", "emoji": "📋"},
-    {"name": "assign",   "desc": "Assign a task (supports multiple users)", "format": "`/assign @user1 @user2 , 120 , Review code`", "public": True, "category": "⚡ Tasks & Away", "emoji": "📌"},
-    {"name": "complete", "desc": "Mark your progress on a task", "format": "`/complete [TaskID]`",        "public": True, "category": "⚡ Tasks & Away", "emoji": "✅"},
-    {"name": "away",     "desc": "Set away status", "format": "`/away Doctor , 10/15/2026 14:30`",       "public": True, "category": "⚡ Tasks & Away", "emoji": "🛫"},
-    {"name": "back",     "desc": "Return to available",                                                  "public": True, "category": "⚡ Tasks & Away", "emoji": "🛬"},
+    {"name": "mytasks",  "desc": "Active Tasks",          "public": True, "category": "⚡ Tasks & Away", "emoji": "📋", "explanation": "View all tasks currently assigned to you, sent to your DM."},
+    {"name": "assign",   "desc": "Assign a task (supports multiple users)", "format": "`/assign @user1 @user2 , 120 , Review code`", "public": True, "category": "⚡ Tasks & Away", "emoji": "📌", "explanation": "Assign a task to one or more teammates with a deadline."},
+    {"name": "complete", "desc": "Mark your progress on a task", "format": "`/complete [TaskID]`",        "public": True, "category": "⚡ Tasks & Away", "emoji": "✅", "explanation": "Mark your progress on a task as done."},
+    {"name": "away",     "desc": "Set away status", "format": "`/away Doctor , 10/15/2026 14:30`",       "public": True, "category": "⚡ Tasks & Away", "emoji": "🛫", "explanation": "Set yourself as Away with a reason and return time."},
+    {"name": "back",     "desc": "Return to available",                                                  "public": True, "category": "⚡ Tasks & Away", "emoji": "🛬", "explanation": "Mark yourself as back and available. The bot will send you missed mentions."},
 
     # ─────────────────────────────────────────
     # 🤖 AI / GEMINI  ← BOTTOM of User list
     # Note added to /help: "⚠️ This is an experimental feature, don't abuse it yet"
     # ─────────────────────────────────────────
-    {"name": "gemini",  "desc": "Ask Gemini AI",            "format": "`/gemini Translate this: Hello`",           "public": True, "category": "🤖 AI / Gemini ⚠️ Experimental", "emoji": "🤖", "experimental": True},
-    {"name": "ask",     "desc": "Ask about Nukhba",         "format": "`/ask How do I schedule an event?`",        "public": True, "category": "🤖 AI / Gemini ⚠️ Experimental", "emoji": "🤖", "experimental": True},
-    {"name": "wdim",    "desc": "What did I miss? (Recap)", "public": True, "category": "🤖 AI / Gemini ⚠️ Experimental", "emoji": "🔍", "experimental": True},
-    {"name": "cheerme", "desc": "Get a personalised cheer", "public": True, "category": "🤖 AI / Gemini ⚠️ Experimental", "emoji": "🎉", "experimental": True},
-    {"name": "setcheer","desc": "Set your cheer profile",   "format": "`/setcheer <text>`",                        "public": True, "category": "🤖 AI / Gemini ⚠️ Experimental", "emoji": "💬", "experimental": True},
+    {"name": "ai",  "desc": "Ask AI (Groq)",            "format": "`/ai Translate this: Hello`",           "public": True, "category": "🤖 AI Assistant ⚠️ Experimental", "emoji": "🤖", "experimental": True, "explanation": "Ask the AI assistant (powered by Groq) any question."},
+    {"name": "ask",     "desc": "Ask about Nukhba",         "format": "`/ask How do I schedule an event?`",        "public": True, "category": "🤖 AI Assistant ⚠️ Experimental", "emoji": "🤖", "experimental": True, "explanation": "Ask about Nukhba Manager's features and how to use them."},
+    {"name": "wdim",    "desc": "What did I miss? (Recap)", "public": True, "category": "🤖 AI Assistant ⚠️ Experimental", "emoji": "🔍", "experimental": True, "explanation": "Get a smart AI-generated recap of what happened in the group while you were away."},
 
     # ==========================================
     # 🔐 ADMIN — SYSTEM CONFIG

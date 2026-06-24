@@ -21,11 +21,6 @@ try:
 except ImportError:
     cmd_system_help = cmd_system
 
-try:
-    import cmd_cheer
-except ImportError:
-    cmd_cheer = None
-
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -129,6 +124,15 @@ async def post_stop_wrapper(application: Application):
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error("⚠️ Unhandled exception during update processing:", exc_info=context.error)
+    # Send user-friendly message — never expose technical details
+    try:
+        if update and hasattr(update, "effective_message") and update.effective_message:
+            await update.effective_message.reply_text(
+                "⚠️ Something went wrong on our end. Please try again in a moment.\n"
+                "If the issue keeps happening, let the admin know via /feedback.",
+            )
+    except Exception:
+        pass
 
 
 # ==========================================
@@ -161,7 +165,7 @@ def main():
     app.add_handler(CommandHandler("wdim",     safe_cmd(cmd_system, "what_did_i_miss")))
     app.add_handler(CommandHandler("feedback", safe_cmd(cmd_system, "submit_feedback")))
     app.add_handler(CommandHandler("ask",      safe_cmd(cmd_system, "ask_bot")))
-    app.add_handler(CommandHandler("gemini",   safe_cmd(cmd_system, "ask_gemini")))
+    app.add_handler(CommandHandler("ai",   safe_cmd(cmd_system, "ask_ai")))
 
     # ─────────────────────────────────────────
     # 🔄 VERSION & UPDATE LOG
@@ -184,7 +188,6 @@ def main():
     app.add_handler(CommandHandler("thanks",           safe_cmd(cmd_user, "give_thanks")))
     app.add_handler(CommandHandler("myquota",          safe_cmd(cmd_user, "my_quota")))
     app.add_handler(CommandHandler("mystar",           safe_cmd(cmd_user, "my_star")))
-    app.add_handler(CommandHandler("totalstar",        safe_cmd(cmd_user, "total_star")))
     app.add_handler(CommandHandler("leaderboard_star", safe_cmd(cmd_user, "leaderboard_star")))
 
     # ─────────────────────────────────────────
@@ -204,12 +207,6 @@ def main():
     app.add_handler(CommandHandler("mytasks",  safe_cmd(cmd_user, "my_tasks")))
     app.add_handler(CommandHandler("away",     safe_cmd(cmd_user, "set_away")))
     app.add_handler(CommandHandler("back",     safe_cmd(cmd_user, "set_back")))
-
-    # ─────────────────────────────────────────
-    # 🥳 MOTIVATIONAL CHEERS
-    # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("cheerme",  safe_cmd(cmd_cheer, "cheer_me")))
-    app.add_handler(CommandHandler("setcheer", safe_cmd(cmd_cheer, "set_cheer")))
 
     # ─────────────────────────────────────────
     # 🎮 TRIVIA — USER

@@ -164,19 +164,25 @@ def _detail_text(cmd: dict) -> str:
         f"_{cmd['desc']}_",
         "",
     ]
+    # Brief explanation of what the command does
+    expl = cmd.get("explanation")
+    if expl:
+        lines.append(f"ℹ️ {expl}\n")
     if cmd.get("experimental"):
-        lines.append("⚠️ _Experimental — don't abuse it yet_\n")
+        lines.append("⚠️ _Experimental — use responsibly_\n")
+    # Copyable usage format
     fmt = cmd.get("format")
     if fmt:
-        lines.append(f"📝 *Usage:*\n`{fmt.replace('`','')}`\n")
+        clean_fmt = fmt.replace('`', '')
+        lines.append(f"📋 *Format:*")
+        lines.append(f"`{clean_fmt}`")
+        lines.append("")
+        lines.append("💡 _Long-press the format line above to copy it, then paste in the group._")
     else:
-        lines.append(f"📝 *Usage:*\n`/{cmd['name']}`\n")
-    lines += [
-        "─────────────────",
-        "💡 *How to use:*",
-        "Type the command directly in the group chat,",
-        "or long-press the usage line above to copy it.",
-    ]
+        lines.append(f"📋 *Format:*")
+        lines.append(f"`/{cmd['name']}`")
+        lines.append("")
+        lines.append("💡 _Type this command directly in the group chat._")
     return "\n".join(lines)
 
 

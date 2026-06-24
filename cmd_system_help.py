@@ -130,51 +130,51 @@ async def _send_nudge(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _build_help_text(uname: str, pool) -> str:
-    """Build the full /help text, role-filtered for the calling user."""
+    """
+    /help — Clean command list only. No format details (those live in /config).
+    Role-filtered: public always shown; admin/super sections only for eligible users.
+    """
     is_superowner = await is_super(uname)
     is_admin_user = await is_bot_admin(uname, pool)
 
-    public = [c for c in COMMANDS if c.get("public")]
-    admin  = [c for c in COMMANDS if c.get("admin") and not c.get("super")]
-    superc = [c for c in COMMANDS if c.get("super")]
+    public = [cmd for cmd in COMMANDS if cmd.get("public")]
+    admin  = [cmd for cmd in COMMANDS if cmd.get("admin") and not cmd.get("super")]
+    superc = [cmd for cmd in COMMANDS if cmd.get("super")]
 
-    text  = "📖 **[RAWWY] Nukhba Manager Manual**\n\n"
-    text += "_(If your `/` menu looks outdated, log out of Telegram and log back in.)_\n\n"
+    text  = "📖 **[RAWWY] Nukhba Manager**\n"
+    text += "_Command list — for full usage guide use /config_\n"
+    text += "_(Outdated `/` menu? Log out of Telegram and back in.)_\n\n"
 
     text += "🟢 **USER COMMANDS**\n"
     current_cat = ""
-    exp_shown = False
-    for c in public:
-        cat = c.get("category", "")
+    exp_shown   = False
+    for cmd in public:
+        cat = cmd.get("category", "")
         if cat != current_cat:
             current_cat = cat
             text += f"\n*{current_cat}*\n"
-            if c.get("experimental") and not exp_shown:
-                text += "⚠️ _(Experimental — don't abuse it yet)_\n"
+            if cmd.get("experimental") and not exp_shown:
+                text += "⚠️ _(Experimental — use responsibly)_\n"
                 exp_shown = True
-        text += f"{c.get('emoji','🔹')} `/{c['name']}` — {c['desc']}\n"
-        if "format" in c:
-            text += f"   └ {c['format']}\n"
+        text += f"{cmd.get('emoji','🔹')} `/{cmd['name']}` — {cmd['desc']}\n"
+        # No format lines here — /config has those
 
     if admin and is_admin_user:
-        text += "\n🔐 **ADMINISTRATOR SUITE**\n"
+        text += "\n🔐 **ADMINISTRATOR COMMANDS**\n"
         current_cat = ""
-        for c in admin:
-            cat = c.get("category", "")
+        for cmd in admin:
+            cat = cmd.get("category", "")
             if cat != current_cat:
                 current_cat = cat
                 text += f"\n*{current_cat}*\n"
-            text += f"{c.get('emoji','🔹')} `/{c['name']}` — {c['desc']}\n"
-            if "format" in c:
-                text += f"   └ {c['format']}\n"
+            text += f"{cmd.get('emoji','🔹')} `/{cmd['name']}` — {cmd['desc']}\n"
 
     if superc and is_superowner:
-        text += "\n👑 **SUPER OWNER EXCLUSIVES**\n"
-        for c in superc:
-            text += f"{c.get('emoji','🔹')} `/{c['name']}` — {c['desc']}\n"
-            if "format" in c:
-                text += f"   └ {c['format']}\n"
+        text += "\n👑 **SUPER OWNER**\n"
+        for cmd in superc:
+            text += f"{cmd.get('emoji','🔹')} `/{cmd['name']}` — {cmd['desc']}\n"
 
+    text += "\n💡 _Use /config to see usage format for any command._"
     return text
 
 

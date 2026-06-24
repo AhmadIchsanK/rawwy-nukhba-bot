@@ -265,7 +265,11 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         
                         last_notified = a['last_notified']
                         if not last_notified or (now - last_notified.astimezone(WIB)).total_seconds() > 3600:
-                            await update.message.reply_text(f"Just a heads up, @{a['username']} is away.\n(Reason: {a['reason']})")
+                            end_str = a['end_time'].astimezone(WIB).strftime('%b %d at %H:%M') if a.get('end_time') else 'an unspecified time'
+                            await update.message.reply_text(
+                                f"👋 Just a heads-up — @{a['username']} is currently away.\n"                                f"📝 Reason: _{a['reason']}_\n"                                f"⏰ Back by: {end_str} WIB\n\n"                                f"_Your message has been noted and will be delivered when they return._",
+                                parse_mode="Markdown"
+                            )
                             await conn.execute('UPDATE away_status SET last_notified=$1 WHERE username=$2', now, a['username'])
                             bot_data['away_cache']['time'] = 0 
 
@@ -696,6 +700,9 @@ async def send_md_chunks(bot, chat_id, text, prefix="", suffix=""):
 
 async def ask_gemini(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_gemini_request(update, context, " ".join(context.args), False)
+
+# Alias — /ai maps to the same function as /gemini used to
+ask_ai = ask_gemini
 
 async def ask_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await process_gemini_request(update, context, " ".join(context.args), True)

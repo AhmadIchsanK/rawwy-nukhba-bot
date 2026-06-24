@@ -54,12 +54,11 @@ async def _ensure_version_table(pool):
             await conn.execute(
                 "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
                 "1.2",
-                "⏱️ Inline keyboards auto-expire after 120s\n"
-                "🔒 Panel owner-lock: only opener can interact\n"
-                "🐛 /newsched group ID input fixed (panel now restores after reply)\n"
-                "📚 /getlib fixed for multi-word names + case-insensitive search\n"
-                "👥 /assign now supports multiple assignees with shared progress tracking\n"
-                "🛠️ /botconfig merged User Manager + Group IDs + Sched Config in one panel"
+                "⭐ /mystar now shows both your monthly and all-time RAWWY Stars in one place\n"
+                "👋 Away notifications now show the reason and return time when someone is mentioned\n"
+                "🤖 AI assistant is now faster and more reliable — use /ai to ask anything\n"
+                "📖 /help is now a clean command list; use /command for full usage details\n"
+                "🐛 Fixed: /newsched group ID input now works correctly with custom channel IDs"
             )
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bot_admins (
@@ -367,7 +366,7 @@ async def config_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     # Strip prefix "cfg_" then split into field + action
-    # e.g. "cfg_gemini_add" → "gemini_add" → field="gemini", action="add"
+    # e.g. "cfg_gemini_add" → "gemini_add" → field="ai", action="add"
     # e.g. "cfg_events_cus" → "events_cus" → field="events", action="cus"
     stripped = data[4:]  # remove "cfg_"
     # action is always the last segment; field is everything before
@@ -1178,16 +1177,29 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     await _ensure_version_table(pool)
 
+    is_admin_user  = await is_bot_admin(update.effective_user.username, pool)
+    is_super_owner = await is_super(update.effective_user.username)
+
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             "SELECT version, changelog, updated_at FROM bot_version ORDER BY id ASC"
         )
 
+    # Only show versions up to 1.2 — v1.3 info is not released yet
+    MAX_VERSION = (1, 2)
+    def _ver_tuple(v):
+        try:
+            parts = str(v).split('.')
+            return tuple(int(x) for x in parts)
+        except Exception:
+            return (0, 0)
+
+    rows = [r for r in rows if _ver_tuple(r['version']) <= MAX_VERSION]
+
     if not rows:
         return await update.message.reply_text("ℹ️ No version info available yet.")
 
-    latest = rows[-1]  # last entry = newest
-    # Header block — exact format as specified
+    latest = rows[-1]
     header = (
         f"🤖 Nukhba Manager Bot\n"
         f"📦 Current Version: {latest['version']}\n"
@@ -1197,8 +1209,20 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     changelog_lines = []
     for r in rows:
-        ts = r['updated_at'].astimezone(WIB).strftime('%d %b %Y')
-        changelog_lines.append(f"\n🔖 v{r['version']} — {ts}\n{r['changelog']}")
+        ts  = r['updated_at'].astimezone(WIB).strftime('%d %b %Y')
+        log = r['changelog']
+        # For non-admins, strip out lines that mention admin/super commands
+        if not is_admin_user and not is_super_owner:
+            filtered = []
+            skip_keywords = ['admin', 'super owner', '/botconfig', '/manageuser',
+                             '/addadmin', '/deladmin', '/graveyard', '/schedconfig',
+                             '/newsched', '/analyze', 'super_reset', 'botstatus']
+            for line in log.split('\n'):
+                if not any(kw.lower() in line.lower() for kw in skip_keywords):
+                    filtered.append(line)
+            log = '\n'.join(filtered).strip()
+        if log:
+            changelog_lines.append(f"\n🔖 v{r['version']} — {ts}\n{log}")
 
     await send_md(context, update.effective_chat.id, header + "\n".join(changelog_lines))
 
@@ -1622,7 +1646,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "assign_task": cmd_user, "complete_task": cmd_user,
         "my_tasks": cmd_user, "set_away": cmd_user, "set_back": cmd_user,
         # cheer
-        "cheer_me": cmd_cheer, "set_cheer": cmd_cheer,
         # trivia
         "my_point": cmd_trivia, "leaderboard_kp": cmd_trivia,
         "trivia_config": cmd_trivia, "force_trivia": cmd_trivia,
@@ -1663,7 +1686,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "command": "command_nav",
         "about": "about_command",
         "wdim": "what_did_i_miss", "feedback": "submit_feedback",
-        "ask": "ask_bot", "gemini": "ask_gemini",
+        "ask": "ask_bot", "ai": "ask_gemini",
         "pushupdate": "push_update",
         "updatechange": "update_change",
         "newevent": "create_event", "editevent": "edit_event",
@@ -1675,7 +1698,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "dellib": "del_lib", "getlib": "get_lib", "library": "list_lib",
         "assign": "assign_task", "complete": "complete_task",
         "mytasks": "my_tasks", "away": "set_away", "back": "set_back",
-        "cheerme": "cheer_me", "setcheer": "set_cheer",
         "mypoint": "my_point", "leaderboard_kp": "leaderboard_kp",
         "triviaconfig": "trivia_config", "forcetrivia": "force_trivia",
         "forcesupertrivia": "force_super_trivia",
@@ -2584,17 +2606,22 @@ async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool = context.bot_data.get('db_pool')
     try:
         async with pool.acquire() as conn:
-            # Ensure table exists (idempotent — safe to re-run)
+            # Ensure table exists with removed_at column (idempotent)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS graveyard (
                     username VARCHAR(100) PRIMARY KEY,
                     removed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             """)
+            # Migrate: add removed_at if it doesn't exist (fixes legacy tables)
+            await conn.execute("""
+                ALTER TABLE graveyard ADD COLUMN IF NOT EXISTS
+                removed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            """)
             recs = await conn.fetch('SELECT username, removed_at FROM graveyard ORDER BY removed_at DESC')
-        
+
         if not recs:
-            msg = "🪦 **Graveyard — Offboarded Members**\n\n_No members have been offboarded yet._"
+            msg = "🪦 **Graveyard — Offboarded Members**\n\n_No members have been offboarded yet. The graveyard is empty._"
         else:
             lines = []
             for r in recs:
@@ -2602,12 +2629,14 @@ async def graveyard(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     date_str = r['removed_at'].astimezone(WIB).strftime('%d %b %Y')
                 except Exception:
                     date_str = "Unknown date"
-                lines.append(f"• @{r['username']} — {date_str}")
-            msg = "🪦 **Graveyard — Offboarded Members**\n\n" + "\n".join(lines)
-        
+                lines.append(f"• @{r['username']} — removed {date_str}")
+            count = len(lines)
+            msg = f"🪦 **Graveyard — Offboarded Members** ({count})\n\n" + "\n".join(lines)
+
         await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
     except Exception as e:
-        await context.bot.send_message(update.effective_user.id, f"❌ Graveyard error: {e}")
+        logger.error(f"Graveyard error: {e}")
+        await context.bot.send_message(update.effective_user.id, "❌ Something went wrong loading the graveyard. Please try again.")
 
 
 async def pause_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):

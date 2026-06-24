@@ -244,15 +244,17 @@ async def my_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.username or str(update.effective_user.id)
     pool = context.bot_data.get('db_pool')
     async with pool.acquire() as conn:
-        pts = await conn.fetchval('SELECT monthly_points FROM kudos WHERE username=$1', user)
-    await update.message.reply_text(f"✅ Monthly Stars: **{pts or 0}**", parse_mode="Markdown")
+        row = await conn.fetchrow('SELECT monthly_points, all_time_points FROM kudos WHERE username=$1', user)
+    monthly = row['monthly_points'] if row else 0
+    alltime = row['all_time_points'] if row else 0
+    await update.message.reply_text(
+        f"🌟 **Your RAWWY Stars**\n\n"        f"📅 This Month: **{monthly or 0}**\n"        f"🏆 All-Time: **{alltime or 0}**",
+        parse_mode="Markdown"
+    )
 
+# Kept for backwards-compat but /mystar now covers this — not registered in main.py
 async def total_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.username or str(update.effective_user.id)
-    pool = context.bot_data.get('db_pool')
-    async with pool.acquire() as conn:
-        pts = await conn.fetchval('SELECT all_time_points FROM kudos WHERE username=$1', user)
-    await update.message.reply_text(f"✅ All-Time Stars: **{pts or 0}**", parse_mode="Markdown")
+    await my_star(update, context)
 
 async def leaderboard_star(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from core import delete_cmd
