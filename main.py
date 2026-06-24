@@ -20,6 +20,7 @@ import cmd_away
 import cmd_task
 import cmd_birthday
 import cmd_broadcast
+import cmd_manual
 
 # Safe fallback imports for recently separated modules
 try:
@@ -210,6 +211,7 @@ def main():
     app.add_handler(CommandHandler("away",       cmd_away.away_command))
     app.add_handler(CommandHandler("back",       safe_cmd(cmd_user, "set_back")))  # /back still manual
     app.add_handler(CommandHandler("broadcast",      cmd_broadcast.broadcast_command))
+    app.add_handler(CommandHandler("manual",         cmd_manual.manual_command))
     # /newsched /announce /editannounce /delannounce → merged into /broadcast
     app.add_handler(CommandHandler("birthdayconfig", cmd_birthday.birthday_config_command))
     # /addbday /editbday /delbday /listbdays /bulkaddbday /bulkdelbday → merged into /birthdayconfig

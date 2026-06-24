@@ -4,3 +4,4 @@ python-dotenv==1.0.1
 asyncpg
 openai>=1.30.0
 google-genai
+reportlab>=4.0.0

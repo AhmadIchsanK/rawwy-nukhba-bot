@@ -1058,18 +1058,58 @@ async def run_monthly_trivia_reset(context: ContextTypes.DEFAULT_TYPE):
     if not top_minds:
         return
 
-    podiums      = ["🥇", "🥈", "🥉"]
-    announcement = (
-        "🏆 <b>NUKHBA TRIVIA — MONTHLY CHAMPIONS</b> 🏆\n"
-        "──────────────────────────────\n"
-        "Congratulations to our top minds this month!\n\n"
+    podiums = ["🥇", "🥈", "🥉"]
+    month_name = (datetime.datetime.now(WIB) - datetime.timedelta(days=1)).strftime("%B")
+
+    # Build per-player context for AI
+    player_lines = []
+    async with pool.acquire() as conn:
+        for i, r in enumerate(top_minds):
+            prev_wins = await conn.fetchval(
+                "SELECT wins FROM kp_wins WHERE username=$1", r['username']
+            ) or 0
+            alltime = await conn.fetchval(
+                "SELECT all_time_kp FROM trivia_scores WHERE username=$1", r['username']
+            ) or 0
+            milestone = "first time KP champion!" if prev_wins == 0 else f"champion {prev_wins+1} times total"
+            player_lines.append(
+                f"{podiums[i]} @{r['username']} — {r['monthly_kp']} KP this month, {alltime} all-time ({milestone})"
+            )
+
+    prompt = (
+        f"You are the announcer for the RAWWY team's monthly Knowledge Points (KP) trivia leaderboard for {month_name}. "
+        f"Write a warm, energetic, and personalised congratulations message for the top 3 trivia champions. "
+        f"Mention each winner by username, their KP score, and note if it's their first win or how many times they've won. "
+        f"Keep it under 200 words. Use emojis. Plain text only, no markdown headers. Results:\n\n"
+        + "\n".join(player_lines)
     )
-    for idx, user in enumerate(top_minds):
-        announcement += f"{podiums[idx]} @{escape_html(user['username'])} — {user['monthly_kp']} Knowledge Points\n"
-    announcement += "\n🔄 <i>Monthly stats reset. All-time stats preserved!</i>"
+
+    ai_msg = None
+    try:
+        from cmd_system import _generate_content_with_retry
+        resp   = await _generate_content_with_retry(None, prompt)
+        ai_msg = resp.text.strip()
+    except Exception as e:
+        logger.error(f"AI monthly KP message failed, using fallback: {e}")
+
+    if not ai_msg:
+        lines = [f"🏆 NUKHBA TRIVIA — {month_name} Champions!\n"]
+        for i, r in enumerate(top_minds):
+            lines.append(f"{podiums[i]} @{r['username']} — {r['monthly_kp']} KP")
+        lines.append("\n🔄 Monthly stats reset. All-time stats preserved!")
+        ai_msg = "\n".join(lines)
+
+    # Record wins
+    async with pool.acquire() as conn:
+        for r in top_minds:
+            await conn.execute(
+                "INSERT INTO kp_wins (username, wins) VALUES ($1, 1) "
+                "ON CONFLICT (username) DO UPDATE SET wins = kp_wins.wins + 1",
+                r['username']
+            )
 
     try:
-        await context.bot.send_message(target_chat_id, announcement, parse_mode="HTML")
+        await context.bot.send_message(target_chat_id, ai_msg)
     except Exception as e:
         logger.error(f"Monthly trivia reset announcement failed: {e}")
 

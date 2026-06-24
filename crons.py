@@ -96,36 +96,88 @@ async def daily_morning_log(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Failed to run daily morning log: {e}")
 
 async def monthly_star_leaderboard(context):
-    """Announces top RAWWY Star earner and resets monthly points. Runs on 1st of month."""
-    import datetime as _dt
+    """Announces top-3 RAWWY Star earners with AI-personalised messages. Runs on 1st of month."""
     now = datetime.datetime.now(WIB)
     if now.day != 1:
         return
 
     month_name = (now - datetime.timedelta(days=1)).strftime("%B")
     pool = context.bot_data.get('db_pool')
+
     async with pool.acquire() as conn:
-        top_earner    = await conn.fetchrow('SELECT username, monthly_points FROM kudos WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 1')
+        top3          = await conn.fetch(
+            'SELECT username, monthly_points, all_time_points FROM kudos '
+            'WHERE monthly_points > 0 ORDER BY monthly_points DESC LIMIT 3'
+        )
         groups        = await conn.fetch('SELECT chat_id FROM active_groups')
         stars_channel = await conn.fetchval("SELECT value FROM config WHERE key='stars_channel'")
 
-        if top_earner:
-            msg = (
-                f"\U0001f3c6 **Best RAWWY Star earner this month ({month_name}) is @{top_earner['username']}!** \U0001f3c6\n\n"
-                f"Total **{top_earner['monthly_points']} RAWWY Stars** earned. Absolutely incredible work! "
-                "\U0001f31f Keep up the amazing momentum, team!"
+    if not top3:
+        async with pool.acquire() as conn:
+            await conn.execute("UPDATE kudos SET monthly_points = 0")
+        return
+
+    # Build context for AI — who's a first-timer vs repeat winner
+    podiums = ["🥇", "🥈", "🥉"]
+    player_lines = []
+    for i, r in enumerate(top3):
+        prev_wins = 0
+        async with pool.acquire() as conn:
+            prev_wins = await conn.fetchval(
+                "SELECT wins FROM kudos_wins WHERE username=$1", r['username']
+            ) or 0
+        milestone = "first time winner!" if prev_wins == 0 else f"won {prev_wins+1} times total"
+        player_lines.append(
+            f"{podiums[i]} @{r['username']} — {r['monthly_points']} Stars this month, {r['all_time_points']} all-time ({milestone})"
+        )
+
+    prompt = (
+        f"You are the announcer for the RAWWY team's monthly RAWWY Stars leaderboard for {month_name}. "
+        f"Write a warm, energetic, and personalised congratulations message for the top 3 winners. "
+        f"Mention each winner by username, their star count, and note if it's their first win or how many times they've won. "
+        f"Keep it under 200 words. Use emojis. Do not use markdown headers. Here are the results:\n\n"
+        + "\n".join(player_lines)
+    )
+
+    ai_msg = None
+    try:
+        from cmd_system import _generate_content_with_retry
+        resp   = await _generate_content_with_retry(None, prompt)
+        ai_msg = resp.text.strip()
+    except Exception as e:
+        logger.warning(f"AI monthly star message failed, using fallback: {e}")
+
+    if not ai_msg:
+        lines = [f"🏆 *RAWWY Stars — {month_name} Champions!* 🏆\n"]
+        for i, r in enumerate(top3):
+            lines.append(f"{podiums[i]} @{r['username']} — {r['monthly_points']} ⭐")
+        lines.append("\n_Congratulations to all winners! Keep up the great work!_")
+        ai_msg = "\n".join(lines)
+
+    # Record wins
+    async with pool.acquire() as conn:
+        for r in top3:
+            await conn.execute(
+                "INSERT INTO kudos_wins (username, wins) VALUES ($1, 1) "
+                "ON CONFLICT (username) DO UPDATE SET wins = kudos_wins.wins + 1",
+                r['username']
             )
-            if stars_channel:
-                try:
-                    await context.bot.send_message(int(stars_channel), msg, parse_mode="Markdown")
-                except Exception:
-                    pass
-            else:
-                for g in groups:
-                    try:
-                        await context.bot.send_message(g['chat_id'], msg, parse_mode="Markdown")
-                    except Exception:
-                        pass
+
+    # Send
+    target = int(stars_channel) if stars_channel else None
+    if target:
+        try:
+            await context.bot.send_message(target, ai_msg, parse_mode="Markdown")
+        except Exception:
+            pass
+    else:
+        for g in groups:
+            try:
+                await context.bot.send_message(g['chat_id'], ai_msg, parse_mode="Markdown")
+            except Exception:
+                pass
+
+    async with pool.acquire() as conn:
         await conn.execute("UPDATE kudos SET monthly_points = 0")
 
 # Legacy alias so existing code that imports monthly_leaderboard still works

@@ -6,6 +6,11 @@
 # Telegram API requires command names to be 1-32 lowercase letters/digits/underscores.
 
 COMMANDS = [
+    {"name": "manual",  "emoji": "📖", "public": True,
+     "category": "ℹ️ General",
+     "desc": "Receive the full bot user manual as a PDF (once per month)",
+     "explanation": "Generates and sends a PDF manual covering all user commands in English, Arabic, and Indonesian. You can request this once per calendar month — check your chat history if you need it again sooner.",
+     "format": "/manual"},
     {"name": "broadcast", "emoji": "📢", "public": False, "admin": True,
      "category": "📢 Broadcast",
      "desc": "Post or schedule team broadcasts to groups",
