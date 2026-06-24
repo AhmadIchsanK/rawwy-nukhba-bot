@@ -14,6 +14,12 @@ import cmd_user
 import cmd_admin
 import cmd_trivia
 import cmd_command_nav
+import cmd_events
+import cmd_library
+import cmd_away
+import cmd_task
+import cmd_birthday
+import cmd_broadcast
 
 # Safe fallback imports for recently separated modules
 try:
@@ -77,11 +83,34 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
 
     # 4. /newsched interactive text input (target chat, time, message)
-    if hasattr(cmd_admin, '_handle_nsched_text'):
-        if await cmd_admin._handle_nsched_text(update, context):
-            return
+    # 5. Events & Polls DM text flow
+    if await cmd_events.handle_events_text(update, context):
+        return
 
-    # 5. System-level text handlers
+    # 6b. Library DM text flow
+    if await cmd_library.handle_library_text(update, context):
+        return
+
+    # 6c. Away DM text flow
+    if await cmd_away.handle_away_text(update, context):
+        return
+
+    # 6d. Task DM + group text flow
+    if await cmd_task.handle_task_text(update, context):
+        return
+
+    # 6e. Birthday config DM text flow
+    if await cmd_birthday.handle_birthday_text(update, context):
+        return
+
+    # 6f. Broadcast DM text flow
+    if await cmd_broadcast.handle_broadcast_text(update, context):
+        return
+
+    # 6d. Auto-cancel away on group message
+    await cmd_away.check_auto_cancel(update, context)
+
+    # 7. System-level text handlers
     if hasattr(cmd_system, 'global_tracker'):
         await cmd_system.global_tracker(update, context)
 
@@ -177,10 +206,17 @@ def main():
     # ─────────────────────────────────────────
     # 📅 EVENTS & POLLS
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("newevent",   safe_cmd(cmd_user, "create_event")))
-    app.add_handler(CommandHandler("editevent",  safe_cmd(cmd_user, "edit_event")))
-    app.add_handler(CommandHandler("events",     safe_cmd(cmd_user, "list_events")))
-    app.add_handler(CommandHandler("poll",       safe_cmd(cmd_user, "create_poll")))
+    app.add_handler(CommandHandler("events",     cmd_events.events_command))
+    app.add_handler(CommandHandler("away",       cmd_away.away_command))
+    app.add_handler(CommandHandler("back",       safe_cmd(cmd_user, "set_back")))  # /back still manual
+    app.add_handler(CommandHandler("broadcast",      cmd_broadcast.broadcast_command))
+    # /newsched /announce /editannounce /delannounce → merged into /broadcast
+    app.add_handler(CommandHandler("birthdayconfig", cmd_birthday.birthday_config_command))
+    # /addbday /editbday /delbday /listbdays /bulkaddbday /bulkdelbday → merged into /birthdayconfig
+    app.add_handler(CommandHandler("task",       cmd_task.task_command))
+    app.add_handler(CommandHandler("mytask",     cmd_task.mytask_command))
+    # /assign and /complete → merged into /task and /mytask inline hubs
+    # /newevent, /editevent, /poll → merged into /events inline hub
 
     # ─────────────────────────────────────────
     # ⭐ RAWWY STARS
@@ -193,10 +229,6 @@ def main():
     # ─────────────────────────────────────────
     # 📚 LIBRARY
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("addlib",  safe_cmd(cmd_user, "add_lib")))
-    app.add_handler(CommandHandler("editlib", safe_cmd(cmd_user, "edit_lib")))
-    app.add_handler(CommandHandler("dellib",  safe_cmd(cmd_user, "del_lib")))
-    app.add_handler(CommandHandler("getlib",  safe_cmd(cmd_user, "get_lib")))
     app.add_handler(CommandHandler("library", safe_cmd(cmd_user, "list_lib")))
 
     # ─────────────────────────────────────────
@@ -205,8 +237,6 @@ def main():
     app.add_handler(CommandHandler("assign",   safe_cmd(cmd_user, "assign_task")))
     app.add_handler(CommandHandler("complete", safe_cmd(cmd_user, "complete_task")))
     app.add_handler(CommandHandler("mytasks",  safe_cmd(cmd_user, "my_tasks")))
-    app.add_handler(CommandHandler("away",     safe_cmd(cmd_user, "set_away")))
-    app.add_handler(CommandHandler("back",     safe_cmd(cmd_user, "set_back")))
 
     # ─────────────────────────────────────────
     # 🎮 TRIVIA — USER
@@ -251,12 +281,6 @@ def main():
     # ─────────────────────────────────────────
     # 🎂 ADMIN BIRTHDAYS
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("addbday",     safe_cmd(cmd_admin, "add_bday")))
-    app.add_handler(CommandHandler("editbday",    safe_cmd(cmd_admin, "edit_bday")))
-    app.add_handler(CommandHandler("delbday",     safe_cmd(cmd_admin, "del_bday")))
-    app.add_handler(CommandHandler("listbdays",   safe_cmd(cmd_admin, "list_bdays")))
-    app.add_handler(CommandHandler("bulkaddbday", safe_cmd(cmd_admin, "bulk_add_bday")))
-    app.add_handler(CommandHandler("bulkdelbday", safe_cmd(cmd_admin, "bulk_del_bday")))
 
     # ─────────────────────────────────────────
     # 🏖️ ADMIN TEAM MANAGEMENT
@@ -264,19 +288,15 @@ def main():
     app.add_handler(CommandHandler("attendance",   safe_cmd(cmd_admin, "attendance")))
     app.add_handler(CommandHandler("forceback",    safe_cmd(cmd_admin, "force_back")))
     app.add_handler(CommandHandler("grouptasks",   safe_cmd(cmd_admin, "group_tasks")))
-    app.add_handler(CommandHandler("cancelevent",  safe_cmd(cmd_admin, "cancel_event")))
+    # /cancelevent → merged into /events inline hub
     app.add_handler(CommandHandler("canceltask",   safe_cmd(cmd_admin, "cancel_task")))
-    app.add_handler(CommandHandler("cancelpoll",   safe_cmd(cmd_admin, "cancel_poll_admin")))
+    # /cancelpoll → merged into /events inline hub
 
     # ─────────────────────────────────────────
     # 📢 ADMIN BROADCASTS & SCHEDULING
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("newsched",      safe_cmd(cmd_admin, "new_schedule")))
     app.add_handler(CommandHandler("listschedules", safe_cmd(cmd_admin, "list_schedules")))
     app.add_handler(CommandHandler("delschedule",   safe_cmd(cmd_admin, "del_schedule")))
-    app.add_handler(CommandHandler("announce",      safe_cmd(cmd_admin, "announce")))
-    app.add_handler(CommandHandler("editannounce",  safe_cmd(cmd_admin, "edit_announce")))
-    app.add_handler(CommandHandler("delannounce",   safe_cmd(cmd_admin, "del_announce")))
     app.add_handler(CommandHandler("feedbacklist",  safe_cmd(cmd_admin, "feedback_list")))
     app.add_handler(CommandHandler("analyze_feedback", safe_cmd(cmd_admin, "analyze_feedback")))
 
@@ -299,11 +319,17 @@ def main():
     # ─────────────────────────────────────────
     app.add_handler(CallbackQueryHandler(cmd_command_nav.command_nav_callback, pattern="^cmenu_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_user,   "rsvp_callback"),    pattern="^rsvp_"))
-    app.add_handler(CallbackQueryHandler(safe_cb(cmd_user,   "poll_callback"),    pattern="^pollst_"))
+    app.add_handler(CallbackQueryHandler(cmd_events.events_callback,              pattern="^ev_"))
+    app.add_handler(CallbackQueryHandler(cmd_library.library_callback,            pattern="^lib_"))
+    app.add_handler(CallbackQueryHandler(cmd_away.away_callback,                  pattern="^aw_"))
+    app.add_handler(CallbackQueryHandler(cmd_task.task_callback,                  pattern="^tk_"))
+    app.add_handler(CallbackQueryHandler(cmd_task.mytask_callback,                pattern="^myt_"))
+    app.add_handler(CallbackQueryHandler(cmd_birthday.birthday_callback,          pattern="^bd_"))
+    app.add_handler(CallbackQueryHandler(cmd_broadcast.broadcast_callback,        pattern="^bc_"))
+    # pollst_ callbacks removed — poll settings now handled via ev_poll_ prefix
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "config_callback"),  pattern="^cfg_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "sched_config_callback"), pattern="^schcfg_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "manage_users_callback"), pattern="^mu_"))
-    app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "newsched_callback"), pattern="^nsched_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_trivia, "trivia_callback"),  pattern="^tcfg_|trivans_|tcancel_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_system, "feedback_callback"),pattern="^fb_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "super_callback"),   pattern="^sup_"))

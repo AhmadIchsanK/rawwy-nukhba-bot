@@ -6,6 +6,21 @@
 # Telegram API requires command names to be 1-32 lowercase letters/digits/underscores.
 
 COMMANDS = [
+    {"name": "broadcast", "emoji": "📢", "public": False, "admin": True,
+     "category": "📢 Broadcast",
+     "desc": "Post or schedule team broadcasts to groups",
+     "explanation": "Opens the Broadcast hub in DM. Post immediately or schedule with recurrence (once, daily, weekday, weekly). Choose target group or all groups, set message, and optionally tag everyone.",
+     "format": "/broadcast"},
+    {"name": "birthdayconfig", "emoji": "🎂", "public": False, "admin": True,
+     "category": "🎂 Birthday Management",
+     "desc": "Manage team birthday registrations",
+     "explanation": "Opens the Birthday Config hub in DM. Add, edit, delete, batch add, and batch delete birthdays — all inline. Admins only.",
+     "format": "/birthdayconfig"},
+    {"name": "library",  "emoji": "📚", "public": True,
+     "category": "📚 Library",
+     "desc": "Browse and manage team assets in the library",
+     "explanation": "Opens the Library hub in DM. Browse, get, add (including batch), edit, and delete assets — all with inline buttons.",
+     "format": "/library"},
     # ─────────────────────────────────────────
     # 💬 GENERAL
     # ─────────────────────────────────────────
@@ -18,11 +33,8 @@ COMMANDS = [
     # ─────────────────────────────────────────
     # 📅 EVENTS & POLLS
     # ─────────────────────────────────────────
-    {"name": "newevent",  "desc": "Schedule an event",  "format": "`/newevent Title , MM/DD/YYYY HH:MM , RemMins`",          "public": True, "category": "📅 Events & Polls", "emoji": "📅", "explanation": "Creates a new team event with a reminder. Event is pinned in the group."},
-    {"name": "editevent", "desc": "Edit an event",      "format": "`/editevent ID , Title , MM/DD/YYYY HH:MM , RemMins`",    "public": True, "category": "📅 Events & Polls", "emoji": "✏️", "explanation": "Updates the title, time, or reminder of an existing event you created."},
-    {"name": "events",    "desc": "Upcoming events",                                                                          "public": True, "category": "📅 Events & Polls", "emoji": "🗓️", "explanation": "Lists all upcoming events scheduled in this group."},
-    {"name": "poll",      "desc": "Interactive Team Poll", "format": "`/poll Where to eat? , Pizza , Sushi`",                "public": True, "category": "📅 Events & Polls", "emoji": "📊", "explanation": "Creates a team poll with custom options and settings (anon, multi, quiz)."},
-
+            {"name": "events",    "desc": "Upcoming events",                                                                          "public": True, "category": "📅 Events & Polls", "emoji": "🗓️", "explanation": "Lists all upcoming events scheduled in this group."},
+    
     # ─────────────────────────────────────────
     # ⭐ RAWWY STARS
     # ─────────────────────────────────────────
@@ -40,12 +52,7 @@ COMMANDS = [
     # ─────────────────────────────────────────
     # 📚 LIBRARY
     # ─────────────────────────────────────────
-    {"name": "library", "desc": "Browse Library",    "public": True, "category": "📚 Library", "emoji": "🗂️", "explanation": "Browse all saved team assets (links, text, files) in the library."},
-    {"name": "getlib",  "desc": "Retrieve an asset", "format": "`/getlib Company Logo`",        "public": True, "category": "📚 Library", "emoji": "📤", "explanation": "Retrieve a specific asset from the library by name."},
-    {"name": "addlib",  "desc": "Save an asset",     "format": "`/addlib Logo , content`",      "public": True, "category": "📚 Library", "emoji": "📥", "explanation": "Save a new asset to the library. Add ', private' at the end to keep it private."},
-    {"name": "editlib", "desc": "Edit an asset",     "format": "`/editlib Logo , <new content>`", "public": True, "category": "📚 Library", "emoji": "✏️", "explanation": "Update the content of an asset you own."},
-    {"name": "dellib",  "desc": "Delete an asset",   "format": "`/dellib Logo`",                "public": True, "category": "📚 Library", "emoji": "🗑️", "explanation": "Delete an asset you own from the library."},
-
+                    
     # ─────────────────────────────────────────
     # ⚡ TASKS & AWAY
     # ─────────────────────────────────────────
@@ -80,13 +87,7 @@ COMMANDS = [
     {"name": "admin_limit", "desc": "Manually edit AI limit",               "format": "`/admin_limit @user , <set|add|sub> , <amt>`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🤖"},
 
     # 🎂 ADMIN — BIRTHDAYS
-    {"name": "listbdays",   "desc": "List registered birthdays",            "public": False, "admin": True, "category": "🎂 Admin Birthdays", "emoji": "📋"},
-    {"name": "addbday",     "desc": "Add a birthday",                       "format": "`/addbday @user , MM/DD`", "public": False, "admin": True, "category": "🎂 Admin Birthdays", "emoji": "➕"},
-    {"name": "editbday",    "desc": "Edit a birthday",                      "format": "`/editbday @user , MM/DD`", "public": False, "admin": True, "category": "🎂 Admin Birthdays", "emoji": "✏️"},
-    {"name": "delbday",     "desc": "Delete a birthday",                    "format": "`/delbday @user`", "public": False, "admin": True, "category": "🎂 Admin Birthdays", "emoji": "🗑️"},
-    {"name": "bulkaddbday", "desc": "Bulk-add birthdays",                   "format": "`/bulkaddbday @user1 MM/DD , @user2 MM/DD`", "public": False, "admin": True, "category": "🎂 Admin Birthdays", "emoji": "📥"},
-    {"name": "bulkdelbday", "desc": "Bulk-delete birthdays",                "format": "`/bulkdelbday @user1 , @user2 , @user3`", "public": False, "admin": True, "category": "🎂 Admin Birthdays", "emoji": "🗑️"},
-
+                        
     # 🎮 ADMIN — TRIVIA
     {"name": "triviaconfig",     "desc": "Interactive Trivia Panel",         "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "🎛️"},
     {"name": "forcetrivia",      "desc": "Trigger standard round",           "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "▶️"},
@@ -99,18 +100,12 @@ COMMANDS = [
     {"name": "attendance",  "desc": "Check team attendance",                 "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "📊"},
     {"name": "forceback",   "desc": "Force user back from away",             "format": "`/forceback @user`", "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛬"},
     {"name": "grouptasks",  "desc": "View all global active tasks",          "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "📋"},
-    {"name": "cancelevent", "desc": "Cancel an event",                       "format": "`/cancelevent [ID]`", "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛑"},
-    {"name": "canceltask",  "desc": "Cancel a task",                         "format": "`/canceltask [ID]`",  "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛑"},
-    {"name": "cancelpoll",  "desc": "Cancel a poll (reply to poll msg)",     "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛑"},
-
+        {"name": "canceltask",  "desc": "Cancel a task",                         "format": "`/canceltask [ID]`",  "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛑"},
+    
     # 📢 ADMIN — BROADCASTS
-    {"name": "newsched",         "desc": "Interactive Broadcast Scheduler",  "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🗓️"},
-    {"name": "listschedules",    "desc": "List active broadcasts",            "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📜"},
+        {"name": "listschedules",    "desc": "List active broadcasts",            "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📜"},
     {"name": "delschedule",      "desc": "Delete a schedule",                "format": "`/delschedule [ID]`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🗑️"},
-    {"name": "announce",         "desc": "Send announcement now",            "format": "`/announce <chat_id|all> , <Message>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📣"},
-    {"name": "editannounce",     "desc": "Edit sent announcement",           "format": "`/editannounce [ID] , <New Message>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "✏️"},
-    {"name": "delannounce",      "desc": "Delete sent announcement",         "format": "`/delannounce [ID]`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🗑️"},
-    {"name": "feedbacklist",     "desc": "View raw feedback (last 7 days)",  "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📥"},
+                {"name": "feedbacklist",     "desc": "View raw feedback (last 7 days)",  "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📥"},
     {"name": "analyze_feedback", "desc": "AI summarise feedback",            "format": "`/analyze_feedback <MM/DD/YYYY> to <MM/DD/YYYY>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🤖"},
 
     # ==========================================
