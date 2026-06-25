@@ -184,11 +184,64 @@ async def init_db(app: Application):
                     PRIMARY KEY (chat_id, user_id)
                 )
             ''')
+            # ── KUDOS WIN TRACKING ────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS kudos_wins (
+                    username VARCHAR(100) PRIMARY KEY,
+                    wins     INT DEFAULT 0
+                )
+            ''')
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS kp_wins (
+                    username VARCHAR(100) PRIMARY KEY,
+                    wins     INT DEFAULT 0
+                )
+            ''')
+            # ── MANUAL REQUEST TRACKING ───────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS manual_requests (
+                    user_id   BIGINT NOT NULL,
+                    last_sent DATE   NOT NULL,
+                    PRIMARY KEY (user_id)
+                )
+            ''')
+            # ── GROUP SETTINGS ────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS group_settings (
+                    chat_id    BIGINT PRIMARY KEY,
+                    chat_title TEXT
+                )
+            ''')
+            # ── SCHEDULED BROADCASTS ─────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS scheduled_announcements (
+                    id           SERIAL PRIMARY KEY,
+                    chat_id      TEXT,
+                    frequency    VARCHAR(20) DEFAULT 'once',
+                    run_time     VARCHAR(5),
+                    mention      BOOLEAN DEFAULT FALSE,
+                    message      TEXT,
+                    created_by   VARCHAR(100),
+                    scheduled_at TIMESTAMP WITH TIME ZONE
+                )
+            ''')
+            # ── TASK ASSIGNEES ────────────────────────────────────────────────
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS task_assignees (
+                    id            SERIAL PRIMARY KEY,
+                    group_task_id INT NOT NULL,
+                    assignee      VARCHAR(100) NOT NULL,
+                    status        VARCHAR(20) DEFAULT 'Pending',
+                    completed_at  TIMESTAMP WITH TIME ZONE,
+                    UNIQUE(group_task_id, assignee)
+                )
+            ''')
+            await conn.execute('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS group_task_id INT DEFAULT NULL')
+            await conn.execute('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS total_assignees INT DEFAULT 1')
+            await conn.execute('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_count INT DEFAULT 0')
 
         import cmd_trivia
-        import cmd_cheer
         await cmd_trivia.ensure_trivia_database(app.bot_data['db_pool'])
-        await cmd_cheer.ensure_cheer_profile_column(app.bot_data['db_pool'])
         
     except Exception as e:
         logger.critical(f"❌ CRITICAL FAILURE: Could not establish initial database structures: {e}")
@@ -269,29 +322,33 @@ def pop_kb_owner(context, chat_id: int, msg_id: int):
 CANCELLED_TEXT = "⏰ This panel was closed due to 120 seconds of inactivity."
 
 async def keyboard_timeout_callback(context):
-    """Job callback: expire an inline keyboard after KEYBOARD_TIMEOUT seconds."""
-    job = context.job
+    """
+    Job callback: silently expire an inline keyboard after KEYBOARD_TIMEOUT seconds.
+    Deletes the panel message entirely — no notification sent to anyone.
+    Users who already finished are not bothered.
+    """
+    job     = context.job
     chat_id = job.data['chat_id']
     msg_id  = job.data['msg_id']
     bot     = context.bot
 
     entry = pop_kb_owner(context, chat_id, msg_id)
     if entry is None:
-        return  # already dismissed
+        return  # already dismissed cleanly by the user
 
-    # 1. Remove the keyboard from the original message
+    # 1. Delete the panel message entirely (silent — no notification)
     try:
-        await bot.edit_message_reply_markup(chat_id=chat_id, message_id=msg_id, reply_markup=None)
+        await bot.delete_message(chat_id=chat_id, message_id=msg_id)
     except Exception:
-        pass
+        # If delete fails (e.g. message too old), at least strip the keyboard
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id, message_id=msg_id, reply_markup=None
+            )
+        except Exception:
+            pass
 
-    # 2. Send the cancellation notice
-    try:
-        await bot.send_message(chat_id, CANCELLED_TEXT)
-    except Exception:
-        pass
-
-    # 3. Delete any pending "awaiting input" prompt message
+    # 2. Delete any dangling "awaiting input" prompt message
     prompt_msg_id = entry.get('prompt_msg_id')
     if prompt_msg_id:
         try:
@@ -323,17 +380,37 @@ async def check_kb_ownership(query, context) -> bool:
     """
     Call at the top of any personal callback handler.
     Returns True (allowed) or False (blocked + answered).
-    Public keyboards (trivia answers, polls, rsvp) should NOT call this.
+
+    Logic:
+    - If the panel has a registered owner → only that owner may press buttons.
+    - If no owner is registered (public kb: trivia, rsvp, polls) → allow all.
+    - Resets the 120-second timeout on every valid interaction so active users
+      don't get timed out while they're still using the panel.
     """
     chat_id = query.message.chat.id
     msg_id  = query.message.message_id
     owner   = get_kb_owner(context, chat_id, msg_id)
+
     if owner is None:
-        # No owner registered (e.g. public kb) — allow
+        # No owner registered → public keyboard, allow everyone
         return True
+
     if query.from_user.id != owner:
-        await query.answer("❌ This panel belongs to someone else.", show_alert=True)
+        await query.answer("⛔ This panel belongs to someone else.", show_alert=True)
         return False
+
+    # Valid owner interaction — reset the 120-second timeout
+    import asyncio
+    job_name = f"kb_timeout_{chat_id}_{msg_id}"
+    for j in context.job_queue.get_jobs_by_name(job_name):
+        j.schedule_removal()
+    context.job_queue.run_once(
+        keyboard_timeout_callback,
+        when=KEYBOARD_TIMEOUT,
+        data={'chat_id': chat_id, 'msg_id': msg_id},
+        name=job_name
+    )
+
     return True
 
 async def dismiss_kb_timeout_on_action(context, chat_id: int, msg_id: int):

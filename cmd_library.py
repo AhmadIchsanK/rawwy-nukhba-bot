@@ -30,13 +30,14 @@ PAGE_SIZE = 8   # assets per browse page
 
 def _home_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📂 Browse",        callback_data="lib_browse_0"),
-         InlineKeyboardButton("🔍 Get Asset",     callback_data="lib_get")],
-        [InlineKeyboardButton("➕ Add",           callback_data="lib_add"),
-         InlineKeyboardButton("📦 Batch Add",     callback_data="lib_batchadd")],
-        [InlineKeyboardButton("✏️ Edit",          callback_data="lib_edit"),
-         InlineKeyboardButton("🗑️ Delete",        callback_data="lib_delete_pick")],
-        [InlineKeyboardButton("🚪 Close",         callback_data="lib_close")],
+        [InlineKeyboardButton("📂 Browse",          callback_data="lib_browse_0"),
+         InlineKeyboardButton("🔍 Get Asset",       callback_data="lib_get")],
+        [InlineKeyboardButton("➕ Add",             callback_data="lib_add"),
+         InlineKeyboardButton("📦 Batch Add",       callback_data="lib_batchadd")],
+        [InlineKeyboardButton("✏️ Edit",            callback_data="lib_edit"),
+         InlineKeyboardButton("🗑️ Delete",          callback_data="lib_delete_pick")],
+        [InlineKeyboardButton("🗑️📦 Batch Delete",  callback_data="lib_batchdel")],
+        [InlineKeyboardButton("🚪 Close",           callback_data="lib_close")],
     ])
 
 
@@ -199,6 +200,16 @@ async def library_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "lib_delete_pick":
         await _show_delete_pick(q, context, pool, username)
 
+    elif data == "lib_batchdel":
+        context.user_data["lib_state"] = "await_batchdel"
+        await q.message.edit_text(
+            "🗑️📦 *Batch Delete*\n\n"
+            "Send asset names — one per line or comma-separated:\n"
+            "`asset1\nasset2\nasset3`\n\n"
+            "_You can only delete assets you own (admins can delete any)._",
+            reply_markup=_back_kb(), parse_mode="Markdown"
+        )
+
     elif data.startswith("lib_del_"):
         name = data[len("lib_del_"):]
         await _do_delete(q, context, pool, username, name)
@@ -358,6 +369,30 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         if skipped:
             msg += f"Skipped ({len(skipped)}): {', '.join(skipped)}"
         await update.message.reply_text(msg, parse_mode="Markdown")
+        return True
+
+    # ── BATCH DELETE ──────────────────────────────────────────────────────────
+    elif state == "await_batchdel":
+        raw   = text.replace("\n", ",")
+        names = [n.strip().lower() for n in raw.split(",") if n.strip()]
+        is_adm = await is_bot_admin(username, pool)
+        removed, not_found = [], []
+        async with pool.acquire() as conn:
+            for name in names:
+                asset = await conn.fetchrow("SELECT added_by FROM library WHERE LOWER(name)=$1", name)
+                if not asset:
+                    not_found.append(f"`{name}`")
+                    continue
+                if asset["added_by"] != username and not is_adm:
+                    not_found.append(f"`{name}` (not yours)")
+                    continue
+                await conn.execute("DELETE FROM library WHERE LOWER(name)=$1", name)
+                removed.append(f"`{name}`")
+        context.user_data.pop("lib_state", None)
+        msg = "🗑️ *Batch Delete Result*\n\n"
+        if removed:   msg += f"✅ Deleted ({len(removed)}): {', '.join(removed)}\n"
+        if not_found: msg += f"⚠️ Skipped ({len(not_found)}): {', '.join(not_found)}"
+        await update.message.reply_text(msg or "_Nothing processed._", parse_mode="Markdown")
         return True
 
     # ── EDIT ASSET ────────────────────────────────────────────────────────

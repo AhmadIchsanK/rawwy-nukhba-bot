@@ -1,7 +1,7 @@
 import logging
 import datetime
 import os
-from telegram import Update, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats
+from telegram import Update, BotCommand, BotCommandScopeDefault, BotCommandScopeAllPrivateChats, BotCommandScopeAllGroupChats, BotCommandScopeChat
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ChatMemberHandler, filters, ContextTypes, PicklePersistence
 
 # Core imports
@@ -20,6 +20,7 @@ import cmd_away
 import cmd_task
 import cmd_birthday
 import cmd_broadcast
+import cmd_adminconfig
 import cmd_manual
 
 # Safe fallback imports for recently separated modules
@@ -108,6 +109,12 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if await cmd_broadcast.handle_broadcast_text(update, context):
         return
 
+    # 6g. Admin inline text flows (admin hub, userconfig, updatechange)
+    if await cmd_adminconfig.handle_admin_inline_text(update, context):
+        return
+    if await cmd_adminconfig.handle_adminconfig_text(update, context):
+        return
+
     # 6d. Auto-cancel away on group message
     await cmd_away.check_auto_cancel(update, context)
 
@@ -132,12 +139,51 @@ async def post_init_wrapper(application: Application):
     except Exception as e:
         logger.warning(f"Scheduler setup failed: {e}")
 
-    public_hints = [(c['name'], c['desc']) for c in COMMANDS if c.get('public')]
+    public_hints = [
+        BotCommand(cmd['name'], cmd['desc'][:256])
+        for cmd in COMMANDS if cmd.get('public')
+    ]
+    admin_hints = [
+        BotCommand(cmd['name'], cmd['desc'][:256])
+        for cmd in COMMANDS if cmd.get('public') or cmd.get('admin')
+    ]
+    super_hints = [
+        BotCommand(cmd['name'], cmd['desc'][:256])
+        for cmd in COMMANDS
+    ]
+
     try:
+        # Public scope — all users and groups see only public commands
         await application.bot.set_my_commands(public_hints, scope=BotCommandScopeDefault())
         await application.bot.set_my_commands(public_hints, scope=BotCommandScopeAllPrivateChats())
         await application.bot.set_my_commands(public_hints, scope=BotCommandScopeAllGroupChats())
-        logger.info("✅ Telegram command menus synced from commands_manifest.")
+
+        # Elevate admin/super DM scopes using DB
+        pool = application.bot_data.get('db_pool')
+        if pool:
+            async with pool.acquire() as conn:
+                admins = await conn.fetch("SELECT user_id FROM users u JOIN bot_admins ba ON LOWER(u.username)=LOWER(ba.username) WHERE u.user_id IS NOT NULL")
+                super_row = await conn.fetchrow("SELECT user_id FROM users WHERE LOWER(username)=$1 AND user_id IS NOT NULL", SUPER_OWNER.lower())
+
+            for row in admins:
+                try:
+                    await application.bot.set_my_commands(
+                        admin_hints,
+                        scope=BotCommandScopeChat(chat_id=row['user_id'])
+                    )
+                except Exception:
+                    pass
+
+            if super_row:
+                try:
+                    await application.bot.set_my_commands(
+                        super_hints,
+                        scope=BotCommandScopeChat(chat_id=super_row['user_id'])
+                    )
+                except Exception:
+                    pass
+
+        logger.info("✅ Telegram command menus synced (public + admin + super scopes).")
     except Exception as e:
         logger.error(f"Failed to push command menu updates: {e}")
 
@@ -213,6 +259,8 @@ def main():
     app.add_handler(CommandHandler("broadcast",      cmd_broadcast.broadcast_command))
     app.add_handler(CommandHandler("manual",         cmd_manual.manual_command))
     # /newsched /announce /editannounce /delannounce → merged into /broadcast
+    app.add_handler(CommandHandler("admin",       cmd_adminconfig.admin_command))
+    app.add_handler(CommandHandler("userconfig",  cmd_adminconfig.userconfig_command))
     app.add_handler(CommandHandler("birthdayconfig", cmd_birthday.birthday_config_command))
     # /addbday /editbday /delbday /listbdays /bulkaddbday /bulkdelbday → merged into /birthdayconfig
     app.add_handler(CommandHandler("task",       cmd_task.task_command))
@@ -297,8 +345,7 @@ def main():
     # ─────────────────────────────────────────
     # 📢 ADMIN BROADCASTS & SCHEDULING
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("listschedules", safe_cmd(cmd_admin, "list_schedules")))
-    app.add_handler(CommandHandler("delschedule",   safe_cmd(cmd_admin, "del_schedule")))
+    # /listschedules and /delschedule merged into /broadcast
     app.add_handler(CommandHandler("feedbacklist",  safe_cmd(cmd_admin, "feedback_list")))
     app.add_handler(CommandHandler("analyze_feedback", safe_cmd(cmd_admin, "analyze_feedback")))
 
@@ -328,6 +375,9 @@ def main():
     app.add_handler(CallbackQueryHandler(cmd_task.mytask_callback,                pattern="^myt_"))
     app.add_handler(CallbackQueryHandler(cmd_birthday.birthday_callback,          pattern="^bd_"))
     app.add_handler(CallbackQueryHandler(cmd_broadcast.broadcast_callback,        pattern="^bc_"))
+    app.add_handler(CallbackQueryHandler(cmd_adminconfig.admin_callback,          pattern="^adm_"))
+    app.add_handler(CallbackQueryHandler(cmd_adminconfig.userconfig_callback,     pattern="^uc_"))
+    app.add_handler(CallbackQueryHandler(cmd_adminconfig.admin_callback,          pattern="^adm_uc_cancel"))
     # pollst_ callbacks removed — poll settings now handled via ev_poll_ prefix
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "config_callback"),  pattern="^cfg_"))
     app.add_handler(CallbackQueryHandler(safe_cb(cmd_admin,  "sched_config_callback"), pattern="^schcfg_"))

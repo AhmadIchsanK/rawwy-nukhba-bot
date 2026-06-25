@@ -1,132 +1,337 @@
-# Canonical command manifest — drives /help text, Telegram slash menu, and pop-out.
-# Rules:
-#   public=True  → shows in / pop-out for ALL users, appears in USER section of /help
-#   admin=True   → ADMIN SUITE section in /help (not in public menu)
-#   super=True   → SUPER OWNER section in /help (not in public menu)
-# Telegram API requires command names to be 1-32 lowercase letters/digits/underscores.
+"""
+commands_manifest.py — Single source of truth for ALL commands.
+Drives: /help text, Telegram slash-menu, /command browser, /manual PDF.
+
+Keys:
+  public=True  → shown in / pop-out for ALL users, USER section in /help
+  admin=True   → ADMIN section in /help only
+  super=True   → SUPER OWNER section in /help only
+  experimental → shown with ⚠️ warning
+  subcommands  → list of sub-features shown in /command detail card
+"""
 
 COMMANDS = [
-    {"name": "manual",  "emoji": "📖", "public": True,
-     "category": "ℹ️ General",
-     "desc": "Receive the full bot user manual as a PDF (once per month)",
-     "explanation": "Generates and sends a PDF manual covering all user commands in English, Arabic, and Indonesian. You can request this once per calendar month — check your chat history if you need it again sooner.",
-     "format": "/manual"},
-    {"name": "broadcast", "emoji": "📢", "public": False, "admin": True,
-     "category": "📢 Broadcast",
-     "desc": "Post or schedule team broadcasts to groups",
-     "explanation": "Opens the Broadcast hub in DM. Post immediately or schedule with recurrence (once, daily, weekday, weekly). Choose target group or all groups, set message, and optionally tag everyone.",
-     "format": "/broadcast"},
-    {"name": "birthdayconfig", "emoji": "🎂", "public": False, "admin": True,
-     "category": "🎂 Birthday Management",
-     "desc": "Manage team birthday registrations",
-     "explanation": "Opens the Birthday Config hub in DM. Add, edit, delete, batch add, and batch delete birthdays — all inline. Admins only.",
-     "format": "/birthdayconfig"},
-    {"name": "library",  "emoji": "📚", "public": True,
-     "category": "📚 Library",
-     "desc": "Browse and manage team assets in the library",
-     "explanation": "Opens the Library hub in DM. Browse, get, add (including batch), edit, and delete assets — all with inline buttons.",
-     "format": "/library"},
-    # ─────────────────────────────────────────
+    # ════════════════════════════════════════
     # 💬 GENERAL
-    # ─────────────────────────────────────────
-    {"name": "start",    "desc": "Start interaction",         "public": True,  "category": "💬 General", "emoji": "🚀", "explanation": "Registers you with the bot and opens the welcome menu."},
-    {"name": "help",     "desc": "View Nukhba Manual",        "public": True,  "category": "💬 General", "emoji": "📖", "explanation": "Shows a full list of all available commands by category."},
-    {"name": "command",  "desc": "Interactive command browser","public": True,  "category": "💬 General", "emoji": "🗂️", "explanation": "Opens an interactive inline menu to browse and discover commands."},
-    {"name": "about",    "desc": "About Nukhba Manager",      "public": True,  "category": "💬 General", "emoji": "ℹ️", "explanation": "Shows information about Nukhba Manager and its version."},
-    {"name": "feedback", "desc": "Submit Feedback",           "format": "`/feedback We need a longer timer`", "public": True, "category": "💬 General", "emoji": "💡", "explanation": "Sends your feedback or suggestion directly to the admin team."},
+    # ════════════════════════════════════════
+    {"name": "start",    "emoji": "🚀", "public": True,  "category": "💬 General",
+     "desc": "Register and open welcome menu",
+     "explanation": "Registers you with the bot. Required once before using any features.",
+     "format": "/start"},
 
-    # ─────────────────────────────────────────
-    # 📅 EVENTS & POLLS
-    # ─────────────────────────────────────────
-            {"name": "events",    "desc": "Upcoming events",                                                                          "public": True, "category": "📅 Events & Polls", "emoji": "🗓️", "explanation": "Lists all upcoming events scheduled in this group."},
-    
-    # ─────────────────────────────────────────
+    {"name": "help",     "emoji": "📖", "public": True,  "category": "💬 General",
+     "desc": "View all available commands",
+     "explanation": "Shows a full categorised list of every command available to you.",
+     "format": "/help"},
+
+    {"name": "command",  "emoji": "🗂️", "public": True,  "category": "💬 General",
+     "desc": "Interactive command browser",
+     "explanation": "Opens an inline menu to browse commands with full usage details and copyable formats.",
+     "format": "/command"},
+
+    {"name": "manual",   "emoji": "📖", "public": True,  "category": "💬 General",
+     "desc": "Receive the full user manual as PDF (30-day cooldown)",
+     "explanation": "Generates a PDF guide in 3 languages (English, Arabic, Indonesian) with detailed usage for every command. Once every 30 days — check your chat history if you need it sooner.",
+     "format": "/manual"},
+
+    {"name": "update",   "emoji": "🔄", "public": True,  "category": "💬 General",
+     "desc": "View latest bot version and changelog",
+     "explanation": "Shows the current version number and what changed in recent updates.",
+     "format": "/update"},
+
+    {"name": "about",    "emoji": "ℹ️", "public": True,  "category": "💬 General",
+     "desc": "About Nukhba Manager bot",
+     "explanation": "Shows bot info, version, and credits.",
+     "format": "/about"},
+
+    {"name": "feedback", "emoji": "💡", "public": True,  "category": "💬 General",
+     "desc": "Send a suggestion or report to admin",
+     "explanation": "Your message goes directly to the admin team. Be specific!",
+     "format": "/feedback Your message here"},
+
+    # ════════════════════════════════════════
     # ⭐ RAWWY STARS
-    # ─────────────────────────────────────────
-    {"name": "thanks",           "desc": "Give a Star",         "format": "Reply to a msg with `/thanks`", "public": True, "category": "⭐ RAWWY Stars", "emoji": "⭐", "explanation": "Give a RAWWY Star to someone whose message you replied to."},
-    {"name": "myquota",          "desc": "Check Star Quota",                                                "public": True, "category": "⭐ RAWWY Stars", "emoji": "📉", "explanation": "Check how many Stars you have left to give this week."},
-    {"name": "mystar",           "desc": "Monthly Stars",                                                   "public": True, "category": "⭐ RAWWY Stars", "emoji": "🌟", "explanation": "See how many Stars you have received this month and all-time."},
-    {"name": "leaderboard_star", "desc": "Top RAWWY Stars",                                                 "public": True, "category": "⭐ RAWWY Stars", "emoji": "🏆", "explanation": "Shows the top 5 RAWWY Star earners this month and all-time."},
+    # ════════════════════════════════════════
+    {"name": "thanks",           "emoji": "⭐", "public": True, "category": "⭐ RAWWY Stars",
+     "desc": "Give a RAWWY Star (reply to a message)",
+     "explanation": "Reply to any message and type /thanks to give that person a RAWWY Star.",
+     "format": "Reply to a message → /thanks"},
 
-    # ─────────────────────────────────────────
-    # 🎮 TRIVIA
-    # ─────────────────────────────────────────
-    {"name": "mypoint",        "desc": "View Knowledge Points", "public": True, "category": "🎮 Trivia", "emoji": "🧠", "explanation": "View your current Knowledge Point (KP) total from trivia."},
-    {"name": "leaderboard_kp", "desc": "Top Knowledge Points",  "public": True, "category": "🎮 Trivia", "emoji": "🏅", "explanation": "Shows the top 5 Knowledge Point earners this month."},
+    {"name": "mystar",           "emoji": "🌟", "public": True, "category": "⭐ RAWWY Stars",
+     "desc": "See your monthly and all-time RAWWY Stars",
+     "explanation": "Shows stars received this month and your all-time total in one message.",
+     "format": "/mystar"},
 
-    # ─────────────────────────────────────────
+    {"name": "myquota",          "emoji": "📉", "public": True, "category": "⭐ RAWWY Stars",
+     "desc": "Check how many Stars you can still give this week",
+     "explanation": "Your giving quota resets every Monday.",
+     "format": "/myquota"},
+
+    {"name": "leaderboard_star", "emoji": "🏆", "public": True, "category": "⭐ RAWWY Stars",
+     "desc": "Top 5 RAWWY Star earners (monthly + all-time)",
+     "explanation": "Leaderboard resets monthly. All-time is cumulative.",
+     "format": "/leaderboard_star"},
+
+    # ════════════════════════════════════════
+    # 🎮 TRIVIA & KP
+    # ════════════════════════════════════════
+    {"name": "mypoint",        "emoji": "🧠", "public": True, "category": "🎮 Trivia & KP",
+     "desc": "View your Knowledge Points (monthly + all-time)",
+     "explanation": "KP is earned by answering trivia correctly. Monthly KP resets on the 1st.",
+     "format": "/mypoint"},
+
+    {"name": "leaderboard_kp", "emoji": "🏅", "public": True, "category": "🎮 Trivia & KP",
+     "desc": "Top 5 KP earners this month",
+     "explanation": "Shows this month's trivia champions.",
+     "format": "/leaderboard_kp"},
+
+    # ════════════════════════════════════════
+    # 📅 EVENTS & POLLS
+    # ════════════════════════════════════════
+    {"name": "eventpoll", "emoji": "📅", "public": True, "category": "📅 Events & Polls",
+     "desc": "Create and manage events and polls (inline hub)",
+     "explanation": "Opens the Events & Polls hub in DM. Auto-targets the group when run from a group.",
+     "format": "/eventpoll",
+     "subcommands": [
+         "📅 New Event → title, date/time (MM/DD/YYYY HH:MM), reminder minutes",
+         "📊 New Poll → question + options (one per line), anon/multi/quiz/duration settings",
+         "📋 List Events → upcoming events (30-min cooldown per group)",
+         "✏️ Edit Event → update your event's title, time, or reminder",
+         "❌ Cancel → remove your event or poll (admins can cancel any)",
+     ]},
+
+    {"name": "listevent",  "emoji": "📋", "public": True, "category": "📅 Events & Polls",
+     "desc": "Quick-view upcoming events in this group",
+     "explanation": "Shows upcoming events directly in chat. 30-minute cooldown per group.",
+     "format": "/listevent"},
+
+    # ════════════════════════════════════════
     # 📚 LIBRARY
-    # ─────────────────────────────────────────
-                    
-    # ─────────────────────────────────────────
-    # ⚡ TASKS & AWAY
-    # ─────────────────────────────────────────
-    {"name": "mytasks",  "desc": "Active Tasks",          "public": True, "category": "⚡ Tasks & Away", "emoji": "📋", "explanation": "View all tasks currently assigned to you, sent to your DM."},
-    {"name": "assign",   "desc": "Assign a task (supports multiple users)", "format": "`/assign @user1 @user2 , 120 , Review code`", "public": True, "category": "⚡ Tasks & Away", "emoji": "📌", "explanation": "Assign a task to one or more teammates with a deadline."},
-    {"name": "complete", "desc": "Mark your progress on a task", "format": "`/complete [TaskID]`",        "public": True, "category": "⚡ Tasks & Away", "emoji": "✅", "explanation": "Mark your progress on a task as done."},
-    {"name": "away",     "desc": "Set away status", "format": "`/away Doctor , 10/15/2026 14:30`",       "public": True, "category": "⚡ Tasks & Away", "emoji": "🛫", "explanation": "Set yourself as Away with a reason and return time."},
-    {"name": "back",     "desc": "Return to available",                                                  "public": True, "category": "⚡ Tasks & Away", "emoji": "🛬", "explanation": "Mark yourself as back and available. The bot will send you missed mentions."},
+    # ════════════════════════════════════════
+    {"name": "library", "emoji": "📚", "public": True, "category": "📚 Library",
+     "desc": "Browse and manage team assets (inline hub in DM)",
+     "explanation": "Opens the Library hub in DM. All asset operations in one place.",
+     "format": "/library",
+     "subcommands": [
+         "📂 Browse → paginated list (your private + all public assets)",
+         "🔍 Get Asset → type name to retrieve content",
+         "➕ Add → Name , Content  (add ', private' to keep it private)",
+         "📦 Batch Add → one entry per line: Name , Content",
+         "✏️ Edit → Name , New Content  (owners only)",
+         "🗑️ Delete → pick from your own assets",
+         "🗑️📦 Batch Delete → names comma-separated or one per line",
+     ]},
 
-    # ─────────────────────────────────────────
-    # 🤖 AI / GEMINI  ← BOTTOM of User list
-    # Note added to /help: "⚠️ This is an experimental feature, don't abuse it yet"
-    # ─────────────────────────────────────────
-    {"name": "ai",  "desc": "Ask AI (Groq)",            "format": "`/ai Translate this: Hello`",           "public": True, "category": "🤖 AI Assistant ⚠️ Experimental", "emoji": "🤖", "experimental": True, "explanation": "Ask the AI assistant (powered by Groq) any question."},
-    {"name": "ask",     "desc": "Ask about Nukhba",         "format": "`/ask How do I schedule an event?`",        "public": True, "category": "🤖 AI Assistant ⚠️ Experimental", "emoji": "🤖", "experimental": True, "explanation": "Ask about Nukhba Manager's features and how to use them."},
-    {"name": "wdim",    "desc": "What did I miss? (Recap)", "public": True, "category": "🤖 AI Assistant ⚠️ Experimental", "emoji": "🔍", "experimental": True, "explanation": "Get a smart AI-generated recap of what happened in the group while you were away."},
+    # ════════════════════════════════════════
+    # 📋 TASKS
+    # ════════════════════════════════════════
+    {"name": "task",      "emoji": "📌", "public": True, "category": "📋 Tasks",
+     "desc": "Assign a task to team members (group or DM)",
+     "explanation": "In a group: tap members to assign, type description, press Finish. In DM: step-by-step with group picker.",
+     "format": "/task",
+     "subcommands": [
+         "Group: tap member names → type task description → Finish",
+         "DM: pick group → type description → type assignees (comma-separated) → set deadline in minutes",
+     ]},
 
-    # ==========================================
-    # 🔐 ADMIN — SYSTEM CONFIG
-    # ==========================================
-    {"name": "botconfig",    "desc": "All-in-One Bot Config & User Manager", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🛠️"},
-    {"name": "schedconfig",  "desc": "Schedule & Reminder Config Panel",    "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🗓️"},
-    {"name": "setchannel",   "desc": "Set feature target channel",          "format": "`/setchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "📍"},
-    {"name": "unsetchannel", "desc": "Remove feature target channel",       "format": "`/unsetchannel <bday|trivia|stars|feedback>`", "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🔕"},
-    {"name": "groupid",      "desc": "Check current chat group ID",         "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🆔"},
-    {"name": "registergroup","desc": "Manually register current group",     "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🏠"},
+    {"name": "mytask",    "emoji": "✅", "public": True, "category": "📋 Tasks",
+     "desc": "View and complete your assigned tasks (inline DM list)",
+     "explanation": "Tap a task to toggle Complete/Incomplete. Press Finish to save — assigner is notified when all done.",
+     "format": "/mytask"},
 
-    # 👥 ADMIN — USER MANAGEMENT
-    {"name": "checkquota",  "desc": "Check user star quota",                "format": "`/checkquota @user` or `all`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🔍"},
-    {"name": "admin_stars", "desc": "Manually edit user stars",             "format": "`/admin_stars @user , <quota|monthly|total> , <set|add|sub> , <amt>`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "⭐"},
-    {"name": "checklimit",  "desc": "Check AI limit",                       "format": "`/checklimit @user` or `all`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🔍"},
-    {"name": "admin_limit", "desc": "Manually edit AI limit",               "format": "`/admin_limit @user , <set|add|sub> , <amt>`", "public": False, "admin": True, "category": "👥 User Management", "emoji": "🤖"},
+    {"name": "grouptask", "emoji": "📋", "public": True, "category": "📋 Tasks",
+     "desc": "View active tasks and last 7 completed tasks in this group",
+     "explanation": "Shows status (Pending/Overdue/Done), assigner, and assignees. Admins see all tasks.",
+     "format": "/grouptask"},
 
-    # 🎂 ADMIN — BIRTHDAYS
-                        
-    # 🎮 ADMIN — TRIVIA
-    {"name": "triviaconfig",     "desc": "Interactive Trivia Panel",         "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "🎛️"},
-    {"name": "forcetrivia",      "desc": "Trigger standard round",           "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "▶️"},
-    {"name": "forcesupertrivia", "desc": "Trigger super round",              "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "⏭️"},
-    {"name": "canceltrivia",     "desc": "Cancel active trivia",             "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "🛑"},
-    {"name": "endtrivia",        "desc": "End active trivia (calc results)", "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "🏁"},
-    {"name": "admin_kp",         "desc": "Manually edit Knowledge Points",   "format": "`/admin_kp @user , <set|add|sub> , <amt>`", "public": False, "admin": True, "category": "🎮 Admin Trivia", "emoji": "🧠"},
+    # ════════════════════════════════════════
+    # 🏖️ AWAY STATUS
+    # ════════════════════════════════════════
+    {"name": "away", "emoji": "🛫", "public": True, "category": "🏖️ Away Status",
+     "desc": "Open Away hub — set status, reason, return time (inline DM)",
+     "explanation": "Opens the Away hub in DM. All away options in one inline menu.",
+     "format": "/away",
+     "subcommands": [
+         "🏖️ Set Away → type reason, then return date/time (MM/DD/YYYY HH:MM)",
+         "🟢 I'm Back → confirm to clear away + receive missed mentions",
+         "⚙️ Auto-Cancel → if ON, any group message auto-clears your away status",
+         "📋 My Status → view reason, return time, and pending mention count",
+     ]},
 
-    # 🏖️ ADMIN — TEAM MANAGEMENT
-    {"name": "attendance",  "desc": "Check team attendance",                 "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "📊"},
-    {"name": "forceback",   "desc": "Force user back from away",             "format": "`/forceback @user`", "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛬"},
-    {"name": "grouptasks",  "desc": "View all global active tasks",          "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "📋"},
-        {"name": "canceltask",  "desc": "Cancel a task",                         "format": "`/canceltask [ID]`",  "public": False, "admin": True, "category": "🏖️ Admin Team Mgmt", "emoji": "🛑"},
-    
-    # 📢 ADMIN — BROADCASTS
-        {"name": "listschedules",    "desc": "List active broadcasts",            "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📜"},
-    {"name": "delschedule",      "desc": "Delete a schedule",                "format": "`/delschedule [ID]`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🗑️"},
-                {"name": "feedbacklist",     "desc": "View raw feedback (last 7 days)",  "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "📥"},
-    {"name": "analyze_feedback", "desc": "AI summarise feedback",            "format": "`/analyze_feedback <MM/DD/YYYY> to <MM/DD/YYYY>`", "public": False, "admin": True, "category": "📢 Admin Broadcasts", "emoji": "🤖"},
+    {"name": "back",  "emoji": "🛬", "public": True, "category": "🏖️ Away Status",
+     "desc": "Mark yourself as available (type in any chat)",
+     "explanation": "Clears your away status. Missed mentions will be delivered to your DM.",
+     "format": "/back"},
 
-    # ==========================================
-    # 👑 SUPER OWNER EXCLUSIVES
-    # ==========================================
-    {"name": "update",          "desc": "View latest bot version log",      "public": False, "admin": True, "category": "⚙️ System Config", "emoji": "🔄"},
-    {"name": "pushupdate",      "desc": "Push auto-increment version log",  "format": "`/pushupdate Fixed bugs and UI`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🚀"},
-    {"name": "updatechange",    "desc": "Set manual version and log",       "format": "`/updatechange 2.0 , Massive overhaul`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔄"},
-    {"name": "allcommandtest",  "desc": "Test all commands",                "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🧪"},
-    {"name": "botstatus",       "desc": "Show system status",               "public": False, "super": True, "category": "👑 Super Owner", "emoji": "📊"},
-    {"name": "addadmin",        "desc": "Promote user to Admin",            "format": "`/addadmin @user`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "👑"},
-    {"name": "deladmin",        "desc": "Demote Admin",                     "format": "`/deladmin @user`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🔻"},
-    {"name": "listadmins",      "desc": "List all admins",                  "public": False, "super": True, "category": "👑 Super Owner", "emoji": "📜"},
-    {"name": "removemember",    "desc": "Offboard a member entirely",       "format": "`/removemember @user`", "public": False, "super": True, "category": "👑 Super Owner", "emoji": "☠️"},
-    {"name": "graveyard",       "desc": "View offboarded members",          "public": False, "super": True, "category": "👑 Super Owner", "emoji": "🪦"},
-    {"name": "pause",           "desc": "Pause the bot",                    "public": False, "super": True, "category": "👑 Super Owner", "emoji": "⏸️"},
-    {"name": "restart",         "desc": "Restart the bot",                  "public": False, "super": True, "category": "👑 Super Owner", "emoji": "▶️"},
-    {"name": "super_reset",     "desc": "Factory wipe data sections",       "public": False, "super": True, "category": "👑 Super Owner", "emoji": "☢️"},
+    # ════════════════════════════════════════
+    # 🤖 AI ASSISTANT
+    # ════════════════════════════════════════
+    {"name": "ai",   "emoji": "🤖", "public": True, "category": "🤖 AI Assistant ⚠️ Experimental",
+     "desc": "Ask the AI assistant anything (Groq/Llama)",
+     "explanation": "Powered by Groq's fast Llama model. Ask questions, translate, summarise, etc.",
+     "experimental": True,
+     "format": "/ai Your question here"},
+
+    {"name": "ask",  "emoji": "💬", "public": True, "category": "🤖 AI Assistant ⚠️ Experimental",
+     "desc": "Ask about this bot's features",
+     "explanation": "Ask how to use any command or feature of Nukhba Manager.",
+     "experimental": True,
+     "format": "/ask How do I set an away status?"},
+
+    {"name": "wdim", "emoji": "🔍", "public": True, "category": "🤖 AI Assistant ⚠️ Experimental",
+     "desc": "What Did I Miss? — AI recap of group activity",
+     "explanation": "Get an AI-generated summary of what happened in the group while you were away.",
+     "experimental": True,
+     "format": "/wdim"},
+
+    # ════════════════════════════════════════
+    # 🔐 ADMIN CONFIG  (combined category)
+    # ════════════════════════════════════════
+    {"name": "broadcast",      "emoji": "📢", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Post or schedule team broadcasts (inline hub in DM)",
+     "explanation": "Post now or schedule with recurrence. Choose group target, tag members, and set message inline.",
+     "format": "/broadcast",
+     "subcommands": [
+         "📤 Post Now → target → tag all? → message → confirm",
+         "📅 Schedule → target → recurrence (once/daily/weekday/weekly) → date/time → tag → message → confirm",
+         "📋 List Schedules → paginated list with delete buttons",
+         "🗑️ Delete Schedule → tap to remove",
+     ]},
+
+    {"name": "birthdayconfig", "emoji": "🎂", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Manage team birthday registrations (inline hub in DM)",
+     "format": "/birthdayconfig",
+     "subcommands": [
+         "📋 List → paginated birthday registry",
+         "➕ Add → @username , MM/DD",
+         "✏️ Edit → pick member → type new date",
+         "🗑️ Delete → pick member",
+         "📥 Batch Add → one per line: @user , MM/DD",
+         "🗑️📥 Batch Delete → usernames comma-separated or one per line",
+     ]},
+
+    {"name": "admin",          "emoji": "👑", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Manage bot admins — add, remove, list (Super Owner only, inline DM)",
+     "format": "/admin",
+     "subcommands": [
+         "➕ Add Admin → type @username",
+         "➖ Remove Admin → tap from list",
+         "📋 List Admins → all current admins",
+     ]},
+
+    {"name": "userconfig",     "emoji": "👥", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "User management hub — quota, stars, limits, graveyard (inline DM)",
+     "format": "/userconfig",
+     "subcommands": [
+         "👥 Registered Users → paginated list with user IDs",
+         "🪦 Graveyard → offboarded members list",
+         "🔍 Check Quota → @user or 'all'",
+         "⭐ Admin Stars → @user , quota|monthly|total , set|add|sub , amount",
+         "🤖 Check AI Limit → @user or 'all'",
+         "🔧 Set AI Limit → @user , set|add|sub , amount",
+         "☠️ Remove Member → permanently offboard (Super Owner only)",
+     ]},
+
+    {"name": "botconfig",      "emoji": "🛠️", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "All-in-one bot config panel",
+     "format": "/botconfig"},
+
+    {"name": "schedconfig",    "emoji": "🗓️", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Schedule and reminder configuration",
+     "format": "/schedconfig"},
+
+    {"name": "triviaconfig",   "emoji": "🎛️", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Interactive trivia panel",
+     "format": "/triviaconfig"},
+
+    {"name": "setchannel",     "emoji": "📍", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Set feature target channel",
+     "format": "/setchannel bday|trivia|stars|feedback"},
+
+    {"name": "unsetchannel",   "emoji": "🔕", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Remove feature target channel",
+     "format": "/unsetchannel bday|trivia|stars|feedback"},
+
+    {"name": "groupid",        "emoji": "🆔", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Check current chat group ID",
+     "format": "/groupid"},
+
+    {"name": "registergroup",  "emoji": "🏠", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Manually register current group with the bot",
+     "format": "/registergroup"},
+
+    {"name": "grouptasks",     "emoji": "📋", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "View all global active tasks (admin view)",
+     "format": "/grouptasks"},
+
+    {"name": "attendance",     "emoji": "📊", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Check team attendance",
+     "format": "/attendance"},
+
+    {"name": "forceback",      "emoji": "🛬", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Force a user back from away",
+     "format": "/forceback @user"},
+
+    {"name": "canceltask",     "emoji": "🛑", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Cancel a task by ID",
+     "format": "/canceltask [TaskID]"},
+
+    {"name": "feedbacklist",   "emoji": "📥", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "View raw feedback (last 7 days)",
+     "format": "/feedbacklist"},
+
+    {"name": "analyze_feedback","emoji": "🤖", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "AI summarise feedback by date range",
+     "format": "/analyze_feedback MM/DD/YYYY to MM/DD/YYYY"},
+
+    {"name": "forcetrivia",    "emoji": "▶️", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Trigger a standard trivia round",
+     "format": "/forcetrivia"},
+
+    {"name": "forcesupertrivia","emoji": "⏭️", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Trigger a super trivia round",
+     "format": "/forcesupertrivia"},
+
+    {"name": "canceltrivia",   "emoji": "🛑", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Cancel the active trivia session",
+     "format": "/canceltrivia"},
+
+    {"name": "endtrivia",      "emoji": "🏁", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "End trivia and calculate results",
+     "format": "/endtrivia"},
+
+    {"name": "admin_kp",       "emoji": "🧠", "public": False, "admin": True, "category": "🔐 Admin Config",
+     "desc": "Manually edit Knowledge Points",
+     "format": "/admin_kp @user , set|add|sub , amount"},
+
+    # ════════════════════════════════════════
+    # 👑 SUPER OWNER
+    # ════════════════════════════════════════
+    {"name": "updatechange",   "emoji": "🔄", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Edit current version and changelog via inline panel",
+     "format": "/updatechange"},
+
+    {"name": "pushupdate",     "emoji": "🚀", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Push auto-increment version log to all groups",
+     "format": "/pushupdate Your changelog message here"},
+
+    {"name": "allcommandtest", "emoji": "🧪", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Test all registered commands",
+     "format": "/allcommandtest"},
+
+    {"name": "botstatus",      "emoji": "📊", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Show full system status",
+     "format": "/botstatus"},
+
+    {"name": "pause",          "emoji": "⏸️", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Pause the bot",
+     "format": "/pause"},
+
+    {"name": "restart",        "emoji": "▶️", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Restart the bot",
+     "format": "/restart"},
+
+    {"name": "super_reset",    "emoji": "☢️", "public": False, "super": True, "category": "👑 Super Owner",
+     "desc": "Factory wipe selected data sections",
+     "format": "/super_reset"},
 ]

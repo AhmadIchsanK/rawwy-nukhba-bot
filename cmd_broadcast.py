@@ -324,7 +324,18 @@ async def _do_confirm(q, context, pool, username: str):
     uid     = q.from_user.id
 
     if tag:
-        msg = "@here\n\n" + msg
+        # Tag all non-bot registered members
+        async with pool.acquire() as conn:
+            if chat_id == "all":
+                members = await conn.fetch(
+                    "SELECT username FROM users WHERE username IS NOT NULL ORDER BY username"
+                )
+            else:
+                members = await conn.fetch(
+                    "SELECT username FROM users WHERE username IS NOT NULL ORDER BY username"
+                )
+        mentions = " ".join(f"@{r['username']}" for r in members if r["username"])
+        msg = (mentions + "\n\n" + msg) if mentions else msg
 
     if sched is None:
         # Post immediately
@@ -334,7 +345,11 @@ async def _do_confirm(q, context, pool, username: str):
         context.user_data.pop("bc_draft", None)
         context.user_data.pop("bc_state", None)
         cancel_kb_timeout(context, q.message.chat_id, q.message.message_id)
-        await q.message.edit_text("✅ *Broadcast sent!*", parse_mode="Markdown")
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(q.from_user.id, "✅ *Broadcast sent!*", parse_mode="Markdown")
     else:
         # Save schedule
         run_time = sched.strftime("%H:%M")
@@ -348,7 +363,12 @@ async def _do_confirm(q, context, pool, username: str):
         context.user_data.pop("bc_draft", None)
         context.user_data.pop("bc_state", None)
         cancel_kb_timeout(context, q.message.chat_id, q.message.message_id)
-        await q.message.edit_text(
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            q.from_user.id,
             f"✅ *Broadcast scheduled!*\n\n"
             f"🔑 Schedule ID: `#{s_id}`\n"
             f"⏰ {sched.strftime('%m/%d/%Y %H:%M WIB')}\n"

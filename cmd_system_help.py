@@ -157,7 +157,10 @@ async def _build_help_text(uname: str, pool) -> str:
                 text += "⚠️ _(Experimental — use responsibly)_\n"
                 exp_shown = True
         text += f"{cmd.get('emoji','🔹')} `/{cmd['name']}` — {cmd['desc']}\n"
-        # No format lines here — /config has those
+        subs = cmd.get("subcommands")
+        if subs:
+            for s in subs:
+                text += f"   └ {s}\n"
 
     if admin and is_admin_user:
         text += "\n🔐 **ADMINISTRATOR COMMANDS**\n"

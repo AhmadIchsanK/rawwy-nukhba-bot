@@ -1283,42 +1283,74 @@ async def push_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /updatechange — open inline panel pre-filled with current version + changelog for easy edit.
+    Super Owner only.
+    """
     await delete_cmd(update)
     pool = context.bot_data.get('db_pool')
+    uid  = update.effective_user.id
     if not await is_super(update.effective_user.username):
-        return await update.message.reply_text("❌ Super Owner only.")
+        return
 
-    raw = " ".join(context.args).strip()
-    if "," not in raw:
-        return await update.message.reply_text(
-            "❌ **Usage:** `/updatechange [version] , [changelog]`\n\n"
-            "Example: `/updatechange 2.0 , Complete system overhaul`",
-            parse_mode="Markdown"
+    await _ensure_version_table(pool)
+    async with pool.acquire() as conn:
+        latest = await conn.fetchrow(
+            "SELECT version, changelog FROM bot_version ORDER BY id DESC LIMIT 1"
         )
 
-    parts     = raw.split(",", 1)
+    cur_ver = latest['version'] if latest else "1.2"
+    cur_log = latest['changelog'] if latest else ""
+
+    # Show current version info with inline Edit button
+    text = (
+        f"🔄 *Changelog Editor*\n\n"
+        f"📦 Current version: `{cur_ver}`\n\n"
+        f"📝 Current changelog:\n_{cur_log[:500]}_\n\n"
+        f"Send the updated entry in this format:\n"
+        f"`VERSION , CHANGELOG`\n\n"
+        f"Example:\n"
+        f"`1.3 , Added /eventpoll, fixed library hub, improved /mytask`"
+    )
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("❌ Cancel", callback_data="uc_cancel")
+    ]])
+
+    try:
+        msg = await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
+        from core import schedule_kb_timeout, KEYBOARD_TIMEOUT
+        await schedule_kb_timeout(context, uid, msg.message_id, uid)
+        context.user_data['uc_state'] = 'await_updatechange'
+    except Exception:
+        if update.message:
+            await update.message.reply_text("❌ Please start a DM with me first (/start).")
+
+
+
+    parts     = text.split(",", 1)
     new_ver   = parts[0].strip()
     changelog = parts[1].strip()
 
     if not re.match(r'^\d+\.\d+$', new_ver):
-        return await update.message.reply_text(
-            "❌ Version must be in format `X.Y` (e.g. `2.0`, `1.5`)",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("❌ Version must be `X.Y` format (e.g. `1.3`).", parse_mode="Markdown")
+        return True
 
     await _ensure_version_table(pool)
-
     async with pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
+            "INSERT INTO bot_version (version, changelog) VALUES ($1, $2) "
+            "ON CONFLICT DO NOTHING",
             new_ver, changelog
         )
 
+    context.user_data.pop('uc_state', None)
     await update.message.reply_text(
-        f"✅ Version manually set to `{new_ver}`.\n"
-        f"Next `/pushupdate` will auto-increment from this version.",
+        f"✅ *Version `{new_ver}` saved!*\n\n"
+        f"📝 Changelog:\n_{changelog}_\n\n"
+        f"Use `/pushupdate` to broadcast this to all groups.",
         parse_mode="Markdown"
     )
+    return True
 
 
 # ─────────────────────────────────────────────
@@ -2441,21 +2473,73 @@ async def attendance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def group_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await delete_cmd(update)
-    pool = context.bot_data.get('db_pool')
-    if not await is_bot_admin(update.effective_user.username, pool):
+    pool     = context.bot_data.get('db_pool')
+    username = update.effective_user.username or str(update.effective_user.id)
+    is_adm   = await is_bot_admin(username, pool)
+    if not is_adm:
         return
-    now = datetime.datetime.now(WIB)
+    now      = datetime.datetime.now(WIB)
+    chat_id  = update.effective_chat.id
+    in_group = update.effective_chat.type in ('group', 'supergroup')
+
     async with pool.acquire() as conn:
-        tasks = await conn.fetch(
-            "SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks WHERE status='Pending' ORDER BY deadline"
-        )
-    if not tasks:
-        return await context.bot.send_message(update.effective_user.id, "✅ 🎉 No pending tasks.")
-    msg = "📋 **Global Pending Tasks**\n\n"
-    for t in tasks:
-        rem  = int((t['deadline'] - now).total_seconds() / 60)
-        msg += f"🔹 `{t['id']}` | **{t['task_desc']}**\nTo: @{t['assignee']} | By: @{t['assigned_by']} | ⏳ {'OVERDUE' if rem <= 0 else f'{rem}m left'}\n\n"
-    await context.bot.send_message(update.effective_user.id, msg, parse_mode="Markdown")
+        if in_group and not is_adm:
+            # Non-admin in group: only their assigned tasks
+            pending = await conn.fetch(
+                "SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks "
+                "WHERE status='Pending' AND (assignee=$1 OR assigned_by=$1) ORDER BY deadline",
+                username
+            )
+            completed = await conn.fetch(
+                "SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks "
+                "WHERE status='Completed' AND (assignee=$1 OR assigned_by=$1) "
+                "ORDER BY deadline DESC LIMIT 7", username
+            )
+        else:
+            # Admin (any context) or DM: see all tasks
+            pending = await conn.fetch(
+                "SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks "
+                "WHERE status='Pending' ORDER BY deadline"
+            )
+            completed = await conn.fetch(
+                "SELECT id, assignee, assigned_by, task_desc, deadline FROM tasks "
+                "WHERE status='Completed' ORDER BY deadline DESC LIMIT 7"
+            )
+
+    lines = ["📋 **Active Tasks**\n"]
+    if not pending:
+        lines.append("✅ No pending tasks — all clear!\n")
+    else:
+        for t in pending:
+            dl = t['deadline']
+            if dl.tzinfo is None:
+                dl = WIB.localize(dl)
+            secs = (dl - now).total_seconds()
+            if secs <= 0:
+                status = "⚠️ **OVERDUE**"
+            elif secs < 3600:
+                status = f"⏳ {int(secs/60)}m left"
+            elif secs < 86400:
+                h, m = divmod(int(secs/60), 60)
+                status = f"⏳ {h}h {m}m left"
+            else:
+                status = f"⏳ {int(secs/86400)}d left"
+            lines.append(
+                f"🔹 `#{t['id']}` **{t['task_desc'][:40]}**\n"
+                f"   👤 @{t['assignee']} ← @{t['assigned_by']} | {status}"
+            )
+
+    if completed:
+        lines.append("\n📂 **Last 7 Completed Tasks**\n")
+        for t in completed:
+            lines.append(
+                f"✅ `#{t['id']}` {t['task_desc'][:40]}\n"
+                f"   👤 @{t['assignee']} ← @{t['assigned_by']}"
+            )
+
+    msg = "\n".join(lines)
+    dest = update.effective_user.id
+    await context.bot.send_message(dest, msg, parse_mode="Markdown")
 
 
 def _super_reset_kb():

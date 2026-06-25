@@ -127,7 +127,17 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(update.effective_chat.id, "❌ **Error:** I couldn't send you a DM. Please start a private chat with me first and try again.", parse_mode="Markdown")
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❓ **Unknown Command.** Please type `/help` to see valid commands.", parse_mode="Markdown")
+    txt = (update.message.text or "").strip().lower().split()[0] if update.message else ""
+    if txt in ("/config", "/configs"):
+        return await update.message.reply_text(
+            "💡 `/config` has moved.\n\n"
+            "• Use /manual to receive the full PDF guide\n"
+            "• Use /command to browse commands interactively",
+            parse_mode="Markdown"
+        )
+    await update.message.reply_text(
+        "❓ Unknown command. Use /help to see all commands, or /manual for the full user guide."
+    )
 
 async def security_track_chats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.my_chat_member

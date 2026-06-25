@@ -164,7 +164,6 @@ def _detail_text(cmd: dict) -> str:
         f"_{cmd['desc']}_",
         "",
     ]
-    # Brief explanation of what the command does
     expl = cmd.get("explanation")
     if expl:
         lines.append(f"ℹ️ {expl}\n")
@@ -174,15 +173,22 @@ def _detail_text(cmd: dict) -> str:
     fmt = cmd.get("format")
     if fmt:
         clean_fmt = fmt.replace('`', '')
-        lines.append(f"📋 *Format:*")
+        lines.append("📋 *Format:*")
         lines.append(f"`{clean_fmt}`")
         lines.append("")
-        lines.append("💡 _Long-press the format line above to copy it, then paste in the group._")
+        lines.append("💡 _Long-press the format above to copy, then paste in chat._")
     else:
-        lines.append(f"📋 *Format:*")
+        lines.append("📋 *Format:*")
         lines.append(f"`/{cmd['name']}`")
         lines.append("")
-        lines.append("💡 _Type this command directly in the group chat._")
+        lines.append("💡 _Type this command directly in chat._")
+    # Sub-commands
+    subs = cmd.get("subcommands")
+    if subs:
+        lines.append("")
+        lines.append("📂 *Sub-options:*")
+        for s in subs:
+            lines.append(f"  • {s}")
     return "\n".join(lines)
 
 

@@ -82,18 +82,20 @@ async def _send_home_dm(bot, user_id: int, username: str) -> None:
     return msg
 
 
-async def events_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point — /events"""
+async def eventpoll_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point — /eventpoll"""
     await delete_cmd(update)
     user    = update.effective_user
     pool    = context.bot_data.get("db_pool")
     user_id = user.id
 
-    # Store origin group for cooldown tracking
+    # Store origin group — auto-set when run from group, prompt in DM
     if update.effective_chat.type in ("group", "supergroup"):
         context.user_data["ev_origin_chat"] = update.effective_chat.id
+        logger.info(f"Event hub: auto-set origin group {update.effective_chat.id}")
     else:
-        context.user_data.pop("ev_origin_chat", None)
+        # In DM, keep existing origin if set; user can change via menu later
+        pass
 
     try:
         msg = await _send_home_dm(context.bot, user_id, user.username or str(user_id))
@@ -710,3 +712,39 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return True
 
     return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /listevent — quick standalone event list (no DM required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def listevent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show upcoming events directly in-chat (30-min group cooldown)."""
+    pool    = context.bot_data.get("db_pool")
+    chat_id = update.effective_chat.id
+    now_ts  = datetime.datetime.now(WIB).timestamp()
+
+    if update.effective_chat.type in ("group", "supergroup"):
+        cooldowns = context.bot_data.setdefault("ev_list_cooldown", {})
+        elapsed   = now_ts - cooldowns.get(chat_id, 0)
+        if elapsed < COOLDOWN_SECS:
+            remaining = int((COOLDOWN_SECS - elapsed) / 60)
+            return await update.message.reply_text(
+                f"⏳ Event list was shown recently. Try again in {remaining} min."
+            )
+        cooldowns[chat_id] = now_ts
+
+    async with pool.acquire() as conn:
+        events = await conn.fetch(
+            "SELECT id, title, event_time, created_by FROM events "
+            "WHERE event_time > NOW() ORDER BY event_time ASC LIMIT 10"
+        )
+
+    if not events:
+        return await update.message.reply_text("📋 No upcoming events scheduled yet.")
+
+    lines = ["📋 *Upcoming Events*\n"]
+    for e in events:
+        dt_str = e["event_time"].astimezone(WIB).strftime("%b %d at %H:%M WIB")
+        lines.append(f"🔹 *{e['title']}* (\#{e['id']})\n   📅 {dt_str} — by @{e['created_by']}")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
