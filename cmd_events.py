@@ -746,5 +746,5 @@ async def listevent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["📋 *Upcoming Events*\n"]
     for e in events:
         dt_str = e["event_time"].astimezone(WIB).strftime("%b %d at %H:%M WIB")
-        lines.append(f"🔹 *{e['title']}* (\#{e['id']})\n   📅 {dt_str} — by @{e['created_by']}")
+        lines.append(f"🔹 *{e['title']}* (#{e['id']})\n   📅 {dt_str} — by @{e['created_by']}")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")

@@ -253,7 +253,9 @@ def main():
     # ─────────────────────────────────────────
     # 📅 EVENTS & POLLS
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("events",     cmd_events.events_command))
+    app.add_handler(CommandHandler("eventpoll",  cmd_events.eventpoll_command))
+    app.add_handler(CommandHandler("listevent",  cmd_events.listevent_command))
+    # /newevent /editevent /poll /cancelevent /cancelpoll → merged into /eventpoll
     app.add_handler(CommandHandler("away",       cmd_away.away_command))
     app.add_handler(CommandHandler("back",       safe_cmd(cmd_user, "set_back")))  # /back still manual
     app.add_handler(CommandHandler("broadcast",      cmd_broadcast.broadcast_command))
