@@ -286,9 +286,6 @@ def main():
     # ─────────────────────────────────────────
     # ⚡ TASKS & AWAY
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("assign",   safe_cmd(cmd_user, "assign_task")))
-    app.add_handler(CommandHandler("complete", safe_cmd(cmd_user, "complete_task")))
-    app.add_handler(CommandHandler("mytasks",  safe_cmd(cmd_user, "my_tasks")))
 
     # ─────────────────────────────────────────
     # 🎮 TRIVIA — USER
@@ -325,10 +322,6 @@ def main():
     # ─────────────────────────────────────────
     # ⭐ ADMIN STARS & AI LIMITS
     # ─────────────────────────────────────────
-    app.add_handler(CommandHandler("checkquota",  safe_cmd(cmd_admin, "check_quota")))
-    app.add_handler(CommandHandler("admin_stars", safe_cmd(cmd_admin, "admin_stars")))
-    app.add_handler(CommandHandler("checklimit",  safe_cmd(cmd_admin, "check_limit")))
-    app.add_handler(CommandHandler("admin_limit", safe_cmd(cmd_admin, "admin_limit")))
 
     # ─────────────────────────────────────────
     # 🎂 ADMIN BIRTHDAYS
@@ -355,11 +348,6 @@ def main():
     # 👑 SUPER OWNER EXCLUSIVES
     # ─────────────────────────────────────────
     app.add_handler(CommandHandler("allcommandtest", safe_cmd(cmd_admin, "all_command_test")))
-    app.add_handler(CommandHandler("addadmin",       safe_cmd(cmd_admin, "add_admin_req")))
-    app.add_handler(CommandHandler("deladmin",       safe_cmd(cmd_admin, "del_admin_req")))
-    app.add_handler(CommandHandler("listadmins",     safe_cmd(cmd_admin, "list_admins")))
-    app.add_handler(CommandHandler("removemember",   safe_cmd(cmd_admin, "remove_member_req")))
-    app.add_handler(CommandHandler("graveyard",      safe_cmd(cmd_admin, "graveyard")))
     app.add_handler(CommandHandler("botstatus",      safe_cmd(cmd_admin, "bot_status")))
     app.add_handler(CommandHandler("pause",          safe_cmd(cmd_admin, "pause_bot")))
     app.add_handler(CommandHandler("restart",        safe_cmd(cmd_admin, "restart_bot")))

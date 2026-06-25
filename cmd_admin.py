@@ -1325,24 +1325,6 @@ async def update_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.reply_text("❌ Please start a DM with me first (/start).")
 
-
-
-    parts     = text.split(",", 1)
-    new_ver   = parts[0].strip()
-    changelog = parts[1].strip()
-
-    if not re.match(r'^\d+\.\d+$', new_ver):
-        await update.message.reply_text("❌ Version must be `X.Y` format (e.g. `1.3`).", parse_mode="Markdown")
-        return True
-
-    await _ensure_version_table(pool)
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO bot_version (version, changelog) VALUES ($1, $2) "
-            "ON CONFLICT DO NOTHING",
-            new_ver, changelog
-        )
-
     context.user_data.pop('uc_state', None)
     await update.message.reply_text(
         f"✅ *Version `{new_ver}` saved!*\n\n"
@@ -1712,52 +1694,61 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "register_group": _self_module,
     }
 
-    # Command → handler function name (matches main.py registrations)
+    # Command → handler function name (auto-synced from main.py registrations)
     CMD_TO_FUNC = {
-        "start": "start", "help": "help_command",
-        "command": "command_nav",
         "about": "about_command",
-        "wdim": "what_did_i_miss", "feedback": "submit_feedback",
-        "ask": "ask_bot", "ai": "ask_gemini",
-        "pushupdate": "push_update",
-        "updatechange": "update_change",
-        "newevent": "create_event", "editevent": "edit_event",
-        "events": "list_events", "poll": "create_poll",
-        "thanks": "give_thanks", "myquota": "my_quota",
-        "mystar": "my_star", "totalstar": "total_star",
-        "leaderboard_star": "leaderboard_star",
-        "addlib": "add_lib", "editlib": "edit_lib",
-        "dellib": "del_lib", "getlib": "get_lib", "library": "list_lib",
-        "assign": "assign_task", "complete": "complete_task",
-        "mytasks": "my_tasks", "away": "set_away", "back": "set_back",
-        "mypoint": "my_point", "leaderboard_kp": "leaderboard_kp",
-        "triviaconfig": "trivia_config", "forcetrivia": "force_trivia",
-        "forcesupertrivia": "force_super_trivia",
-        "canceltrivia": "cancel_trivia", "endtrivia": "end_trivia",
+        "admin": "admin_command",
         "admin_kp": "admin_kp",
-        "botconfig": "bot_config", "schedconfig": "sched_config",
-        "setchannel": "set_channel",
-        "unsetchannel": "unset_channel", "groupid": "check_group_id",
-        "registergroup": "register_group",
-        "update": "update_info", "checkquota": "check_quota",
-        "admin_stars": "admin_stars", "checklimit": "check_limit",
-        "admin_limit": "admin_limit", "addbday": "add_bday",
-        "editbday": "edit_bday", "delbday": "del_bday",
-        "listbdays": "list_bdays",
-        "bulkaddbday": "bulk_add_bday", "bulkdelbday": "bulk_del_bday",
-        "attendance": "attendance",
-        "forceback": "force_back", "grouptasks": "group_tasks",
-        "cancelevent": "cancel_event", "canceltask": "cancel_task",
-        "cancelpoll": "cancel_poll_admin", "newsched": "new_schedule",
-        "listschedules": "list_schedules", "delschedule": "del_schedule",
-        "announce": "announce", "editannounce": "edit_announce",
-        "delannounce": "del_announce", "feedbacklist": "feedback_list",
+        "ai": "ask_ai",
+        "allcommandtest": "all_command_test",
         "analyze_feedback": "analyze_feedback",
-        "allcommandtest": "all_command_test", "addadmin": "add_admin_req",
-        "deladmin": "del_admin_req", "listadmins": "list_admins",
-        "removemember": "remove_member_req", "graveyard": "graveyard",
-        "botstatus": "bot_status", "pause": "pause_bot",
-        "restart": "restart_bot", "super_reset": "super_reset_req",
+        "ask": "ask_bot",
+        "attendance": "attendance",
+        "away": "away_command",
+        "back": "set_back",
+        "birthdayconfig": "birthday_config_command",
+        "botconfig": "bot_config",
+        "botstatus": "bot_status",
+        "broadcast": "broadcast_command",
+        "canceltask": "cancel_task",
+        "canceltrivia": "cancel_trivia",
+        "command": "command_nav",
+        "endtrivia": "end_trivia",
+        "eventpoll": "eventpoll_command",
+        "feedback": "submit_feedback",
+        "feedbacklist": "feedback_list",
+        "forceback": "force_back",
+        "forcesupertrivia": "force_super_trivia",
+        "forcetrivia": "force_trivia",
+        "groupid": "check_group_id",
+        "grouptasks": "group_tasks",
+        "help": "help_command",
+        "leaderboard_kp": "leaderboard_kp",
+        "leaderboard_star": "leaderboard_star",
+        "library": "library_command",
+        "listevent": "listevent_command",
+        "manual": "manual_command",
+        "mypoint": "my_point",
+        "myquota": "my_quota",
+        "mystar": "my_star",
+        "mytask": "mytask_command",
+        "pause": "pause_bot",
+        "pushupdate": "push_update",
+        "registergroup": "register_group",
+        "restart": "restart_bot",
+        "schedconfig": "sched_config",
+        "setchannel": "set_channel",
+        "start": "start",
+        "super_reset": "super_reset_req",
+        "task": "task_command",
+        "thanks": "give_thanks",
+        "triviaconfig": "trivia_config",
+        "triviaend": "end_trivia",
+        "unsetchannel": "unset_channel",
+        "update": "update_info",
+        "updatechange": "update_change",
+        "userconfig": "userconfig_command",
+        "wdim": "what_did_i_miss",
     }
 
     results = []

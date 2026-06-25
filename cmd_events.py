@@ -50,15 +50,19 @@ async def _safe_edit(msg, text, kb=None, md=True):
         pass
 
 
-def _home_kb():
-    return InlineKeyboardMarkup([
+def _home_kb(has_group: bool = True):
+    rows = []
+    if not has_group:
+        rows.append([InlineKeyboardButton("🎯 Set Target Group", callback_data="ev_set_group")])
+    rows += [
         [InlineKeyboardButton("📅 New Event",   callback_data="ev_new_event"),
          InlineKeyboardButton("📊 New Poll",    callback_data="ev_new_poll")],
         [InlineKeyboardButton("📋 List Events", callback_data="ev_list"),
          InlineKeyboardButton("✏️ Edit Event",  callback_data="ev_edit_pick")],
         [InlineKeyboardButton("❌ Cancel Event/Poll", callback_data="ev_cancel_pick")],
         [InlineKeyboardButton("🚪 Close",       callback_data="ev_close")],
-    ])
+    ]
+    return InlineKeyboardMarkup(rows)
 
 
 def _back_home_kb():
@@ -72,13 +76,14 @@ def _back_home_kb():
 # DM GATE — always deliver in DM
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _send_home_dm(bot, user_id: int, username: str) -> None:
+async def _send_home_dm(bot, user_id: int, username: str, has_group: bool = True) -> None:
+    group_note = "" if has_group else "\n⚠️ _No target group set — tap Set Target Group first._"
     text = (
-        "📅 *Events & Polls Hub*\n\n"
+        f"📅 *Events & Polls Hub*{group_note}\n\n"
         "What would you like to do?\n"
         "_(This panel closes after 120 seconds of inactivity.)_"
     )
-    msg = await bot.send_message(user_id, text, reply_markup=_home_kb(), parse_mode="Markdown")
+    msg = await bot.send_message(user_id, text, reply_markup=_home_kb(has_group), parse_mode="Markdown")
     return msg
 
 
@@ -98,7 +103,8 @@ async def eventpoll_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     try:
-        msg = await _send_home_dm(context.bot, user_id, user.username or str(user_id))
+        has_group = context.user_data.get("ev_origin_chat") is not None
+        msg = await _send_home_dm(context.bot, user_id, user.username or str(user_id), has_group)
         await schedule_kb_timeout(context, user_id, msg.message_id, user_id)
     except Exception:
         # Can't DM yet — nudge in group
@@ -135,10 +141,23 @@ async def events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Home ──────────────────────────────────────────────────────────────────
     if data == "ev_home":
+        has_group = context.user_data.get("ev_origin_chat") is not None
+        group_note = "" if has_group else "\n⚠️ _No target group set._"
         await _safe_edit(q.message,
-            "📅 *Events & Polls Hub*\n\nWhat would you like to do?\n"
+            f"📅 *Events & Polls Hub*{group_note}\n\nWhat would you like to do?\n"
             "_(Panel closes after 120 s of inactivity.)_",
-            _home_kb()
+            _home_kb(has_group)
+        )
+
+    # ── Set Target Group ──────────────────────────────────────────────────────
+    elif data == "ev_set_group":
+        context.user_data["ev_state"] = "await_group_id"
+        await _safe_edit(q.message,
+            "🎯 *Set Target Group*\n\n"
+            "Type the *Group ID*:\n`-1001234567890`\n\n"
+            "_Run /groupid inside your group to get its ID._",
+            InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="ev_home"),
+                                   InlineKeyboardButton("🚪 Close", callback_data="ev_close")]])
         )
 
     # ── Close ─────────────────────────────────────────────────────────────────
@@ -502,6 +521,23 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     pool = context.bot_data.get("db_pool")
     user = update.effective_user
     uid  = user.id
+
+    # ── GROUP ID (DM group picker) ───────────────────────────────────────────
+    if state == "await_group_id":
+        try:
+            gid = int(text)
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Invalid Group ID. Must be a number like `-1001234567890`"
+            )
+            return True
+        context.user_data["ev_origin_chat"] = gid
+        context.user_data.pop("ev_state", None)
+        await update.message.reply_text(
+            f"✅ Target group set to `{gid}`.\n\nNow use /eventpoll to create events or polls.",
+            parse_mode="Markdown"
+        )
+        return True
 
     # ── EVENT TITLE ────────────────────────────────────────────────────────
     if state == "await_event_title":

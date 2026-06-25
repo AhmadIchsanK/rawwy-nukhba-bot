@@ -938,15 +938,17 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         
         async with pool.acquire() as conn:
             await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+            # Store theme in active_trivia so updates can re-inject it
+            await conn.execute("ALTER TABLE active_trivia ADD COLUMN IF NOT EXISTS theme TEXT DEFAULT ''")
             await conn.execute(
                 "INSERT INTO active_trivia "
                 "(chat_id, message_id, question, options, correct_index, explanation, "
-                "is_super, timeout_secs, expires_at) "
-                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                "is_super, timeout_secs, expires_at, theme) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
                 chat_id, sent.message_id,
                 data['question'], json.dumps(data['options']),
                 data['correct_index'], data['explanation'],
-                is_super_round, timeout, expires_at
+                is_super_round, timeout, expires_at, theme
             )
         # Record this question so it won't repeat
         await record_used_question(pool, data['question'], theme)
@@ -1076,6 +1078,8 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
 
             title  = "🚨 <b>WEEKLY SUPER TRIVIA</b> 🚨" if is_super_round else "🧠 <b>DAILY TRIVIA</b> 🧠"
             footer = "⚡ <i>Super Trivia: −5 KP for wrong answers!</i>\n" if is_super_round else ""
+            theme_label = r.get("theme", "")
+            theme_line  = f"🎯 <i>Theme: {escape_html(theme_label)}</i>\n" if theme_label else ""
 
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton(_safe_label(opt, idx), callback_data=f"trivans_{idx}")]
@@ -1083,7 +1087,8 @@ async def trivia_timeout_sweeper(context: ContextTypes.DEFAULT_TYPE):
             ])
 
             updated_text = (
-                f"{title}\n\n"
+                f"{title}\n"
+                f"{theme_line}\n"
                 f"❓ {escape_html(r['question'])}\n\n"
                 f"⏱️ <b>Time Remaining:</b> <code>{time_display}</code>\n"
                 f"✅ Correct so far: {len(winners)}/3\n"

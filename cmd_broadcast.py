@@ -339,8 +339,7 @@ async def _do_confirm(q, context, pool, username: str):
 
     if sched is None:
         # Post immediately
-        await _do_post_now(q.message.bot if hasattr(q.message, 'bot') else q.get_bot(),
-                           pool, chat_id, msg, q)
+        await _do_post_now(context.bot, pool, chat_id, msg, q)
         await log_action(pool, uid, uid, "Broadcast", "Posted Now", f"target={chat_id}")
         context.user_data.pop("bc_draft", None)
         context.user_data.pop("bc_state", None)
@@ -381,18 +380,32 @@ async def _do_post_now(bot, pool, chat_id: str, message: str, q):
     async with pool.acquire() as conn:
         if chat_id == "all":
             chats = await conn.fetch("SELECT DISTINCT chat_id FROM group_settings")
+            if not chats:
+                chats = await conn.fetch("SELECT DISTINCT chat_id FROM active_groups")
         else:
-            chats = [{"chat_id": int(chat_id)}]
+            try:
+                chats = [{"chat_id": int(chat_id)}]
+            except (ValueError, TypeError):
+                await q.answer("❌ Invalid target chat ID.", show_alert=True)
+                return
 
-    sent = 0
+    if not chats:
+        await q.answer("❌ No target groups found. Use /registergroup in your group first.", show_alert=True)
+        return
+
+    sent = failed = 0
     for ch in chats:
         try:
             await bot.send_message(ch["chat_id"], message, parse_mode="Markdown")
             sent += 1
         except Exception as e:
             logger.warning(f"Broadcast to {ch['chat_id']} failed: {e}")
+            failed += 1
 
-    await q.answer(f"Sent to {sent} group{'s' if sent != 1 else ''}.", show_alert=True)
+    result = f"✅ Sent to {sent} group{'s' if sent != 1 else ''}"
+    if failed:
+        result += f", {failed} failed"
+    await q.answer(result, show_alert=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
