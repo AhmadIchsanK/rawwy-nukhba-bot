@@ -66,7 +66,26 @@ async def ensure_trivia_database(pool):
         await conn.execute('''
             ALTER TABLE active_trivia ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP WITH TIME ZONE
         ''')
-        
+
+        # ── Track used questions to avoid repeats ─────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS trivia_used_questions (
+                id          SERIAL PRIMARY KEY,
+                question    TEXT NOT NULL,
+                theme       TEXT NOT NULL,
+                used_at     TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        ''')
+
+        # ── Track theme rotation queue ────────────────────────────────────────
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS trivia_theme_queue (
+                id          SERIAL PRIMARY KEY,
+                theme       TEXT NOT NULL,
+                used_at     TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        ''')
+
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS trivia_config (
                 key VARCHAR(100) PRIMARY KEY,
@@ -411,6 +430,7 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if room:
                 async with pool.acquire() as conn:
                     await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+                await get_next_theme(pool)   # advance rotation on cancel
             await q.answer("Trivia cancelled.")
             try:
                 await q.edit_message_text(
@@ -425,7 +445,8 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if room:
                 async with pool.acquire() as conn:
                     await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
-                await q.answer("Restarting trivia…")
+                await get_next_theme(pool)   # advance rotation on retry
+                await q.answer("Restarting trivia with new theme…")
                 try:
                     await q.edit_message_text("🔄 *Restarting trivia round…*", parse_mode="Markdown")
                 except Exception:
@@ -651,13 +672,106 @@ def _safe_label(text, idx):
     return prefix + label
 
 
+
+# ─────────────────────────────────────────
+# THEME ROTATION & QUESTION DEDUPLICATION
+# ─────────────────────────────────────────
+
+# All available themes (same as THEME_MAP values minus "Random")
+ALL_THEMES = [
+    "Movies & TV Shows", "Gaming", "Sports & Esports", "Music",
+    "Geography", "General Knowledge", "History", "Science & Technology",
+    "Food & Drink", "Anime / Manga & Comics"
+]
+
+
+async def get_next_theme(pool) -> str:
+    """
+    Returns the next theme in the rotation.
+    Tracks which themes have been used and ensures no theme repeats
+    until all themes have been cycled through once.
+    Once all themes have been used, clears the queue and starts fresh.
+    """
+    async with pool.acquire() as conn:
+        # Get themes already used in the current rotation cycle
+        used_rows = await conn.fetch(
+            "SELECT theme FROM trivia_theme_queue ORDER BY used_at ASC"
+        )
+        used_themes = [r["theme"] for r in used_rows]
+
+        # Find remaining themes not yet used this cycle
+        remaining = [t for t in ALL_THEMES if t not in used_themes]
+
+        if not remaining:
+            # All themes used — clear the queue and start a new cycle
+            await conn.execute("DELETE FROM trivia_theme_queue")
+            remaining = ALL_THEMES[:]
+            used_themes = []
+
+        # Pick the next theme (deterministic: first in sorted remaining list)
+        # Use a hash of today's date for a consistent but rotating pick
+        import hashlib, datetime
+        day_seed = datetime.date.today().toordinal()
+        idx = day_seed % len(remaining)
+        next_theme = remaining[idx]
+
+        # Record this theme as used
+        await conn.execute(
+            "INSERT INTO trivia_theme_queue (theme, used_at) VALUES ($1, NOW())",
+            next_theme
+        )
+
+    return next_theme
+
+
+async def get_used_questions(pool, theme: str, limit: int = 50) -> list:
+    """Return recently used question texts for a theme to avoid repeats."""
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT question FROM trivia_used_questions "
+            "WHERE theme=$1 ORDER BY used_at DESC LIMIT $2",
+            theme, limit
+        )
+    return [r["question"] for r in rows]
+
+
+async def record_used_question(pool, question: str, theme: str):
+    """Store a question so it won't be repeated."""
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO trivia_used_questions (question, theme, used_at) VALUES ($1, $2, NOW())",
+            question, theme
+        )
+        # Keep table lean — only keep last 200 questions per theme
+        await conn.execute(
+            "DELETE FROM trivia_used_questions WHERE id IN ("
+            "  SELECT id FROM trivia_used_questions WHERE theme=$1 "
+            "  ORDER BY used_at DESC OFFSET 200"
+            ")",
+            theme
+        )
+
+
+async def advance_theme(pool):
+    """
+    Called when a trivia round ends (normally, cancelled, force-ended, or retried).
+    Advances the theme rotation so the next round uses a different theme.
+    """
+    async with pool.acquire() as conn:
+        # Store the current theme as "just used" if not already recorded
+        # The actual advance happens in get_next_theme — this just ensures
+        # the queue entry is kept. Nothing extra needed here since
+        # get_next_theme already records on selection.
+        pass
+
+
 async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
     async with pool.acquire() as conn:
         status = await conn.fetchval("SELECT value FROM config WHERE key='status'") or 'active'
         if status != 'active':
             return
 
-        theme   = await conn.fetchval("SELECT value FROM config WHERE key='trivia_theme'") or 'Random'
+        configured_theme = await conn.fetchval("SELECT value FROM config WHERE key='trivia_theme'") or 'Random'
         opts    = int(await conn.fetchval("SELECT value FROM config WHERE key='trivia_opts'") or '4')
         to_key  = 'trivia_sup_to' if is_super_round else 'trivia_reg_to'
         timeout = int(await conn.fetchval(f"SELECT value FROM config WHERE key='{to_key}'") or '60')
@@ -666,10 +780,30 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
         if existing:
             return
 
+    # ── Theme resolution: rotate when set to "Random" ──────────────────────
+    if configured_theme in ("Random", "random", ""):
+        theme = await get_next_theme(pool)
+        logger.info(f"Trivia theme rotation: selected '{theme}' for this round")
+    else:
+        theme = configured_theme
+
+    # ── Load recently used questions for this theme ─────────────────────────
+    used_qs = await get_used_questions(pool, theme, limit=50)
+    used_block = ""
+    if used_qs:
+        # Show the last 10 questions to avoid in the prompt (keep prompt compact)
+        recent = used_qs[:10]
+        used_block = (
+            f" IMPORTANT: Do NOT use any of these recently used questions: "
+            + ", ".join(f'"{q[:60]}"' for q in recent)
+            + ". Generate a completely different question."
+        )
+
     num_options = 6 if is_super_round else opts
 
     prompt = (
-        f"Generate 1 multiple choice trivia question. Theme: {theme}. "
+        f"Generate 1 multiple choice trivia question. Theme: {theme}."
+        f"{used_block} "
         f"Provide exactly {num_options} answer options. "
         f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
         f"NO code blocks. Just the JSON: "
@@ -781,9 +915,10 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
 
     title  = "🚨 <b>WEEKLY SUPER TRIVIA</b> 🚨" if is_super_round else "🧠 <b>DAILY TRIVIA</b> 🧠"
     footer = "⚡ <i>Super Trivia: −5 KP for wrong answers!</i>\n" if is_super_round else ""
-    
+
     msg_text = (
-        f"{title}\n\n"
+        f"{title}\n"
+        f"🎯 <i>Theme: {escape_html(theme)}</i>\n\n"
         f"❓ {escape_html(data['question'])}\n\n"
         f"⏱️ <b>Time Remaining:</b> <code>{time_display}</code>\n"
         f"✅ Correct so far: 0/3\n"
@@ -813,6 +948,9 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
                 data['correct_index'], data['explanation'],
                 is_super_round, timeout, expires_at
             )
+        # Record this question so it won't repeat
+        await record_used_question(pool, data['question'], theme)
+        logger.info(f"Trivia round started — theme: '{theme}', question recorded for dedup")
     except Exception as e:
         logger.error(f"Trivia Database Insert Failed! {e}")
         try:
@@ -836,6 +974,10 @@ async def close_trivia_round(bot, chat_id: int, reason: str, pool):
         if not room:
             return
         await conn.execute("DELETE FROM active_trivia WHERE chat_id=$1", chat_id)
+
+    # Advance the theme rotation — next round gets a different theme
+    await get_next_theme(pool)
+    logger.info(f"Trivia round closed ({reason}) — theme advanced for next round")
 
     opts    = json.loads(room['options'])
     correct = opts[room['correct_index']]
