@@ -22,7 +22,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from core import (
-    WIB, delete_cmd, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action
+    WIB, delete_cmd, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
+    schedule_text_input_timeout, cancel_text_input_timeout,
 )
 
 logger = logging.getLogger(__name__)
@@ -174,13 +175,17 @@ async def away_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             end_str = existing["end_time"].astimezone(WIB).strftime("%b %d at %H:%M WIB")
             return await q.answer(f"You're already away until {end_str}.", show_alert=True)
 
-        context.user_data["aw_state"] = "await_reason"
+        context.user_data["aw_state"]     = "await_reason"
+        context.user_data["aw_panel_chat"] = q.message.chat_id
+        context.user_data["aw_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "🏖️ *Set Away — Step 1 of 2*\n\n"
             "Type your *away reason*:\n\n"
-            "_e.g. On leave, At a conference, Out sick_",
+            "_e.g. On leave, At a conference, Out sick_\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "aw_state", "await_reason", q.message.chat_id, q.message.message_id)
 
     # ── Back — confirm ───────────────────────────────────────────────────────
     elif data == "aw_back_confirm":
@@ -238,18 +243,44 @@ async def handle_away_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     uid      = update.effective_user.id
     username = update.effective_user.username or str(uid)
 
+    async def _invalid(error_text: str, guide_text: str):
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        panel_chat = context.user_data.get("aw_panel_chat", uid)
+        panel_msg  = context.user_data.get("aw_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=guide_text, reply_markup=_back_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     # ── REASON ───────────────────────────────────────────────────────────────
     if state == "await_reason":
         if not text:
             return True
+        cancel_text_input_timeout(context, uid, "aw_state")
         context.user_data["aw_reason"] = text
         context.user_data["aw_state"]  = "await_return_time"
-        await update.message.reply_text(
-            "🏖️ *Set Away — Step 2 of 2*\n\n"
-            "Enter your *return date and time*:\n`MM/DD/YYYY HH:MM`\n\n"
-            "_e.g._ `06/30/2026 09:00`",
-            parse_mode="Markdown"
-        )
+        panel_chat = context.user_data.get("aw_panel_chat", uid)
+        panel_msg  = context.user_data.get("aw_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="🏖️ *Set Away — Step 2 of 2*\n\n"
+                         "Enter your *return date and time*:\n`MM/DD/YYYY HH:MM`\n\n"
+                         "_e.g._ `06/30/2026 09:00`\n"
+                         "⏰ _Times out in 120 seconds._",
+                    reply_markup=_back_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        await schedule_text_input_timeout(context, uid, "aw_state", "await_return_time", panel_chat or uid, panel_msg or 0)
         return True
 
     # ── RETURN TIME ───────────────────────────────────────────────────────────
@@ -259,13 +290,13 @@ async def handle_away_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if end_time < datetime.datetime.now(WIB):
                 raise ValueError("past")
         except ValueError:
-            await update.message.reply_text(
-                "❌ Invalid date/time or it's in the past.\n"
-                "Format: `MM/DD/YYYY HH:MM` (e.g. `06/30/2026 09:00`)",
-                parse_mode="Markdown"
+            await _invalid(
+                "Invalid date/time or it's in the past.\nFormat: `MM/DD/YYYY HH:MM` (e.g. `06/30/2026 09:00`)",
+                "🏖️ *Set Away — Step 2 of 2*\n\nEnter your *return date and time*:\n`MM/DD/YYYY HH:MM`\n\n"
+                "_e.g._ `06/30/2026 09:00`\n⏰ _Times out in 120 seconds._",
             )
             return True
-
+        cancel_text_input_timeout(context, uid, "aw_state")
         reason = context.user_data.pop("aw_reason", "Away")
         async with pool.acquire() as conn:
             existing = await conn.fetchrow("SELECT 1 FROM away_status WHERE username=$1", username)

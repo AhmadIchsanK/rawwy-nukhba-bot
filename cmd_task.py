@@ -27,7 +27,8 @@ from telegram.ext import ContextTypes
 
 from core import (
     WIB, delete_cmd, is_bot_admin,
-    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action
+    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
+    schedule_text_input_timeout, cancel_text_input_timeout,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,15 +222,19 @@ async def task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("tk_grp_"):
         chat_id = int(data[7:])
         context.user_data["tk_draft"]["chat_id"] = chat_id
-        context.user_data["tk_state"] = "dm_await_desc"
+        context.user_data["tk_state"]     = "dm_await_desc"
+        context.user_data["tk_panel_chat"] = q.message.chat_id
+        context.user_data["tk_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "📋 *Assign Task — Step 1 of 3*\n\n"
-            "Type the *task description*:",
+            "Type the *task description*:\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=InlineKeyboardMarkup([[
                 InlineKeyboardButton("🚪 Cancel", callback_data="tk_cancel")
             ]]),
             parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "tk_state", "dm_await_desc", q.message.chat_id, q.message.message_id)
 
     # ── Toggle member (group flow) ────────────────────────────────────────────
     elif data.startswith("tk_toggle_"):
@@ -380,6 +385,25 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     uid      = update.effective_user.id
     username = update.effective_user.username or str(uid)
 
+    # Helper: show error and restore the panel guide
+    async def _invalid(error_text: str, guide_text: str, kb=None):
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        back_kb = kb or InlineKeyboardMarkup([[InlineKeyboardButton("🚪 Cancel", callback_data="tk_cancel")]])
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        panel_chat = context.user_data.get("tk_panel_chat", uid)
+        panel_msg  = context.user_data.get("tk_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=guide_text, reply_markup=back_kb, parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     # ── GROUP: waiting for task description ───────────────────────────────────
     if state == "group_picking" and update.effective_chat.type != "private":
         context.user_data["tk_desc"] = text
@@ -411,24 +435,47 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except ValueError:
             await update.message.reply_text("❌ That doesn't look like a valid Group ID. Try again:")
             return True
+        cancel_text_input_timeout(context, uid, "tk_state")
         context.user_data["tk_draft"]["chat_id"] = chat_id
-        context.user_data["tk_state"]            = "dm_await_desc"
-        await update.message.reply_text(
-            "📋 *Assign Task — Step 1 of 3*\n\nType the *task description*:",
-            parse_mode="Markdown"
-        )
+        context.user_data["tk_state"]     = "dm_await_desc"
+        panel_chat = context.user_data.get("tk_panel_chat", uid)
+        panel_msg  = context.user_data.get("tk_panel_msg")
+        if panel_msg:
+            try:
+                from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📋 *Assign Task — Step 1 of 3*\n\nType the *task description*:\n⏰ _Times out in 120 seconds._",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚪 Cancel", callback_data="tk_cancel")]]),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        await schedule_text_input_timeout(context, uid, "tk_state", "dm_await_desc", panel_chat or uid, panel_msg or 0)
         return True
 
     # ── DM: waiting for task description ──────────────────────────────────────
     if state == "dm_await_desc" and update.effective_chat.type == "private":
+        cancel_text_input_timeout(context, uid, "tk_state")
         context.user_data["tk_draft"]["desc"] = text
         context.user_data["tk_state"]         = "dm_await_assignees"
-        await update.message.reply_text(
-            "📋 *Assign Task — Step 2 of 3*\n\n"
-            "Type the *assignee usernames* separated by commas:\n\n"
-            "_e.g._ `alice, bob, carol`",
-            parse_mode="Markdown"
-        )
+        panel_chat = context.user_data.get("tk_panel_chat", uid)
+        panel_msg  = context.user_data.get("tk_panel_msg")
+        if panel_msg:
+            try:
+                from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📋 *Assign Task — Step 2 of 3*\n\n"
+                         "Type the *assignee usernames* separated by commas:\n\n"
+                         "_e.g._ `alice, bob, carol`\n"
+                         "⏰ _Times out in 120 seconds._",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚪 Cancel", callback_data="tk_cancel")]]),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        await schedule_text_input_timeout(context, uid, "tk_state", "dm_await_assignees", panel_chat or uid, panel_msg or 0)
         return True
 
     # ── DM: waiting for assignees ──────────────────────────────────────────────
@@ -436,16 +483,34 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         assignees = [a.strip().lstrip("@").lower() for a in text.split(",") if a.strip()]
         assignees = [a for a in assignees if a != username.lower()]
         if not assignees:
-            await update.message.reply_text("❌ No valid assignees. Enter usernames separated by commas:")
+            await _invalid(
+                "No valid assignees. Enter usernames separated by commas:",
+                "📋 *Assign Task — Step 2 of 3*\n\n"
+                "Type the *assignee usernames* separated by commas:\n\n"
+                "_e.g._ `alice, bob, carol`\n"
+                "⏰ _Times out in 120 seconds._",
+            )
             return True
+        cancel_text_input_timeout(context, uid, "tk_state")
         context.user_data["tk_draft"]["assignees"] = assignees
-        context.user_data["tk_state"]             = "dm_await_deadline"
-        await update.message.reply_text(
-            "📋 *Assign Task — Step 3 of 3*\n\n"
-            "How many *minutes* until the deadline? (30–1440)\n\n"
-            "_e.g._ `120` _(for 2 hours from now)_",
-            parse_mode="Markdown"
-        )
+        context.user_data["tk_state"]              = "dm_await_deadline"
+        panel_chat = context.user_data.get("tk_panel_chat", uid)
+        panel_msg  = context.user_data.get("tk_panel_msg")
+        if panel_msg:
+            try:
+                from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📋 *Assign Task — Step 3 of 3*\n\n"
+                         "How many *minutes* until the deadline? (30–1440)\n\n"
+                         "_e.g._ `120` _(for 2 hours from now)_\n"
+                         "⏰ _Times out in 120 seconds._",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🚪 Cancel", callback_data="tk_cancel")]]),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        await schedule_text_input_timeout(context, uid, "tk_state", "dm_await_deadline", panel_chat or uid, panel_msg or 0)
         return True
 
     # ── DM: waiting for deadline minutes ──────────────────────────────────────
@@ -455,8 +520,15 @@ async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             if mins < 30 or mins > 1440:
                 raise ValueError
         except ValueError:
-            await update.message.reply_text("❌ Enter a number between 30 and 1440:")
+            await _invalid(
+                "Enter a number between 30 and 1440:",
+                "📋 *Assign Task — Step 3 of 3*\n\n"
+                "How many *minutes* until the deadline? (30–1440)\n\n"
+                "_e.g._ `120` _(for 2 hours from now)_\n"
+                "⏰ _Times out in 120 seconds._",
+            )
             return True
+        cancel_text_input_timeout(context, uid, "tk_state")
 
         draft    = context.user_data.get("tk_draft", {})
         desc     = draft.get("desc", "")

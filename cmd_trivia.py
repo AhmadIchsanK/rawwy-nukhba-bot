@@ -8,7 +8,7 @@ from google import genai  # fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-from core import WIB, GEMINI_API_KEY, GROQ_API_KEY, is_bot_admin, is_super, delete_cmd
+from core import WIB, GEMINI_API_KEY, GROQ_API_KEY, is_bot_admin, is_super, delete_cmd, schedule_kb_timeout, cancel_kb_timeout, schedule_text_input_timeout, cancel_text_input_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +154,8 @@ async def trivia_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     context.user_data['tcfg_msg_id'] = msg.message_id
+    context.user_data['tcfg_owner']  = chat_id
+    await schedule_kb_timeout(context, chat_id, msg.message_id, chat_id)
 
 
 def _tcfg_text(d):
@@ -275,14 +277,17 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             val = act[4:]
             if val == "custom":
                 context.user_data['awaiting_tcfg_theme'] = True
+                msg_id = context.user_data.get('tcfg_msg_id')
                 await q.answer()
                 try:
                     await q.edit_message_text(
-                        "✏️ *Type your custom theme* (e.g. `Indonesian History`):\n\n_Send your reply here._",
+                        "✏️ *Type your custom theme* (e.g. `Indonesian History`):\n\n_Send your reply here._\n⏰ _Times out in 120 seconds._",
                         parse_mode="Markdown"
                     )
                 except Exception:
                     pass
+                if msg_id:
+                    await schedule_text_input_timeout(context, q.from_user.id, "tcfg_theme_flag", "1", q.message.chat_id, msg_id)
             else:
                 d['theme'] = THEME_MAP.get(val, "Random")
                 await q.answer(f"Theme → {d['theme']}")
@@ -291,17 +296,21 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if act == "target":
             context.user_data['awaiting_tcfg_target'] = True
+            msg_id = context.user_data.get('tcfg_msg_id')
             await q.answer()
             try:
                 await q.edit_message_text(
                     "📡 *Set Target Chat*\n\n"
                     "Option 1: Forward any message from the target group here.\n"
                     "Option 2: Type the chat ID directly (e.g. `-1001234567890`).\n\n"
-                    "_Supergroups always start with_ `-100`",
+                    "_Supergroups always start with_ `-100`\n"
+                    "⏰ _Times out in 120 seconds._",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
+            if msg_id:
+                await schedule_text_input_timeout(context, q.from_user.id, "tcfg_target_flag", "1", q.message.chat_id, msg_id)
             return
 
         if act == "tadd":
@@ -320,14 +329,17 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if act == "tcus":
             context.user_data['awaiting_tcfg_time'] = True
+            msg_id = context.user_data.get('tcfg_msg_id')
             await q.answer()
             try:
                 await q.edit_message_text(
-                    "⏱️ *Type the exact release time* in `HH:MM` (24-hour WIB):\n\nExample: `09:30`",
+                    "⏱️ *Type the exact release time* in `HH:MM` (24-hour WIB):\n\nExample: `09:30`\n⏰ _Times out in 120 seconds._",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
+            if msg_id:
+                await schedule_text_input_timeout(context, q.from_user.id, "tcfg_time_flag", "1", q.message.chat_id, msg_id)
             return
 
         if act == "days":
@@ -346,26 +358,32 @@ async def trivia_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if act == "reg_to":
             context.user_data['awaiting_tcfg_reg_to'] = True
+            msg_id = context.user_data.get('tcfg_msg_id')
             await q.answer()
             try:
                 await q.edit_message_text(
-                    "⏳ *Type Regular Trivia timeout in seconds:*\n\nExample: `60` or `90`",
+                    "⏳ *Type Regular Trivia timeout in seconds:*\n\nExample: `60` or `90`\n⏰ _Times out in 120 seconds._",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
+            if msg_id:
+                await schedule_text_input_timeout(context, q.from_user.id, "tcfg_reg_flag", "1", q.message.chat_id, msg_id)
             return
 
         if act == "sup_to":
             context.user_data['awaiting_tcfg_sup_to'] = True
+            msg_id = context.user_data.get('tcfg_msg_id')
             await q.answer()
             try:
                 await q.edit_message_text(
-                    "🔥 *Type Super Trivia timeout in seconds:*\n\nExample: `120` or `150`",
+                    "🔥 *Type Super Trivia timeout in seconds:*\n\nExample: `120` or `150`\n⏰ _Times out in 120 seconds._",
                     parse_mode="Markdown"
                 )
             except Exception:
                 pass
+            if msg_id:
+                await schedule_text_input_timeout(context, q.from_user.id, "tcfg_sup_flag", "1", q.message.chat_id, msg_id)
             return
 
         if act == "back":
@@ -553,6 +571,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
 
     if context.user_data.get('awaiting_tcfg_target'):
         context.user_data.pop('awaiting_tcfg_target')
+        cancel_text_input_timeout(context, user_id, "tcfg_target_flag")
         chat_id_str = None
 
         if update.message:
@@ -602,6 +621,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
 
     if context.user_data.get('awaiting_tcfg_theme'):
         context.user_data.pop('awaiting_tcfg_theme')
+        cancel_text_input_timeout(context, user_id, "tcfg_theme_flag")
         d['theme'] = text
         try:
             await update.message.delete()
@@ -615,6 +635,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             h, m = map(int, text.split(":"))
             if 0 <= h <= 23 and 0 <= m <= 59:
                 context.user_data.pop('awaiting_tcfg_time')
+                cancel_text_input_timeout(context, user_id, "tcfg_time_flag")
                 d['run_time'] = f"{h:02d}:{m:02d}"
                 try:
                     await update.message.delete()
@@ -631,6 +652,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             if val < 10:
                 raise ValueError
             context.user_data.pop('awaiting_tcfg_reg_to')
+            cancel_text_input_timeout(context, user_id, "tcfg_reg_flag")
             d['reg_to'] = str(val)
             try:
                 await update.message.delete()
@@ -647,6 +669,7 @@ async def handle_trivia_text_input(update: Update, context: ContextTypes.DEFAULT
             if val < 10:
                 raise ValueError
             context.user_data.pop('awaiting_tcfg_sup_to')
+            cancel_text_input_timeout(context, user_id, "tcfg_sup_flag")
             d['sup_to'] = str(val)
             try:
                 await update.message.delete()

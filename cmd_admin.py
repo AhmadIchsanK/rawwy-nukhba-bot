@@ -8,7 +8,7 @@ from google import genai  # fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, GROQ_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, CANCELLED_TEXT
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, GROQ_API_KEY, is_super, is_bot_admin, delete_cmd, log_action, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, CANCELLED_TEXT, schedule_text_input_timeout, cancel_text_input_timeout
 from cmd_system import _generate_content_with_retry
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,18 @@ async def _ensure_version_table(pool):
                 "🤖 AI assistant is now faster and more reliable — use /ai to ask anything\n"
                 "📖 /help is now a clean command list; use /command for full usage details\n"
                 "🐛 Fixed: /newsched group ID input now works correctly with custom channel IDs"
+            )
+        # Seed v1.3 entry
+        count = await conn.fetchval("SELECT COUNT(*) FROM bot_version WHERE version='1.3'")
+        if not count:
+            await conn.execute(
+                "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
+                "1.3",
+                "⏰ Text input fields now auto-cancel after 120 seconds of inactivity\n"
+                "🔄 Invalid input now shows an error and restores the guide panel automatically\n"
+                "✅ Inline keyboard panels now consistently disappear after 120 seconds\n"
+                "📋 Task assignment DM flow tracks each step and restores the guide on mistakes\n"
+                "🏖️ Away and Birthday panels now support full 120-second input timeout with guide restore"
             )
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bot_admins (
@@ -1185,8 +1197,8 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "SELECT version, changelog, updated_at FROM bot_version ORDER BY id ASC"
         )
 
-    # Only show versions up to 1.2 — v1.3 info is not released yet
-    MAX_VERSION = (1, 2)
+    # Show all versions up to and including 1.3
+    MAX_VERSION = (1, 3)
     def _ver_tuple(v):
         try:
             parts = str(v).split('.')
@@ -1214,9 +1226,13 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # For non-admins, strip out lines that mention admin/super commands
         if not is_admin_user and not is_super_owner:
             filtered = []
-            skip_keywords = ['admin', 'super owner', '/botconfig', '/manageuser',
-                             '/addadmin', '/deladmin', '/graveyard', '/schedconfig',
-                             '/newsched', '/analyze', 'super_reset', 'botstatus']
+            skip_keywords = [
+                'admin', 'super owner', '/botconfig', '/manageuser',
+                '/addadmin', '/deladmin', '/graveyard', '/schedconfig',
+                '/newsched', '/analyze', 'super_reset', 'botstatus',
+                '/userconfig', '/birthdayconfig', '/broadcastconfig',
+                '/awayconfig', '/eventpoll',
+            ]
             for line in log.split('\n'):
                 if not any(kw.lower() in line.lower() for kw in skip_keywords):
                     filtered.append(line)
@@ -1320,7 +1336,10 @@ async def update_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
         from core import schedule_kb_timeout, KEYBOARD_TIMEOUT
         await schedule_kb_timeout(context, uid, msg.message_id, uid)
-        context.user_data['uc_state'] = 'await_updatechange'
+        context.user_data['uc_state']     = 'await_updatechange'
+        context.user_data['uc_panel_chat'] = uid
+        context.user_data['uc_panel_msg']  = msg.message_id
+        await schedule_text_input_timeout(context, uid, "uc_state", "await_updatechange", uid, msg.message_id)
     except Exception:
         if update.message:
             await update.message.reply_text("❌ Please start a DM with me first (/start).")

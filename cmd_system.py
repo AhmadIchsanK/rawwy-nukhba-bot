@@ -9,7 +9,7 @@ from openai import OpenAI as GroqClient          # Groq uses OpenAI-compatible S
 from google import genai                           # Gemini kept as fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, filters
-from core import WIB, SUPER_OWNER, GEMINI_API_KEY, GROQ_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd
+from core import WIB, SUPER_OWNER, GEMINI_API_KEY, GROQ_API_KEY, is_super, is_bot_admin, log_action, update_user_menu, delete_cmd, schedule_kb_timeout, cancel_kb_timeout
 import cmd_user 
 import cmd_system_help
 
@@ -457,7 +457,9 @@ async def process_feedback_submission(update: Update, context: ContextTypes.DEFA
         [InlineKeyboardButton("✅ Confirm & Submit", callback_data="fb_submit")],
         [InlineKeyboardButton("✏️ Edit Once", callback_data="fb_edit")]
     ])
-    await context.bot.send_message(update.effective_user.id, f"**Review your feedback:**\n\n_{text}_\n\nDoes this look correct?", reply_markup=kb, parse_mode="Markdown")
+    uid = update.effective_user.id
+    msg = await context.bot.send_message(uid, f"**Review your feedback:**\n\n_{text}_\n\nDoes this look correct?", reply_markup=kb, parse_mode="Markdown")
+    await schedule_kb_timeout(context, uid, msg.message_id, uid)
 
 async def feedback_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query

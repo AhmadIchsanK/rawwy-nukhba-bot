@@ -26,7 +26,8 @@ from telegram.ext import ContextTypes
 
 from core import (
     delete_cmd, is_bot_admin,
-    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action
+    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
+    schedule_text_input_timeout, cancel_text_input_timeout,
 )
 
 logger = logging.getLogger(__name__)
@@ -267,6 +268,7 @@ async def _next_step(q, context):
     """Advance to the next wizard step based on current state."""
     state = context.user_data.get("bc_state", "")
     draft = _get_draft(context)
+    uid   = q.from_user.id
 
     # Post Now flow: target → tag → message → confirm
     if state == "postnow_target":
@@ -276,11 +278,14 @@ async def _next_step(q, context):
             reply_markup=_tag_kb(), parse_mode="Markdown"
         )
     elif state == "postnow_tag":
-        context.user_data["bc_state"] = "await_message"
+        context.user_data["bc_state"]     = "await_message"
+        context.user_data["bc_panel_chat"] = q.message.chat_id
+        context.user_data["bc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
-            "📤 *Post Now — Step 3 of 3*\n\nType the broadcast message:",
+            "📤 *Post Now — Step 3 of 3*\n\nType the broadcast message:\n⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bc_state", "await_message", q.message.chat_id, q.message.message_id)
 
     # Schedule flow: target → frequency → datetime → tag → message → confirm
     elif state == "sched_target":
@@ -290,13 +295,17 @@ async def _next_step(q, context):
             reply_markup=_recurrence_kb(), parse_mode="Markdown"
         )
     elif state == "sched_freq":
-        context.user_data["bc_state"] = "await_sched_datetime"
+        context.user_data["bc_state"]     = "await_sched_datetime"
+        context.user_data["bc_panel_chat"] = q.message.chat_id
+        context.user_data["bc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "📅 *Schedule Broadcast — Step 3 of 5*\n\n"
             "Type the date and time:\n`MM/DD/YYYY HH:MM`\n\n"
-            "_e.g._ `07/01/2026 09:00`",
+            "_e.g._ `07/01/2026 09:00`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bc_state", "await_sched_datetime", q.message.chat_id, q.message.message_id)
     elif state == "sched_datetime":
         context.user_data["bc_state"] = "sched_tag"
         await q.message.edit_text(
@@ -304,11 +313,14 @@ async def _next_step(q, context):
             reply_markup=_tag_kb(), parse_mode="Markdown"
         )
     elif state == "sched_tag":
-        context.user_data["bc_state"] = "await_message"
+        context.user_data["bc_state"]     = "await_message"
+        context.user_data["bc_panel_chat"] = q.message.chat_id
+        context.user_data["bc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
-            "📅 *Schedule Broadcast — Step 5 of 5*\n\nType the broadcast message:",
+            "📅 *Schedule Broadcast — Step 5 of 5*\n\nType the broadcast message:\n⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bc_state", "await_message", q.message.chat_id, q.message.message_id)
 
 
 async def _do_confirm(q, context, pool, username: str):
@@ -506,6 +518,22 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
     username = update.effective_user.username or str(uid)
     draft    = _get_draft(context)
 
+    async def _invalid(error_text: str, guide_text: str):
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        panel_chat = context.user_data.get("bc_panel_chat", uid)
+        panel_msg  = context.user_data.get("bc_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=guide_text, reply_markup=_back_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     if not await is_bot_admin(username, pool):
         context.user_data.pop("bc_state", None)
         return False
@@ -546,12 +574,15 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
             if dt < datetime.datetime.now(WIB):
                 raise ValueError("past")
         except ValueError:
-            await update.message.reply_text(
-                "❌ Invalid date or it's in the past.\n"
-                "Format: `MM/DD/YYYY HH:MM` — e.g. `07/01/2026 09:00`",
-                parse_mode="Markdown"
+            await _invalid(
+                "Invalid date or it's in the past.\nFormat: `MM/DD/YYYY HH:MM` — e.g. `07/01/2026 09:00`",
+                "📅 *Schedule Broadcast — Step 3 of 5*\n\n"
+                "Type the date and time:\n`MM/DD/YYYY HH:MM`\n\n"
+                "_e.g._ `07/01/2026 09:00`\n"
+                "⏰ _Times out in 120 seconds._",
             )
             return True
+        cancel_text_input_timeout(context, uid, "bc_state")
         draft["scheduled_at"] = dt
         context.user_data["bc_state"] = "sched_datetime"
         context.user_data["bc_draft"]  = draft
@@ -564,8 +595,12 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
     # ── Message input ──────────────────────────────────────────────────────
     elif state == "await_message":
         if not text:
-            await update.message.reply_text("❌ Message cannot be empty.")
+            await _invalid(
+                "Message cannot be empty.",
+                "📝 *Broadcast Message*\n\nType the broadcast message:\n⏰ _Times out in 120 seconds._",
+            )
             return True
+        cancel_text_input_timeout(context, uid, "bc_state")
         draft["message"] = text
         context.user_data["bc_draft"] = draft
         context.user_data["bc_state"] = "confirm"

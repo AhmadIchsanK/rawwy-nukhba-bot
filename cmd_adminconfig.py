@@ -14,7 +14,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from core import (
     delete_cmd, is_bot_admin, is_super,
-    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action
+    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
+    schedule_text_input_timeout, cancel_text_input_timeout,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,11 +109,14 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "adm_add":
-        context.user_data["adm_state"] = "await_add_admin"
+        context.user_data["adm_state"]     = "await_add_admin"
+        context.user_data["adm_panel_chat"] = q.message.chat_id
+        context.user_data["adm_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
-            "➕ *Add Admin*\n\nType the username to promote:\n`@username`",
+            "➕ *Add Admin*\n\nType the username to promote:\n`@username`\n⏰ _Times out in 120 seconds._",
             reply_markup=_back_adm_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "adm_state", "await_add_admin", q.message.chat_id, q.message.message_id)
 
     elif data == "adm_remove":
         async with pool.acquire() as conn:
@@ -156,10 +160,12 @@ async def handle_admin_inline_text(update: Update, context: ContextTypes.DEFAULT
             exists = await conn.fetchval("SELECT 1 FROM bot_admins WHERE LOWER(username)=$1", text)
             if exists:
                 await update.message.reply_text(f"⚠️ @{text} is already an admin.")
+                cancel_text_input_timeout(context, uid, "adm_state")
                 context.user_data.pop("adm_state", None)
                 return True
             await conn.execute("INSERT INTO bot_admins (username) VALUES ($1) ON CONFLICT DO NOTHING", text)
         await log_action(pool, uid, uid, "Admin", "Added", f"@{text}")
+        cancel_text_input_timeout(context, uid, "adm_state")
         context.user_data.pop("adm_state", None)
         await update.message.reply_text(f"✅ @{text} promoted to admin.", parse_mode="Markdown")
         return True
@@ -261,50 +267,68 @@ async def userconfig_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # ── Check Quota ───────────────────────────────────────────────────────────
     elif data == "uc_checkquota":
-        context.user_data["uc_state"] = "await_checkquota"
+        context.user_data["uc_state"]     = "await_checkquota"
+        context.user_data["uc_panel_chat"] = q.message.chat_id
+        context.user_data["uc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
-            "🔍 *Check Star Quota*\n\nType `@username` or `all`:",
+            "🔍 *Check Star Quota*\n\nType `@username` or `all`:\n⏰ _Times out in 120 seconds._",
             reply_markup=_back_uc_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "uc_state", "await_checkquota", q.message.chat_id, q.message.message_id)
 
     # ── Admin Stars ───────────────────────────────────────────────────────────
     elif data == "uc_adminstars":
-        context.user_data["uc_state"] = "await_adminstars"
+        context.user_data["uc_state"]     = "await_adminstars"
+        context.user_data["uc_panel_chat"] = q.message.chat_id
+        context.user_data["uc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "⭐ *Admin Stars*\n\nFormat:\n"
             "`@user , quota|monthly|total , set|add|sub , amount`\n\n"
-            "Example: `@alice , monthly , add , 5`",
+            "Example: `@alice , monthly , add , 5`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_uc_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "uc_state", "await_adminstars", q.message.chat_id, q.message.message_id)
 
     # ── Check AI Limit ────────────────────────────────────────────────────────
     elif data == "uc_checklimit":
-        context.user_data["uc_state"] = "await_checklimit"
+        context.user_data["uc_state"]     = "await_checklimit"
+        context.user_data["uc_panel_chat"] = q.message.chat_id
+        context.user_data["uc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
-            "🤖 *Check AI Limit*\n\nType `@username` or `all`:",
+            "🤖 *Check AI Limit*\n\nType `@username` or `all`:\n⏰ _Times out in 120 seconds._",
             reply_markup=_back_uc_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "uc_state", "await_checklimit", q.message.chat_id, q.message.message_id)
 
     # ── Admin Limit ───────────────────────────────────────────────────────────
     elif data == "uc_adminlimit":
-        context.user_data["uc_state"] = "await_adminlimit"
+        context.user_data["uc_state"]     = "await_adminlimit"
+        context.user_data["uc_panel_chat"] = q.message.chat_id
+        context.user_data["uc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "🔧 *Set AI Limit*\n\nFormat:\n"
             "`@user , set|add|sub , amount`\n\n"
-            "Example: `@bob , set , 20`",
+            "Example: `@bob , set , 20`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_uc_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "uc_state", "await_adminlimit", q.message.chat_id, q.message.message_id)
 
     # ── Remove Member ─────────────────────────────────────────────────────────
     elif data == "uc_remove":
         if not await is_super(username):
             return await q.answer("Super Owner only.", show_alert=True)
-        context.user_data["uc_state"] = "await_remove"
+        context.user_data["uc_state"]     = "await_remove"
+        context.user_data["uc_panel_chat"] = q.message.chat_id
+        context.user_data["uc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "☠️ *Remove Member*\n\nType `@username` to offboard permanently.\n"
-            "_This removes them from all data tables and adds them to the graveyard._",
+            "_This removes them from all data tables and adds them to the graveyard._\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_uc_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "uc_state", "await_remove", q.message.chat_id, q.message.message_id)
 
 
 async def _show_user_list(q, pool, page: int):
@@ -357,17 +381,36 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
     if not await is_bot_admin(username, pool):
         return False
 
+    async def _invalid(error_text: str, guide_text: str, kb=None):
+        back_kb = kb or _back_uc_kb()
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        panel_chat = context.user_data.get("uc_panel_chat", uid)
+        panel_msg  = context.user_data.get("uc_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=guide_text, reply_markup=back_kb, parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     # ── updatechange flow (from cmd_admin.update_change) ─────────────────────
     if state == "await_updatechange":
         import re as _re
         if "," not in text:
-            await update.message.reply_text("❌ Format: `VERSION , CHANGELOG`", parse_mode="Markdown")
+            await _invalid("Format: `VERSION , CHANGELOG`",
+                "🔖 *Update Version*\n\nFormat: `VERSION , CHANGELOG`\n_e.g._ `1.4 , Added new feature`\n⏰ _Times out in 120 seconds._")
             return True
         parts     = text.split(",", 1)
         new_ver   = parts[0].strip()
         changelog = parts[1].strip()
         if not _re.match(r'^\d+\.\d+$', new_ver):
-            await update.message.reply_text("❌ Version must be `X.Y` format.", parse_mode="Markdown")
+            await _invalid("Version must be `X.Y` format.",
+                "🔖 *Update Version*\n\nFormat: `VERSION , CHANGELOG`\n_e.g._ `1.4 , Added new feature`\n⏰ _Times out in 120 seconds._")
             return True
         from cmd_admin import _ensure_version_table
         await _ensure_version_table(pool)
@@ -376,6 +419,7 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
                 "INSERT INTO bot_version (version, changelog) VALUES ($1, $2) ON CONFLICT DO NOTHING",
                 new_ver, changelog
             )
+        cancel_text_input_timeout(context, uid, "uc_state")
         context.user_data.pop("uc_state", None)
         await update.message.reply_text(
             f"✅ Version `{new_ver}` saved!\n📝 _{changelog}_",
@@ -386,6 +430,7 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
     # ── Check Quota ───────────────────────────────────────────────────────────
     if state == "await_checkquota":
         from cmd_admin import check_quota
+        cancel_text_input_timeout(context, uid, "uc_state")
         context.user_data.pop("uc_state", None)
         context.args = [text.lstrip("@")]
         await check_quota(update, context)
@@ -394,6 +439,7 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
     # ── Admin Stars ───────────────────────────────────────────────────────────
     if state == "await_adminstars":
         from cmd_admin import admin_stars
+        cancel_text_input_timeout(context, uid, "uc_state")
         context.user_data.pop("uc_state", None)
         context.args = text.replace("@", "").split(",")
         await admin_stars(update, context)
@@ -402,6 +448,7 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
     # ── Check Limit ───────────────────────────────────────────────────────────
     if state == "await_checklimit":
         from cmd_admin import check_limit
+        cancel_text_input_timeout(context, uid, "uc_state")
         context.user_data.pop("uc_state", None)
         context.args = [text.lstrip("@")]
         await check_limit(update, context)
@@ -410,6 +457,7 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
     # ── Admin Limit ───────────────────────────────────────────────────────────
     if state == "await_adminlimit":
         from cmd_admin import admin_limit
+        cancel_text_input_timeout(context, uid, "uc_state")
         context.user_data.pop("uc_state", None)
         context.args = text.replace("@", "").split(",")
         await admin_limit(update, context)
@@ -418,10 +466,12 @@ async def handle_adminconfig_text(update: Update, context: ContextTypes.DEFAULT_
     # ── Remove Member ─────────────────────────────────────────────────────────
     if state == "await_remove":
         if not await is_super(username):
+            cancel_text_input_timeout(context, uid, "uc_state")
             context.user_data.pop("uc_state", None)
             return False
         target = text.lstrip("@").lower()
         from cmd_admin import remove_member_req
+        cancel_text_input_timeout(context, uid, "uc_state")
         context.user_data.pop("uc_state", None)
         context.args = [target]
         await remove_member_req(update, context)

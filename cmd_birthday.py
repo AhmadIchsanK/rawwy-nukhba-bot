@@ -24,7 +24,8 @@ from telegram.ext import ContextTypes
 
 from core import (
     delete_cmd, is_bot_admin,
-    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action
+    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
+    schedule_text_input_timeout, cancel_text_input_timeout,
 )
 
 logger   = logging.getLogger(__name__)
@@ -133,14 +134,18 @@ async def birthday_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Add ───────────────────────────────────────────────────────────────────
     elif data == "bd_add":
-        context.user_data["bd_state"] = "await_add"
+        context.user_data["bd_state"]     = "await_add"
+        context.user_data["bd_panel_chat"] = q.message.chat_id
+        context.user_data["bd_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "➕ *Add Birthday*\n\n"
             "Send in this format:\n"
             "`@username , MM/DD`\n\n"
-            "_e.g._ `@alice , 06/15`",
+            "_e.g._ `@alice , 06/15`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bd_state", "await_add", q.message.chat_id, q.message.message_id)
 
     # ── Edit — pick user ──────────────────────────────────────────────────────
     elif data == "bd_edit_pick":
@@ -148,14 +153,18 @@ async def birthday_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("bd_editsel_"):
         target = data[len("bd_editsel_"):]
-        context.user_data["bd_state"]     = "await_edit_date"
-        context.user_data["bd_edit_user"] = target
+        context.user_data["bd_state"]      = "await_edit_date"
+        context.user_data["bd_edit_user"]  = target
+        context.user_data["bd_panel_chat"] = q.message.chat_id
+        context.user_data["bd_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             f"✏️ *Edit Birthday — @{target}*\n\n"
             "Send the new date:\n`MM/DD`\n\n"
-            "_e.g._ `07/04`",
+            "_e.g._ `07/04`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bd_state", "await_edit_date", q.message.chat_id, q.message.message_id)
 
     # ── Delete — pick user ────────────────────────────────────────────────────
     elif data == "bd_del_pick":
@@ -174,29 +183,37 @@ async def birthday_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Batch Add ─────────────────────────────────────────────────────────────
     elif data == "bd_batchadd":
-        context.user_data["bd_state"] = "await_batchadd"
+        context.user_data["bd_state"]     = "await_batchadd"
+        context.user_data["bd_panel_chat"] = q.message.chat_id
+        context.user_data["bd_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "📥 *Batch Add Birthdays*\n\n"
             "Send multiple entries — one per line:\n"
             "`@user1 , MM/DD`\n"
             "`@user2 , MM/DD`\n"
             "`@user3 , MM/DD`\n\n"
-            "_Existing entries will be skipped (use Edit to change them)._",
+            "_Existing entries will be skipped (use Edit to change them)._\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bd_state", "await_batchadd", q.message.chat_id, q.message.message_id)
 
     # ── Batch Delete ──────────────────────────────────────────────────────────
     elif data == "bd_batchdel":
-        context.user_data["bd_state"] = "await_batchdel"
+        context.user_data["bd_state"]     = "await_batchdel"
+        context.user_data["bd_panel_chat"] = q.message.chat_id
+        context.user_data["bd_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "🗑️📥 *Batch Delete Birthdays*\n\n"
             "Send usernames — one per line or comma-separated:\n"
             "`@user1`\n"
             "`@user2`\n"
             "`@user3`\n\n"
-            "or: `@user1 , @user2 , @user3`",
+            "or: `@user1 , @user2 , @user3`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "bd_state", "await_batchdel", q.message.chat_id, q.message.message_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -281,6 +298,22 @@ async def handle_birthday_text(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data.pop("bd_state", None)
         return False
 
+    async def _invalid(error_text: str, guide_text: str):
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        panel_chat = context.user_data.get("bd_panel_chat", uid)
+        panel_msg  = context.user_data.get("bd_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=guide_text, reply_markup=_back_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     # ── ADD ───────────────────────────────────────────────────────────────────
     if state == "await_add":
         try:
@@ -288,11 +321,13 @@ async def handle_birthday_text(update: Update, context: ContextTypes.DEFAULT_TYP
             u     = parts[0].lstrip("@").lower()
             b     = parts[1]
         except Exception:
-            await update.message.reply_text("❌ Format: `@username , MM/DD`", parse_mode="Markdown")
+            await _invalid("Format: `@username , MM/DD`",
+                "➕ *Add Birthday*\n\nSend in this format:\n`@username , MM/DD`\n\n_e.g._ `@alice , 06/15`\n⏰ _Times out in 120 seconds._")
             return True
 
         if not _valid_bday(b):
-            await update.message.reply_text(f"❌ Invalid date `{b}`. Use MM/DD (e.g. `06/15`).", parse_mode="Markdown")
+            await _invalid(f"Invalid date `{b}`. Use MM/DD (e.g. `06/15`).",
+                "➕ *Add Birthday*\n\nSend in this format:\n`@username , MM/DD`\n\n_e.g._ `@alice , 06/15`\n⏰ _Times out in 120 seconds._")
             return True
 
         async with pool.acquire() as conn:
@@ -301,11 +336,13 @@ async def handle_birthday_text(update: Update, context: ContextTypes.DEFAULT_TYP
                 await update.message.reply_text(
                     f"❌ @{u} already registered as `{exist}`.\nUse ✏️ Edit to change it.", parse_mode="Markdown"
                 )
+                cancel_text_input_timeout(context, uid, "bd_state")
                 context.user_data.pop("bd_state", None)
                 return True
             await conn.execute("INSERT INTO birthdays (username, bday) VALUES ($1, $2)", u, b)
 
         await log_action(pool, uid, uid, "Birthday", "Added", f"@{u} → {b}")
+        cancel_text_input_timeout(context, uid, "bd_state")
         context.user_data.pop("bd_state", None)
         await update.message.reply_text(f"✅ Birthday for @{u} set to `{b}`.", parse_mode="Markdown")
         return True
@@ -314,14 +351,19 @@ async def handle_birthday_text(update: Update, context: ContextTypes.DEFAULT_TYP
     elif state == "await_edit_date":
         b      = text.strip()
         target = context.user_data.pop("bd_edit_user", None)
-        context.user_data.pop("bd_state", None)
 
         if not target:
+            cancel_text_input_timeout(context, uid, "bd_state")
+            context.user_data.pop("bd_state", None)
             await update.message.reply_text("❌ Session expired. Please restart /birthdayconfig.")
             return True
         if not _valid_bday(b):
-            await update.message.reply_text(f"❌ Invalid date `{b}`. Use MM/DD.", parse_mode="Markdown")
+            await _invalid(f"Invalid date `{b}`. Use MM/DD.",
+                f"✏️ *Edit Birthday — @{target}*\n\nSend the new date:\n`MM/DD`\n\n_e.g._ `07/04`\n⏰ _Times out in 120 seconds._")
+            context.user_data["bd_edit_user"] = target  # put back for retry
             return True
+        cancel_text_input_timeout(context, uid, "bd_state")
+        context.user_data.pop("bd_state", None)
 
         async with pool.acquire() as conn:
             res = await conn.execute("UPDATE birthdays SET bday=$1 WHERE lower(username)=$2", b, target.lower())
@@ -358,6 +400,7 @@ async def handle_birthday_text(update: Update, context: ContextTypes.DEFAULT_TYP
                 added.append(f"@{u} → `{b}`")
                 await log_action(pool, uid, uid, "Birthday", "Batch Added", f"@{u} → {b}")
 
+        cancel_text_input_timeout(context, uid, "bd_state")
         context.user_data.pop("bd_state", None)
         report = "🎂 *Batch Add Result*\n\n"
         if added:
@@ -390,6 +433,7 @@ async def handle_birthday_text(update: Update, context: ContextTypes.DEFAULT_TYP
                 removed.append(f"@{u} (was `{exist}`)")
                 await log_action(pool, uid, uid, "Birthday", "Batch Deleted", f"@{u}")
 
+        cancel_text_input_timeout(context, uid, "bd_state")
         context.user_data.pop("bd_state", None)
         report = "🗑️ *Batch Delete Result*\n\n"
         if removed:

@@ -416,3 +416,86 @@ async def check_kb_ownership(query, context) -> bool:
 async def dismiss_kb_timeout_on_action(context, chat_id: int, msg_id: int):
     """Call when user successfully dismisses/saves a panel — cancels the timeout cleanly."""
     cancel_kb_timeout(context, chat_id, msg_id)
+
+
+# ─────────────────────────────────────────────────────────────────
+# ⏱️ TEXT INPUT TIMEOUT — 120s cancel for awaiting-input states
+# ─────────────────────────────────────────────────────────────────
+
+async def schedule_text_input_timeout(
+    context,
+    user_id: int,
+    state_key: str,
+    state_value: str,
+    panel_chat_id: int,
+    panel_msg_id: int,
+    prompt_msg_id: int = None,
+    restore_fn=None,
+):
+    """
+    Schedule a 120-second timeout for a text-input state.
+
+    If the user doesn't reply in time:
+      - Their awaiting state is cleared
+      - The prompt message is deleted
+      - restore_fn(context, user_id, panel_msg_id) is called if provided,
+        to re-render the original inline keyboard guide.
+
+    Call cancel_text_input_timeout() when the input is received or cancelled.
+    """
+    job_name = f"txtimeout_{user_id}_{state_key}"
+    for j in context.job_queue.get_jobs_by_name(job_name):
+        j.schedule_removal()
+
+    async def _text_timeout_cb(ctx):
+        # Only cancel if still in same awaiting state
+        current = ctx.bot_data.get("txt_input_states", {}).get(f"{user_id}_{state_key}")
+        if current != state_value:
+            return  # already handled
+
+        ctx.bot_data.get("txt_input_states", {}).pop(f"{user_id}_{state_key}", None)
+
+        # Delete the prompt / "send me X" message
+        if prompt_msg_id:
+            try:
+                await ctx.bot.delete_message(chat_id=user_id, message_id=prompt_msg_id)
+            except Exception:
+                pass
+
+        # Restore the panel or edit it to show timeout notice
+        if restore_fn:
+            try:
+                await restore_fn(ctx, user_id, panel_chat_id, panel_msg_id)
+            except Exception:
+                try:
+                    await ctx.bot.edit_message_text(
+                        chat_id=panel_chat_id,
+                        message_id=panel_msg_id,
+                        text="⏰ Input timed out after 120 seconds of inactivity.",
+                    )
+                except Exception:
+                    pass
+        else:
+            try:
+                await ctx.bot.edit_message_reply_markup(
+                    chat_id=panel_chat_id, message_id=panel_msg_id, reply_markup=None
+                )
+            except Exception:
+                pass
+
+    # Track the active state
+    context.bot_data.setdefault("txt_input_states", {})[f"{user_id}_{state_key}"] = state_value
+
+    context.job_queue.run_once(
+        _text_timeout_cb,
+        when=KEYBOARD_TIMEOUT,
+        name=job_name,
+    )
+
+
+def cancel_text_input_timeout(context, user_id: int, state_key: str):
+    """Call when text input is received or user cancels — stops the timeout job."""
+    context.bot_data.setdefault("txt_input_states", {}).pop(f"{user_id}_{state_key}", None)
+    job_name = f"txtimeout_{user_id}_{state_key}"
+    for j in context.job_queue.get_jobs_by_name(job_name):
+        j.schedule_removal()

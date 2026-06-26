@@ -24,7 +24,8 @@ from telegram.ext import ContextTypes
 
 from core import (
     WIB, delete_cmd, is_bot_admin,
-    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action
+    schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
+    schedule_text_input_timeout, cancel_text_input_timeout,
 )
 
 logger = logging.getLogger(__name__)
@@ -152,12 +153,19 @@ async def events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Set Target Group ──────────────────────────────────────────────────────
     elif data == "ev_set_group":
         context.user_data["ev_state"] = "await_group_id"
+        context.user_data["ev_panel_chat"] = q.message.chat_id
+        context.user_data["ev_panel_msg"]  = q.message.message_id
         await _safe_edit(q.message,
             "🎯 *Set Target Group*\n\n"
             "Type the *Group ID*:\n`-1001234567890`\n\n"
-            "_Run /groupid inside your group to get its ID._",
+            "_Run /groupid inside your group to get its ID._\n"
+            "⏰ _Times out in 120 seconds — type or tap 🏠 Home._",
             InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="ev_home"),
                                    InlineKeyboardButton("🚪 Close", callback_data="ev_close")]])
+        )
+        await schedule_text_input_timeout(
+            context, q.from_user.id, "ev_state", "await_group_id",
+            q.message.chat_id, q.message.message_id,
         )
 
     # ── Close ─────────────────────────────────────────────────────────────────
@@ -176,23 +184,37 @@ async def events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "ev_new_event":
         context.user_data["ev_state"] = "await_event_title"
         context.user_data["ev_draft"] = {}
+        context.user_data["ev_panel_chat"] = q.message.chat_id
+        context.user_data["ev_panel_msg"]  = q.message.message_id
         await _safe_edit(q.message,
             "📅 *New Event — Step 1 of 3*\n\n"
             "Please type the *event title*:\n\n"
-            "_e.g. Weekly Standup_",
+            "_e.g. Weekly Standup_\n"
+            "⏰ _Times out in 120 seconds._",
             _back_home_kb()
+        )
+        await schedule_text_input_timeout(
+            context, q.from_user.id, "ev_state", "await_event_title",
+            q.message.chat_id, q.message.message_id,
         )
 
     # ── New Poll — start step 1 ────────────────────────────────────────────────
     elif data == "ev_new_poll":
         context.user_data["ev_state"] = "await_poll_question"
         context.user_data["ev_draft"] = {"type": "poll"}
+        context.user_data["ev_panel_chat"] = q.message.chat_id
+        context.user_data["ev_panel_msg"]  = q.message.message_id
         await _safe_edit(q.message,
             "📊 *New Poll — Step 1 of 2*\n\n"
             "Type the *poll question*, then on the next lines add each option:\n\n"
             "`Question\nOption 1\nOption 2\nOption 3`\n\n"
-            "_Send all in one message, one per line. Minimum 2 options._",
+            "_Send all in one message, one per line. Minimum 2 options._\n"
+            "⏰ _Times out in 120 seconds._",
             _back_home_kb()
+        )
+        await schedule_text_input_timeout(
+            context, q.from_user.id, "ev_state", "await_poll_question",
+            q.message.chat_id, q.message.message_id,
         )
 
     # ── Edit — pick an event ───────────────────────────────────────────────────
@@ -203,12 +225,19 @@ async def events_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         e_id = int(data.split("_")[2])
         context.user_data["ev_state"]    = "await_edit_event"
         context.user_data["ev_edit_id"]  = e_id
+        context.user_data["ev_panel_chat"] = q.message.chat_id
+        context.user_data["ev_panel_msg"]  = q.message.message_id
         await _safe_edit(q.message,
             f"✏️ *Edit Event #{e_id}*\n\n"
             "Send the updated details in this format:\n"
             "`Title , MM/DD/YYYY HH:MM , ReminderMinutes`\n\n"
-            "_e.g._ `Team Sync , 06/30/2026 10:00 , 15`",
+            "_e.g._ `Team Sync , 06/30/2026 10:00 , 15`\n"
+            "⏰ _Times out in 120 seconds._",
             _back_home_kb()
+        )
+        await schedule_text_input_timeout(
+            context, q.from_user.id, "ev_state", "await_edit_event",
+            q.message.chat_id, q.message.message_id,
         )
 
     # ── Cancel pick ───────────────────────────────────────────────────────────
@@ -522,15 +551,42 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user = update.effective_user
     uid  = user.id
 
+    # Helper: re-show the inline guide panel with an error notification
+    async def _invalid(error_text: str, guide_text: str, kb=None):
+        """Notify user of bad format and restore the guide panel."""
+        panel_chat = context.user_data.get("ev_panel_chat", uid)
+        panel_msg  = context.user_data.get("ev_panel_msg")
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat,
+                    message_id=panel_msg,
+                    text=guide_text,
+                    reply_markup=kb or _back_home_kb(),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     # ── GROUP ID (DM group picker) ───────────────────────────────────────────
     if state == "await_group_id":
         try:
             gid = int(text)
         except ValueError:
-            await update.message.reply_text(
-                "❌ Invalid Group ID. Must be a number like `-1001234567890`"
+            await _invalid(
+                "Invalid Group ID. Must be a number like `-1001234567890`",
+                "🎯 *Set Target Group*\n\nType the *Group ID*:\n`-1001234567890`\n\n"
+                "_Run /groupid inside your group to get its ID._\n"
+                "⏰ _Times out in 120 seconds._",
+                InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Home", callback_data="ev_home"),
+                                       InlineKeyboardButton("🚪 Close", callback_data="ev_close")]]),
             )
             return True
+        cancel_text_input_timeout(context, uid, "ev_state")
         context.user_data["ev_origin_chat"] = gid
         context.user_data.pop("ev_state", None)
         await update.message.reply_text(
@@ -543,13 +599,26 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if state == "await_event_title":
         if not text:
             return True
+        cancel_text_input_timeout(context, uid, "ev_state")
         context.user_data["ev_draft"]["title"] = text
         context.user_data["ev_state"] = "await_event_time"
-        await update.message.reply_text(
-            "📅 *New Event — Step 2 of 3*\n\n"
-            "Enter the *event date and time*:\n`MM/DD/YYYY HH:MM`\n\n"
-            "_e.g._ `06/30/2026 10:00`",
-            parse_mode="Markdown"
+        panel_chat = context.user_data.get("ev_panel_chat", uid)
+        panel_msg  = context.user_data.get("ev_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📅 *New Event — Step 2 of 3*\n\n"
+                         "Enter the *event date and time*:\n`MM/DD/YYYY HH:MM`\n\n"
+                         "_e.g._ `06/30/2026 10:00`\n"
+                         "⏰ _Times out in 120 seconds._",
+                    reply_markup=_back_home_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        await schedule_text_input_timeout(
+            context, uid, "ev_state", "await_event_time",
+            panel_chat, panel_msg or 0,
         )
         return True
 
@@ -560,19 +629,32 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if e_time < datetime.datetime.now(WIB):
                 raise ValueError("past")
         except ValueError:
-            await update.message.reply_text(
-                "❌ Invalid date/time or it's in the past.\n"
-                "Format: `MM/DD/YYYY HH:MM` (e.g. `06/30/2026 10:00`)",
-                parse_mode="Markdown"
+            await _invalid(
+                "Invalid date/time or it's in the past.\nFormat: `MM/DD/YYYY HH:MM` (e.g. `06/30/2026 10:00`)",
+                "📅 *New Event — Step 2 of 3*\n\nEnter the *event date and time*:\n`MM/DD/YYYY HH:MM`\n\n"
+                "_e.g._ `06/30/2026 10:00`\n⏰ _Times out in 120 seconds._",
             )
             return True
+        cancel_text_input_timeout(context, uid, "ev_state")
         context.user_data["ev_draft"]["event_time"] = e_time
         context.user_data["ev_state"] = "await_event_reminder"
-        await update.message.reply_text(
-            "📅 *New Event — Step 3 of 3*\n\n"
-            "How many *minutes before* should the reminder be sent?\n\n"
-            "_e.g._ `15` _(for 15 minutes before the event)_",
-            parse_mode="Markdown"
+        panel_chat = context.user_data.get("ev_panel_chat", uid)
+        panel_msg  = context.user_data.get("ev_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📅 *New Event — Step 3 of 3*\n\n"
+                         "How many *minutes before* should the reminder be sent?\n\n"
+                         "_e.g._ `15` _(for 15 minutes before the event)_\n"
+                         "⏰ _Times out in 120 seconds._",
+                    reply_markup=_back_home_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        await schedule_text_input_timeout(
+            context, uid, "ev_state", "await_event_reminder",
+            panel_chat, panel_msg or 0,
         )
         return True
 
@@ -583,8 +665,15 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             if rem < 1 or rem > 1440:
                 raise ValueError
         except ValueError:
-            await update.message.reply_text("❌ Please enter a number between 1 and 1440.")
+            await _invalid(
+                "Please enter a number between 1 and 1440.",
+                "📅 *New Event — Step 3 of 3*\n\n"
+                "How many *minutes before* should the reminder be sent?\n\n"
+                "_e.g._ `15` _(for 15 minutes before the event)_\n"
+                "⏰ _Times out in 120 seconds._",
+            )
             return True
+        cancel_text_input_timeout(context, uid, "ev_state")
 
         draft  = context.user_data.get("ev_draft", {})
         title  = draft.get("title", "Event")
@@ -673,12 +762,17 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
             e_time = WIB.localize(datetime.datetime.strptime(parts[1], "%m/%d/%Y %H:%M"))
             rem    = int(parts[2])
         except Exception:
-            await update.message.reply_text(
-                "❌ Wrong format. Try:\n`Title , MM/DD/YYYY HH:MM , ReminderMins`",
-                parse_mode="Markdown"
+            await _invalid(
+                "Wrong format. Try:\n`Title , MM/DD/YYYY HH:MM , ReminderMins`",
+                f"✏️ *Edit Event #{e_id}*\n\n"
+                "Send the updated details in this format:\n"
+                "`Title , MM/DD/YYYY HH:MM , ReminderMinutes`\n\n"
+                "_e.g._ `Team Sync , 06/30/2026 10:00 , 15`\n"
+                "⏰ _Times out in 120 seconds._",
             )
             return True
 
+        cancel_text_input_timeout(context, uid, "ev_state")
         username = user.username or str(uid)
         async with pool.acquire() as conn:
             ev = await conn.fetchrow("SELECT created_by, chat_id FROM events WHERE id=$1", e_id)
@@ -717,13 +811,17 @@ async def handle_events_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif state == "await_poll_question":
         lines = [l.strip() for l in text.strip().split("\n") if l.strip()]
         if len(lines) < 3:
-            await update.message.reply_text(
-                "❌ Need at least a question and 2 options.\n\n"
+            await _invalid(
+                "Need at least a question and 2 options.\n\n"
                 "Format (one per line):\n`Question\nOption 1\nOption 2`",
-                parse_mode="Markdown"
+                "📊 *New Poll — Step 1 of 2*\n\n"
+                "Type the *poll question*, then on the next lines add each option:\n\n"
+                "`Question\nOption 1\nOption 2\nOption 3`\n\n"
+                "_Send all in one message, one per line. Minimum 2 options._\n"
+                "⏰ _Times out in 120 seconds._",
             )
             return True
-
+        cancel_text_input_timeout(context, uid, "ev_state")
         question = lines[0]
         opts     = lines[1:11]  # max 10 options
 

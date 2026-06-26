@@ -20,7 +20,7 @@ Callback prefix: lib_
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from core import delete_cmd, is_bot_admin, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership
+from core import delete_cmd, is_bot_admin, schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, schedule_text_input_timeout, cancel_text_input_timeout
 
 logger    = logging.getLogger(__name__)
 PAGE_SIZE = 8
@@ -195,52 +195,71 @@ async def library_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Get Asset ─────────────────────────────────────────────────────────────
     elif data == "lib_get":
-        context.user_data["lib_state"] = "await_get_name"
+        context.user_data["lib_state"]     = "await_get_name"
+        context.user_data["lib_panel_chat"] = q.message.chat_id
+        context.user_data["lib_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
-            "🔍 *Get Asset*\n\nType the asset name:",
+            "🔍 *Get Asset*\n\nType the asset name:\n⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "lib_state", "await_get_name", q.message.chat_id, q.message.message_id)
 
     # ── Add ───────────────────────────────────────────────────────────────────
     elif data == "lib_add":
-        context.user_data["lib_state"] = "await_add"
+        context.user_data["lib_state"]     = "await_add"
+        context.user_data["lib_panel_chat"] = q.message.chat_id
+        context.user_data["lib_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "➕ *Add Asset*\n\n"
             "Format: `Name , Content`\n"
-            "Private: `Name , Content , private`",
+            "Private: `Name , Content , private`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "lib_state", "await_add", q.message.chat_id, q.message.message_id)
 
     # ── Batch Add ─────────────────────────────────────────────────────────────
     elif data == "lib_batchadd":
-        context.user_data["lib_state"] = "await_batchadd"
+        context.user_data["lib_state"]     = "await_batchadd"
+        context.user_data["lib_panel_chat"] = q.message.chat_id
+        context.user_data["lib_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "📦 *Batch Add*\n\nOne entry per line:\n"
             "`Name1 , Content1`\n"
-            "`Name2 , Content2 , private`",
+            "`Name2 , Content2 , private`\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "lib_state", "await_batchadd", q.message.chat_id, q.message.message_id)
 
     # ── Edit ──────────────────────────────────────────────────────────────────
     elif data == "lib_edit":
-        context.user_data["lib_state"] = "await_edit"
+        context.user_data["lib_state"]     = "await_edit"
+        context.user_data["lib_panel_chat"] = q.message.chat_id
+        context.user_data["lib_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "✏️ *Edit Asset*\n\n"
             "Format: `Name , New Content`\n"
-            "_You can only edit assets you own._",
+            "_You can only edit assets you own._\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "lib_state", "await_edit", q.message.chat_id, q.message.message_id)
 
     # ── Batch Edit ────────────────────────────────────────────────────────────
     elif data == "lib_batchedit":
-        context.user_data["lib_state"] = "await_batchedit"
+        context.user_data["lib_state"]     = "await_batchedit"
+        context.user_data["lib_panel_chat"] = q.message.chat_id
+        context.user_data["lib_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "✏️📦 *Batch Edit*\n\nOne per line:\n"
             "`Name1 , New Content1`\n"
             "`Name2 , New Content2`\n\n"
-            "_You can only edit assets you own._",
+            "_You can only edit assets you own._\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "lib_state", "await_batchedit", q.message.chat_id, q.message.message_id)
 
     # ── Delete pick ───────────────────────────────────────────────────────────
     elif data == "lib_delete_pick":
@@ -252,14 +271,18 @@ async def library_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ── Batch Delete ──────────────────────────────────────────────────────────
     elif data == "lib_batchdel":
-        context.user_data["lib_state"] = "await_batchdel"
+        context.user_data["lib_state"]     = "await_batchdel"
+        context.user_data["lib_panel_chat"] = q.message.chat_id
+        context.user_data["lib_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "🗑️📦 *Batch Delete*\n\n"
             "Names comma-separated or one per line:\n"
             "`name1, name2, name3`\n\n"
-            "_Admins can delete any asset. Others: yours only._",
+            "_Admins can delete any asset. Others: yours only._\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, uid, "lib_state", "await_batchdel", q.message.chat_id, q.message.message_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -317,8 +340,28 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     uid      = update.effective_user.id
     username = update.effective_user.username or str(uid)
 
+    # Helper: show error in chat AND restore the guide panel
+    async def _invalid(error_text: str, guide_text: str, kb=None):
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        back_kb = kb or _back_kb()
+        try:
+            await update.message.reply_text(f"❌ {error_text}", parse_mode="Markdown")
+        except Exception:
+            pass
+        panel_chat = context.user_data.get("lib_panel_chat", uid)
+        panel_msg  = context.user_data.get("lib_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=guide_text, reply_markup=back_kb, parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
     # ── GET ───────────────────────────────────────────────────────────────────
     if state == "await_get_name":
+        cancel_text_input_timeout(context, uid, "lib_state")
         name = text.lower()
         async with pool.acquire() as conn:
             r = await conn.fetchrow(
@@ -350,9 +393,9 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             name, content = [p.strip() for p in raw.split(",", 1)]
             if not name or not content: raise ValueError
         except ValueError:
-            await update.message.reply_text(
-                "❌ Format: `Name , Content` (or `Name , Content , private`)",
-                parse_mode="Markdown"
+            await _invalid(
+                "Format: `Name , Content` (or `Name , Content , private`)",
+                "➕ *Add Asset*\n\nFormat: `Name , Content`\nPrivate: `Name , Content , private`\n⏰ _Times out in 120 seconds._",
             )
             return True
         name = name.lower()
@@ -364,6 +407,7 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "INSERT INTO library (name, content, added_by, is_private) VALUES ($1,$2,$3,$4)",
                 name, content, username, is_private
             )
+        cancel_text_input_timeout(context, uid, "lib_state")
         context.user_data.pop("lib_state", None)
         await update.message.reply_text(
             f"✅ Added *`{name}`* {'🔒 Private' if is_private else '📂 Public'}",
@@ -395,6 +439,7 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
                     name, content, username, is_private
                 )
                 added.append(f"`{name}`")
+        cancel_text_input_timeout(context, uid, "lib_state")
         context.user_data.pop("lib_state", None)
         msg = "📦 *Batch Add Result*\n\n"
         if added:   msg += f"✅ Added ({len(added)}): {', '.join(added)}\n"
@@ -409,7 +454,10 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             name = name.lower()
             if not name or not new_content: raise ValueError
         except ValueError:
-            await update.message.reply_text("❌ Format: `Name , New Content`", parse_mode="Markdown")
+            await _invalid(
+                "Format: `Name , New Content`",
+                "✏️ *Edit Asset*\n\nFormat: `Name , New Content`\n_You can only edit assets you own._\n⏰ _Times out in 120 seconds._",
+            )
             return True
         is_adm = await is_bot_admin(username, pool)
         async with pool.acquire() as conn:
@@ -417,12 +465,15 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             if not asset:
                 await update.message.reply_text("❌ Asset not found.")
                 context.user_data.pop("lib_state", None)
+                cancel_text_input_timeout(context, uid, "lib_state")
                 return True
             if asset["added_by"] != username and not is_adm:
                 await update.message.reply_text("❌ You can only edit your own assets.")
                 context.user_data.pop("lib_state", None)
+                cancel_text_input_timeout(context, uid, "lib_state")
                 return True
             await conn.execute("UPDATE library SET content=$1 WHERE LOWER(name)=$2", new_content, name)
+        cancel_text_input_timeout(context, uid, "lib_state")
         context.user_data.pop("lib_state", None)
         await update.message.reply_text(f"✅ *`{name}`* updated.", parse_mode="Markdown")
         return True
@@ -451,6 +502,7 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
                     continue
                 await conn.execute("UPDATE library SET content=$1 WHERE LOWER(name)=$2", new_content, name)
                 updated.append(f"`{name}`")
+        cancel_text_input_timeout(context, uid, "lib_state")
         context.user_data.pop("lib_state", None)
         msg = "✏️ *Batch Edit Result*\n\n"
         if updated: msg += f"✅ Updated ({len(updated)}): {', '.join(updated)}\n"
@@ -476,6 +528,7 @@ async def handle_library_text(update: Update, context: ContextTypes.DEFAULT_TYPE
                     continue
                 await conn.execute("DELETE FROM library WHERE LOWER(name)=$1", name)
                 removed.append(f"`{name}`")
+        cancel_text_input_timeout(context, uid, "lib_state")
         context.user_data.pop("lib_state", None)
         msg = "🗑️ *Batch Delete Result*\n\n"
         if removed: msg += f"✅ Deleted ({len(removed)}): {', '.join(removed)}\n"
