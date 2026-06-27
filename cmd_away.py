@@ -202,6 +202,7 @@ async def away_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
             j.schedule_removal()
         context.user_data.pop("aw_state", None)
+        context.user_data.pop(f"aw_autocancel_{username}", None)
         await q.message.edit_text(msg[:4000], reply_markup=None, parse_mode="Markdown")
 
     # ── Auto-cancel toggle ───────────────────────────────────────────────────
@@ -361,6 +362,9 @@ async def check_auto_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
         j.schedule_removal()
     context.user_data.pop(key, None)
+    # Reset away cache so global_tracker refreshes on next message
+    if "away_cache" in context.bot_data:
+        context.bot_data["away_cache"]["time"] = 0
     try:
         await context.bot.send_message(user.id, f"🟢 Auto-cancelled your away status.\n\n{msg}", parse_mode="Markdown")
     except Exception:

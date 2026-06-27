@@ -109,8 +109,8 @@ COMMANDS = [
     # 📚 LIBRARY
     # ════════════════════════════════════════
     {"name": "library", "emoji": "📚", "public": True, "category": "📚 Library",
-     "desc": "Browse and manage team assets (inline hub in DM)",
-     "explanation": "Opens the Library hub in DM. All asset operations in one place.",
+     "desc": "Browse and manage team assets (opens inline hub in DM)",
+     "explanation": "Opens the Library hub in DM with all asset operations in one place.",
      "format": "/library",
      "subcommands": [
          "📂 Browse → paginated list (your private + all public assets)",
@@ -133,6 +133,11 @@ COMMANDS = [
          "Group: tap member names → type task description → Finish",
          "DM: pick group → type description → type assignees (comma-separated) → set deadline in minutes",
      ]},
+
+    {"name": "assign",    "emoji": "📌", "public": True, "category": "📋 Tasks",
+     "desc": "Alias for /task — assign a task to team members",
+     "explanation": "Same as /task. In a group: tap members → type description → Finish. In DM: step-by-step.",
+     "format": "/assign"},
 
     {"name": "mytask",    "emoji": "✅", "public": True, "category": "📋 Tasks",
      "desc": "View and complete your assigned tasks (inline DM list)",

@@ -157,10 +157,7 @@ async def _build_help_text(uname: str, pool) -> str:
                 text += "⚠️ _(Experimental — use responsibly)_\n"
                 exp_shown = True
         text += f"{cmd.get('emoji','🔹')} `/{cmd['name']}` — {cmd['desc']}\n"
-        subs = cmd.get("subcommands")
-        if subs:
-            for s in subs:
-                text += f"   └ {s}\n"
+        # No subcommands in /help — those belong in /command only
 
     if admin and is_admin_user:
         text += "\n🔐 **ADMINISTRATOR COMMANDS**\n"
@@ -177,7 +174,7 @@ async def _build_help_text(uname: str, pool) -> str:
         for cmd in superc:
             text += f"{cmd.get('emoji','🔹')} `/{cmd['name']}` — {cmd['desc']}\n"
 
-    text += "\n💡 _Use /config to see usage format for any command._"
+    text += "\n💡 _Use /command to see full usage, format, and examples for any command._"
     return text
 
 

@@ -52,26 +52,47 @@ async def _ensure_version_table(pool):
         count = await conn.fetchval("SELECT COUNT(*) FROM bot_version WHERE version='1.2'")
         if not count:
             await conn.execute(
-                "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
+                "INSERT INTO bot_version (version, changelog, updated_at) VALUES ($1, $2, $3)",
                 "1.2",
-                "⭐ /mystar now shows both your monthly and all-time RAWWY Stars in one place\n"
-                "👋 Away notifications now show the reason and return time when someone is mentioned\n"
-                "🤖 AI assistant is now faster and more reliable — use /ai to ask anything\n"
+                "⭐ /mystar now shows your monthly and all-time RAWWY Stars in one place\n"
+                "👋 Away mention alerts now include the reason and expected return time\n"
+                "🤖 /ai is now faster and more responsive — ask it anything\n"
                 "📖 /help is now a clean command list; use /command for full usage details\n"
-                "🐛 Fixed: /newsched group ID input now works correctly with custom channel IDs"
+                "📚 /library opens the full asset hub directly",
+                __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 6, 23))
             )
         # Seed v1.3 entry
         count = await conn.fetchval("SELECT COUNT(*) FROM bot_version WHERE version='1.3'")
         if not count:
             await conn.execute(
-                "INSERT INTO bot_version (version, changelog) VALUES ($1, $2)",
+                "INSERT INTO bot_version (version, changelog, updated_at) VALUES ($1, $2, $3)",
                 "1.3",
-                "⏰ Text input fields now auto-cancel after 120 seconds of inactivity\n"
-                "🔄 Invalid input now shows an error and restores the guide panel automatically\n"
-                "✅ Inline keyboard panels now consistently disappear after 120 seconds\n"
-                "📋 Task assignment DM flow tracks each step and restores the guide on mistakes\n"
-                "🏖️ Away and Birthday panels now support full 120-second input timeout with guide restore"
+                "⏰ All input steps now auto-cancel after 120 seconds — no more stuck panels\n"
+                "🔄 Typing the wrong format shows an error and brings the guide back automatically\n"
+                "✅ Inline menus now consistently close after 120 seconds of inactivity\n"
+                "📋 /task step-by-step guide is now fully restored on any mistake\n"
+                "📢 /broadcast schedule flow is now fully fixed — tag and confirm work reliably",
+                __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 6, 26))
             )
+        # Always refresh changelog text to latest wording (idempotent)
+        await conn.execute(
+            "UPDATE bot_version SET changelog=$1, updated_at=$2 WHERE version='1.2'",
+            "⭐ /mystar now shows your monthly and all-time RAWWY Stars in one place\n"
+            "👋 Away mention alerts now include the reason and expected return time\n"
+            "🤖 /ai is now faster and more responsive — ask it anything\n"
+            "📖 /help is now a clean command list; use /command for full usage details\n"
+            "📚 /library opens the full asset hub directly",
+            __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 6, 23))
+        )
+        await conn.execute(
+            "UPDATE bot_version SET changelog=$1, updated_at=$2 WHERE version='1.3'",
+            "⏰ All input steps now auto-cancel after 120 seconds — no more stuck panels\n"
+            "🔄 Typing the wrong format shows an error and brings the guide back automatically\n"
+            "✅ Inline menus now consistently close after 120 seconds of inactivity\n"
+            "📋 /task step-by-step guide is now fully restored on any mistake\n"
+            "📢 /broadcast schedule flow is now fully fixed — tag and confirm work reliably",
+            __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 6, 26))
+        )
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bot_admins (
                 username VARCHAR(100) PRIMARY KEY

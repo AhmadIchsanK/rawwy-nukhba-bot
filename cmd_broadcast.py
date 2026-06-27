@@ -586,10 +586,26 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
         draft["scheduled_at"] = dt
         context.user_data["bc_state"] = "sched_datetime"
         context.user_data["bc_draft"]  = draft
-        await update.message.reply_text(
-            "📅 *Schedule Broadcast — Step 4 of 5*\n\nTag all group members?",
-            reply_markup=_tag_kb(), parse_mode="Markdown"
-        )
+        # Edit the panel message in place so ownership/timeout remain on the same msg
+        panel_chat = context.user_data.get("bc_panel_chat", uid)
+        panel_msg  = context.user_data.get("bc_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📅 *Schedule Broadcast — Step 4 of 5*\n\nTag all group members?",
+                    reply_markup=_tag_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        else:
+            msg = await update.message.reply_text(
+                "📅 *Schedule Broadcast — Step 4 of 5*\n\nTag all group members?",
+                reply_markup=_tag_kb(), parse_mode="Markdown"
+            )
+            await schedule_kb_timeout(context, uid, msg.message_id, uid)
+            context.user_data["bc_panel_chat"] = uid
+            context.user_data["bc_panel_msg"]  = msg.message_id
         return True
 
     # ── Message input ──────────────────────────────────────────────────────
@@ -604,11 +620,23 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
         draft["message"] = text
         context.user_data["bc_draft"] = draft
         context.user_data["bc_state"] = "confirm"
-        await update.message.reply_text(
-            _draft_summary(draft) + "\n\n_Confirm to send/save._",
-            reply_markup=_confirm_kb(),
-            parse_mode="Markdown"
-        )
+        # Edit the panel in place for confirm step too
+        panel_chat = context.user_data.get("bc_panel_chat", uid)
+        panel_msg  = context.user_data.get("bc_panel_msg")
+        summary    = _draft_summary(draft) + "\n\n_Confirm to send/save._"
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=summary, reply_markup=_confirm_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        else:
+            msg = await update.message.reply_text(summary, reply_markup=_confirm_kb(), parse_mode="Markdown")
+            await schedule_kb_timeout(context, uid, msg.message_id, uid)
+            context.user_data["bc_panel_chat"] = uid
+            context.user_data["bc_panel_msg"]  = msg.message_id
         return True
 
     return False

@@ -259,15 +259,19 @@ async def global_tracker(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await conn.execute("INSERT INTO bot_stats (date, uses, errors) VALUES (CURRENT_DATE, $1, 0) ON CONFLICT (date) DO UPDATE SET uses = bot_stats.uses + $1", uses_to_log)
 
                 if is_returning:
-                    for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
-                        j.schedule_removal()
-                    import cmd_user
-                    recap_msg = await cmd_user.process_return(username, pool, context.bot)
-                    try:
-                        await context.bot.send_message(update.effective_user.id, f"✅ {recap_msg}", parse_mode="Markdown")
-                    except Exception:
-                        pass
-                    bot_data['away_cache']['time'] = 0 
+                    # Only auto-cancel away if the user has the toggle enabled
+                    autocancel_key = f"aw_autocancel_{username}"
+                    if context.user_data.get(autocancel_key):
+                        for j in context.job_queue.get_jobs_by_name(f"away_{username}"):
+                            j.schedule_removal()
+                        import cmd_user
+                        recap_msg = await cmd_user.process_return(username, pool, context.bot)
+                        try:
+                            await context.bot.send_message(update.effective_user.id, f"✅ {recap_msg}", parse_mode="Markdown")
+                        except Exception:
+                            pass
+                        bot_data['away_cache']['time'] = 0
+                        context.user_data.pop(autocancel_key, None)
 
                 if mentions_to_log:
                     for a in mentions_to_log:
