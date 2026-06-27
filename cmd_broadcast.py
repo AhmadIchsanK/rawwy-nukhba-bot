@@ -202,14 +202,19 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await _next_step(q, context)
 
     elif data == "bc_target_custom":
-        context.user_data["bc_state"] = context.user_data.get("bc_state", "") + "_custom_id"
+        base = context.user_data.get("bc_state", "")
+        context.user_data["bc_state"]     = base + "_custom_id"
+        context.user_data["bc_panel_chat"] = q.message.chat_id
+        context.user_data["bc_panel_msg"]  = q.message.message_id
         await q.message.edit_text(
             "🎯 *Custom Target*\n\n"
             "Type the Group/Channel ID:\n"
             "_e.g._ `-1001234567890`\n\n"
-            "_Run /groupid inside the target group to find its ID._",
+            "_Run /groupid inside the target group to find its ID._\n"
+            "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
+        await schedule_text_input_timeout(context, q.from_user.id, "bc_state", base + "_custom_id", q.message.chat_id, q.message.message_id)
 
     # ── Frequency ────────────────────────────────────────────────────────────
     elif data.startswith("bc_freq_"):
@@ -364,11 +369,17 @@ async def _do_confirm(q, context, pool, username: str):
     else:
         # Save schedule
         run_time = sched.strftime("%H:%M")
+        run_date = sched.strftime("%Y-%m-%d")
         async with pool.acquire() as conn:
+            # Ensure scheduled_date column exists (added in v1.3)
+            try:
+                await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
+            except Exception:
+                pass
             s_id = await conn.fetchval(
-                "INSERT INTO scheduled_announcements (chat_id, frequency, run_time, mention, message, created_by, scheduled_at) "
+                "INSERT INTO scheduled_announcements (chat_id, frequency, run_time, mention, message, created_by, scheduled_date) "
                 "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                chat_id, freq, run_time, tag, draft["message"], username, sched
+                chat_id, freq, run_time, tag, draft["message"], username, run_date
             )
         await log_action(pool, uid, uid, "Broadcast", "Scheduled", f"#{s_id} target={chat_id} freq={freq}")
         context.user_data.pop("bc_draft", None)
@@ -394,6 +405,7 @@ async def _do_post_now(bot, pool, chat_id: str, message: str, q):
             chats = await conn.fetch("SELECT DISTINCT chat_id FROM group_settings")
             if not chats:
                 chats = await conn.fetch("SELECT DISTINCT chat_id FROM active_groups")
+            chats = [{"chat_id": int(r["chat_id"])} for r in chats]
         else:
             try:
                 chats = [{"chat_id": int(chat_id)}]
@@ -542,28 +554,37 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
     if state.endswith("_custom_id"):
         base_state = state[:-len("_custom_id")]
         if not re.match(r'^-?\d+$', text):
-            await update.message.reply_text(
-                "❌ That doesn't look like a valid ID.\n"
-                "_e.g._ `-1001234567890`", parse_mode="Markdown"
+            await _invalid(
+                "That doesn't look like a valid ID.\n_e.g._ `-1001234567890`",
+                "🎯 *Custom Target*\n\nType the Group/Channel ID:\n_e.g._ `-1001234567890`\n\n_Run /groupid inside the target group to find its ID._\n⏰ _Times out in 120 seconds._",
             )
             return True
         draft["chat_id"] = text
-        context.user_data["bc_state"] = base_state
-        # Trigger next step by simulating target_all button logic
-        await update.message.reply_text(f"✅ Target set to `{text}`.", parse_mode="Markdown")
-        # Advance state manually
+        cancel_text_input_timeout(context, uid, "bc_state")
+        # Advance and edit the panel in-place
+        panel_chat = context.user_data.get("bc_panel_chat", uid)
+        panel_msg  = context.user_data.get("bc_panel_msg")
         if base_state == "postnow_target":
             context.user_data["bc_state"] = "postnow_tag"
-            await update.message.reply_text(
-                "📤 *Post Now — Step 2 of 3*\n\nTag all group members?",
-                reply_markup=_tag_kb(), parse_mode="Markdown"
-            )
-        elif base_state == "sched_target":
+            panel_text = "📤 *Post Now — Step 2 of 3*\n\nTag all group members?"
+            panel_kb   = _tag_kb()
+        else:  # sched_target
             context.user_data["bc_state"] = "sched_freq"
-            await update.message.reply_text(
-                "📅 *Schedule Broadcast — Step 2 of 5*\n\nChoose recurrence:",
-                reply_markup=_recurrence_kb(), parse_mode="Markdown"
-            )
+            panel_text = "📅 *Schedule Broadcast — Step 2 of 5*\n\nChoose recurrence:"
+            panel_kb   = _recurrence_kb()
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text=panel_text, reply_markup=panel_kb, parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        else:
+            msg = await update.message.reply_text(panel_text, reply_markup=panel_kb, parse_mode="Markdown")
+            await schedule_kb_timeout(context, uid, msg.message_id, uid)
+            context.user_data["bc_panel_chat"] = uid
+            context.user_data["bc_panel_msg"]  = msg.message_id
         return True
 
     # ── Scheduled datetime input ───────────────────────────────────────────

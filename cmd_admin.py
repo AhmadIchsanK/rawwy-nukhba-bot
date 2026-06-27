@@ -113,7 +113,8 @@ async def _ensure_version_table(pool):
                 mention BOOLEAN DEFAULT FALSE,
                 message TEXT,
                 created_by VARCHAR(100),
-                last_run TIMESTAMP WITH TIME ZONE
+                last_run TIMESTAMP WITH TIME ZONE,
+                scheduled_date TEXT
             )
         ''')
         await conn.execute('''
