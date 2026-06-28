@@ -142,7 +142,7 @@ async def _build_help_text(uname: str, pool) -> str:
     superc = [cmd for cmd in COMMANDS if cmd.get("super")]
 
     text  = "📖 **[RAWWY] Nukhba Manager**\n"
-    text += "_Command list — for full usage guide use /config_\n"
+    text += "_Command list — for full usage details use /command_\n"
     text += "_(Outdated `/` menu? Log out of Telegram and back in.)_\n\n"
 
     text += "🟢 **USER COMMANDS**\n"

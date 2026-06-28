@@ -139,10 +139,10 @@ COMMANDS = [
      "explanation": "Tap a task to toggle Complete/Incomplete. Press Finish to save — assigner is notified when all done.",
      "format": "/mytask"},
 
-    {"name": "grouptask", "emoji": "📋", "public": True, "category": "📋 Tasks",
+    {"name": "grouptasks", "emoji": "📋", "public": True, "category": "📋 Tasks",
      "desc": "View active tasks and last 7 completed tasks in this group",
      "explanation": "Shows status (Pending/Overdue/Done), assigner, and assignees. Admins see all tasks.",
-     "format": "/grouptask"},
+     "format": "/grouptasks"},
 
     # ════════════════════════════════════════
     # 🏖️ AWAY STATUS

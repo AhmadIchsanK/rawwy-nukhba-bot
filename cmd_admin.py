@@ -1729,55 +1729,61 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     CATEGORIES = {
-        "📋 General": [
+        "💬 General": [
             ("start",            "start"),
             ("help",             "help_command"),
             ("command",          "command_nav"),
             ("about",            "about_command"),
-            ("wdim",             "what_did_i_miss"),
+            ("update",           "update_info"),
             ("feedback",         "submit_feedback"),
-            ("ask",              "ask_bot"),
-            ("ai",               "ask_ai"),
             ("manual",           "manual_command"),
         ],
-        "👤 Personal": [
-            ("back",             "set_back"),
+        "⭐ RAWWY Stars": [
             ("thanks",           "give_thanks"),
-            ("myquota",          "my_quota"),
             ("mystar",           "my_star"),
-            ("leaderboardstar",  "leaderboard_star"),
-            ("mytask",           "mytask_command"),
-            ("away",             "away_command"),
+            ("myquota",          "my_quota"),
+            ("leaderboard_star", "leaderboard_star"),
         ],
-        "📅 Events & Polls": [
-            ("eventpoll",        "eventpoll_command"),
-            ("listevent",        "listevent_command"),
-        ],
-        "📋 Tasks": [
-            ("task",             "task_command"),
-            ("grouptasks",       "group_tasks"),
-            ("canceltask",       "cancel_task"),
-        ],
-        "📚 Library": [
-            ("library",          "library_command"),
-        ],
-        "📢 Broadcast": [
-            ("broadcast",        "broadcast_command"),
-        ],
-        "🎮 Trivia": [
+        "🎮 Trivia & KP": [
+            ("mypoint",          "my_point"),
+            ("leaderboard_kp",   "leaderboard_kp"),
             ("triviaconfig",     "trivia_config"),
             ("forcetrivia",      "force_trivia"),
             ("forcesupertrivia", "force_super_trivia"),
             ("canceltrivia",     "cancel_trivia"),
             ("endtrivia",        "end_trivia"),
             ("triviaend",        "end_trivia"),
-            ("mypoint",          "my_point"),
-            ("leaderboardkp",    "leaderboard_kp"),
-            ("adminkp",          "admin_kp"),
+            ("admin_kp",         "admin_kp"),
+        ],
+        "📅 Events & Polls": [
+            ("eventpoll",        "eventpoll_command"),
+            ("listevent",        "listevent_command"),
+        ],
+        "📚 Library": [
+            ("library",          "library_command"),
+        ],
+        "📋 Tasks": [
+            ("task",             "task_command"),
+            ("mytask",           "mytask_command"),
+            ("grouptasks",       "group_tasks"),
+            ("canceltask",       "cancel_task"),
+        ],
+        "🏖️ Away Status": [
+            ("away",             "away_command"),
+            ("back",             "set_back"),
+        ],
+        "🤖 AI Assistant": [
+            ("ai",               "ask_ai"),
+            ("ask",              "ask_bot"),
+            ("wdim",             "what_did_i_miss"),
+        ],
+        "📢 Broadcast": [
+            ("broadcast",        "broadcast_command"),
         ],
         "⚙️ Admin Config": [
             ("botconfig",        "bot_config"),
             ("schedconfig",      "sched_config"),
+            ("triviaconfig",     "trivia_config"),
             ("setchannel",       "set_channel"),
             ("unsetchannel",     "unset_channel"),
             ("groupid",          "check_group_id"),
@@ -1787,17 +1793,18 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ("admin",            "admin_command"),
             ("attendance",       "attendance"),
             ("forceback",        "force_back"),
+            ("grouptasks",       "group_tasks"),
+            ("canceltask",       "cancel_task"),
             ("feedbacklist",     "feedback_list"),
             ("analyze_feedback", "analyze_feedback"),
         ],
-        "🔐 Super Owner": [
-            ("update",           "update_info"),
-            ("pushupdate",       "push_update"),
+        "👑 Super Owner": [
             ("updatechange",     "update_change"),
+            ("pushupdate",       "push_update"),
             ("botstatus",        "bot_status"),
             ("pause",            "pause_bot"),
             ("restart",          "restart_bot"),
-            ("superreset",       "super_reset_req"),
+            ("super_reset",      "super_reset_req"),
             ("allcommandtest",   "all_command_test"),
         ],
     }

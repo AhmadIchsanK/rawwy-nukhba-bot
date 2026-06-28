@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 MANUAL_SECTIONS = {
     "en": {
         "title":    "RAWWY Nukhba Manager — User Manual",
-        "version":  "v1.2",
+        "version":  "v1.3",
         "subtitle": "Complete command guide for all team members",
         "tip":      "Tip: Long-press any command format shown here to copy it, then paste in the group chat.",
         "sections": [
@@ -104,12 +104,12 @@ MANUAL_SECTIONS = {
                  "Tap a task to toggle Complete ✅ / Incomplete 🔲.\n"
                  "Press Finish to save — your assigner gets a DM when all assignees complete the task.\n"
                  "Format: /mytask"),
-                ("/grouptask",
+                ("/grouptasks",
                  "View all active tasks in this group.\n"
                  "Shows: task description, who assigned it, who it's assigned to, status (Pending / Overdue / Done).\n"
                  "Also shows the last 7 completed tasks.\n"
                  "Admins running this in a group see ALL tasks across all assignees.\n"
-                 "Format: /grouptask"),
+                 "Format: /grouptasks"),
             ]),
             ("🏖️ Away Status", [
                 ("/away",
@@ -164,7 +164,7 @@ MANUAL_SECTIONS = {
     },
     "ar": {
         "title":    "دليل مستخدم بوت Nukhba Manager",
-        "version":  "v1.2",
+        "version":  "v1.3",
         "subtitle": "دليل شامل لجميع أوامر المستخدم",
         "tip":      "نصيحة: اضغط مطولاً على صيغة الأمر لنسخها ثم الصقها في المجموعة.",
         "sections": [
@@ -229,9 +229,9 @@ MANUAL_SECTIONS = {
                  "اعرض مهامك المعلّقة في الرسائل الخاصة.\n"
                  "انقر على المهمة لتبديل حالتها. اضغط إنهاء للحفظ.\n"
                  "الصيغة: /mytask"),
-                ("/grouptask",
+                ("/grouptasks",
                  "اعرض جميع المهام النشطة في المجموعة مع الحالة والمسؤولين.\n"
-                 "الصيغة: /grouptask"),
+                 "الصيغة: /grouptasks"),
             ]),
             ("🏖️ حالة الغياب", [
                 ("/away",
@@ -266,7 +266,7 @@ MANUAL_SECTIONS = {
     },
     "id": {
         "title":    "Panduan Pengguna Nukhba Manager Bot",
-        "version":  "v1.2",
+        "version":  "v1.3",
         "subtitle": "Panduan lengkap semua perintah pengguna",
         "tip":      "Tips: Tekan lama format perintah untuk menyalinnya, lalu tempel di grup.",
         "sections": [
@@ -330,9 +330,9 @@ MANUAL_SECTIONS = {
                 ("/mytask",
                  "Lihat daftar tugasmu di DM. Ketuk untuk tandai selesai. Tekan Selesai untuk simpan.\n"
                  "Format: /mytask"),
-                ("/grouptask",
+                ("/grouptasks",
                  "Lihat semua tugas aktif di grup ini — siapa yang menugaskan, kepada siapa, dan statusnya.\n"
-                 "Format: /grouptask"),
+                 "Format: /grouptasks"),
             ]),
             ("🏖️ Status Away", [
                 ("/away",
@@ -448,7 +448,7 @@ def _build_pdf() -> bytes:
     # ── Cover block ───────────────────────────────────────────────────────────
     story.append(Spacer(1, 8*mm))
     story.append(Paragraph("🤖 RAWWY Nukhba Manager Bot", s_doc_title))
-    story.append(Paragraph("User Manual · v1.2", s_version))
+    story.append(Paragraph("User Manual · v1.3", s_version))
     story.append(Paragraph("English  ·  العربية  ·  Bahasa Indonesia", s_subtitle))
     story.append(divider)
     story.append(Spacer(1, 4*mm))
@@ -560,7 +560,7 @@ async def manual_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             filename=filename,
             caption=(
                 "📖 *Nukhba Manager — User Manual*\n"
-                f"Version 1.2 · {datetime.datetime.now(WIB).strftime('%B %Y')}\n\n"
+                f"Version 1.3 · {datetime.datetime.now(WIB).strftime('%B %Y')}\n\n"
                 "3 languages: 🇬🇧 English · 🇸🇦 Arabic · 🇮🇩 Indonesian\n\n"
                 "_Use /command for interactive command browsing with full usage details._"
             ),
