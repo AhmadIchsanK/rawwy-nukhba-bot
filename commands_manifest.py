@@ -134,11 +134,6 @@ COMMANDS = [
          "DM: pick group → type description → type assignees (comma-separated) → set deadline in minutes",
      ]},
 
-    {"name": "assign",    "emoji": "📌", "public": True, "category": "📋 Tasks",
-     "desc": "Alias for /task — assign a task to team members",
-     "explanation": "Same as /task. In a group: tap members → type description → Finish. In DM: step-by-step.",
-     "format": "/assign"},
-
     {"name": "mytask",    "emoji": "✅", "public": True, "category": "📋 Tasks",
      "desc": "View and complete your assigned tasks (inline DM list)",
      "explanation": "Tap a task to toggle Complete/Incomplete. Press Finish to save — assigner is notified when all done.",

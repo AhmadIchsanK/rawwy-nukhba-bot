@@ -455,6 +455,14 @@ async def schedule_text_input_timeout(
 
         ctx.bot_data.get("txt_input_states", {}).pop(f"{user_id}_{state_key}", None)
 
+        # Clear the user's awaiting state so further text is NOT processed
+        try:
+            user_data = ctx.application.user_data.get(user_id, {})
+            if user_data.get(state_key) == state_value:
+                user_data.pop(state_key, None)
+        except Exception:
+            pass
+
         # Delete the prompt / "send me X" message
         if prompt_msg_id:
             try:
@@ -462,20 +470,20 @@ async def schedule_text_input_timeout(
             except Exception:
                 pass
 
-        # Restore the panel or edit it to show timeout notice
-        if restore_fn:
-            try:
-                await restore_fn(ctx, user_id, panel_chat_id, panel_msg_id)
-            except Exception:
-                try:
-                    await ctx.bot.edit_message_text(
-                        chat_id=panel_chat_id,
-                        message_id=panel_msg_id,
-                        text="⏰ Input timed out after 120 seconds of inactivity.",
-                    )
-                except Exception:
-                    pass
-        else:
+        # Edit the panel to show a timeout notice with a home/close button
+        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+        try:
+            await ctx.bot.edit_message_text(
+                chat_id=panel_chat_id,
+                message_id=panel_msg_id,
+                text="⏰ *Input timed out* — 120 seconds with no reply.\n\nTap below to restart.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 Restart", callback_data="home"),
+                    InlineKeyboardButton("🚪 Close",   callback_data="close_panel"),
+                ]]),
+                parse_mode="Markdown",
+            )
+        except Exception:
             try:
                 await ctx.bot.edit_message_reply_markup(
                     chat_id=panel_chat_id, message_id=panel_msg_id, reply_markup=None

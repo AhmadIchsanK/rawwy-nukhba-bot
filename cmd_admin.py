@@ -1663,158 +1663,171 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status_msg = await update.message.reply_text("🔍 Running dynamic command health check…")
 
-    # ── Dynamic module registry ──────────────────────────────────────────────
     import cmd_system, cmd_user, cmd_trivia, cmd_admin as _self_module
+    import cmd_command_nav, cmd_events, cmd_away, cmd_broadcast
+    import cmd_manual, cmd_library, cmd_task, cmd_adminconfig, cmd_birthday
     try:
         import cmd_system_help
     except ImportError:
         cmd_system_help = None
-    try:
-        import cmd_cheer
-    except ImportError:
-        cmd_cheer = None
 
-    # Map handler function names back to their modules
-    # Key: (handler_func_name,) → module
-    import cmd_command_nav
     module_registry = {
-        # system
-        "start": cmd_system, "about_command": cmd_system,
-        "what_did_i_miss": cmd_system, "submit_feedback": cmd_system,
-        "ask_bot": cmd_system, "ask_gemini": cmd_system,
-        "feedback_callback": cmd_system, "global_tracker": cmd_system,
-        "unknown_command": cmd_system, "flush_chat_buffer": cmd_system,
-        "security_track_chats": cmd_system,
-        # system_help
-        "help_command": cmd_system_help,
-        # command nav
-        "command_nav": cmd_command_nav,
-        # user
-        "create_event": cmd_user, "edit_event": cmd_user,
-        "list_events": cmd_user, "create_poll": cmd_user,
-        "rsvp_callback": cmd_user, "poll_callback": cmd_user,
-        "give_thanks": cmd_user, "my_quota": cmd_user,
-        "my_star": cmd_user, "total_star": cmd_user,
-        "leaderboard_star": cmd_user,
-        "add_lib": cmd_user, "edit_lib": cmd_user,
-        "del_lib": cmd_user, "get_lib": cmd_user, "list_lib": cmd_user,
-        "assign_task": cmd_user, "complete_task": cmd_user,
-        "my_tasks": cmd_user, "set_away": cmd_user, "set_back": cmd_user,
-        # cheer
-        # trivia
-        "my_point": cmd_trivia, "leaderboard_kp": cmd_trivia,
-        "trivia_config": cmd_trivia, "force_trivia": cmd_trivia,
-        "force_super_trivia": cmd_trivia, "cancel_trivia": cmd_trivia,
-        "end_trivia": cmd_trivia, "admin_kp": cmd_trivia,
-        "trivia_callback": cmd_trivia,
-        # admin (self)
-        "update_info": _self_module, "push_update": _self_module,
-        "update_change": _self_module, "bot_config": _self_module,
-        "sched_config": _self_module,
-        "set_channel": _self_module, "unset_channel": _self_module,
-        "check_quota": _self_module, "admin_stars": _self_module,
-        "check_limit": _self_module, "admin_limit": _self_module,
-        "add_bday": _self_module, "edit_bday": _self_module,
-        "del_bday": _self_module, "list_bdays": _self_module,
-        "bulk_add_bday": _self_module, "bulk_del_bday": _self_module,
-        "attendance": _self_module, "force_back": _self_module,
-        "group_tasks": _self_module, "cancel_event": _self_module,
-        "cancel_task": _self_module, "cancel_poll_admin": _self_module,
-        "new_schedule": _self_module, "list_schedules": _self_module,
-        "del_schedule": _self_module, "announce": _self_module,
-        "edit_announce": _self_module, "del_announce": _self_module,
-        "feedback_list": _self_module, "analyze_feedback": _self_module,
-        "all_command_test": _self_module, "add_admin_req": _self_module,
-        "del_admin_req": _self_module, "list_admins": _self_module,
-        "remove_member_req": _self_module, "graveyard": _self_module,
-        "bot_status": _self_module, "pause_bot": _self_module,
-        "restart_bot": _self_module, "super_reset_req": _self_module,
-        "config_callback": _self_module, "manage_users_callback": _self_module,
-        "newsched_callback": _self_module, "super_callback": _self_module,
-        "handle_admin_text_input": _self_module,
-        "register_group": _self_module,
+        "start":                   cmd_system,
+        "about_command":           cmd_system,
+        "what_did_i_miss":         cmd_system,
+        "submit_feedback":         cmd_system,
+        "ask_bot":                 cmd_system,
+        "ask_ai":                  cmd_system,
+        "global_tracker":          cmd_system,
+        "unknown_command":         cmd_system,
+        "help_command":            cmd_system_help,
+        "command_nav":             cmd_command_nav,
+        "eventpoll_command":       cmd_events,
+        "listevent_command":       cmd_events,
+        "away_command":            cmd_away,
+        "broadcast_command":       cmd_broadcast,
+        "manual_command":          cmd_manual,
+        "library_command":         cmd_library,
+        "task_command":            cmd_task,
+        "mytask_command":          cmd_task,
+        "admin_command":           cmd_adminconfig,
+        "userconfig_command":      cmd_adminconfig,
+        "birthday_config_command": cmd_birthday,
+        "set_back":                cmd_user,
+        "give_thanks":             cmd_user,
+        "my_quota":                cmd_user,
+        "my_star":                 cmd_user,
+        "leaderboard_star":        cmd_user,
+        "my_point":                cmd_trivia,
+        "leaderboard_kp":          cmd_trivia,
+        "trivia_config":           cmd_trivia,
+        "force_trivia":            cmd_trivia,
+        "force_super_trivia":      cmd_trivia,
+        "cancel_trivia":           cmd_trivia,
+        "end_trivia":              cmd_trivia,
+        "admin_kp":                cmd_trivia,
+        "update_info":             _self_module,
+        "push_update":             _self_module,
+        "update_change":           _self_module,
+        "bot_config":              _self_module,
+        "sched_config":            _self_module,
+        "set_channel":             _self_module,
+        "unset_channel":           _self_module,
+        "check_group_id":          _self_module,
+        "register_group":          _self_module,
+        "attendance":              _self_module,
+        "force_back":              _self_module,
+        "group_tasks":             _self_module,
+        "cancel_task":             _self_module,
+        "feedback_list":           _self_module,
+        "analyze_feedback":        _self_module,
+        "all_command_test":        _self_module,
+        "bot_status":              _self_module,
+        "pause_bot":               _self_module,
+        "restart_bot":             _self_module,
+        "super_reset_req":         _self_module,
     }
 
-    # Command → handler function name (auto-synced from main.py registrations)
-    CMD_TO_FUNC = {
-        "about": "about_command",
-        "admin": "admin_command",
-        "admin_kp": "admin_kp",
-        "ai": "ask_ai",
-        "allcommandtest": "all_command_test",
-        "analyze_feedback": "analyze_feedback",
-        "ask": "ask_bot",
-        "attendance": "attendance",
-        "away": "away_command",
-        "back": "set_back",
-        "birthdayconfig": "birthday_config_command",
-        "botconfig": "bot_config",
-        "botstatus": "bot_status",
-        "broadcast": "broadcast_command",
-        "canceltask": "cancel_task",
-        "canceltrivia": "cancel_trivia",
-        "command": "command_nav",
-        "endtrivia": "end_trivia",
-        "eventpoll": "eventpoll_command",
-        "feedback": "submit_feedback",
-        "feedbacklist": "feedback_list",
-        "forceback": "force_back",
-        "forcesupertrivia": "force_super_trivia",
-        "forcetrivia": "force_trivia",
-        "groupid": "check_group_id",
-        "grouptasks": "group_tasks",
-        "help": "help_command",
-        "leaderboard_kp": "leaderboard_kp",
-        "leaderboard_star": "leaderboard_star",
-        "library": "library_command",
-        "listevent": "listevent_command",
-        "manual": "manual_command",
-        "mypoint": "my_point",
-        "myquota": "my_quota",
-        "mystar": "my_star",
-        "mytask": "mytask_command",
-        "pause": "pause_bot",
-        "pushupdate": "push_update",
-        "registergroup": "register_group",
-        "restart": "restart_bot",
-        "schedconfig": "sched_config",
-        "setchannel": "set_channel",
-        "start": "start",
-        "super_reset": "super_reset_req",
-        "task": "task_command",
-        "thanks": "give_thanks",
-        "triviaconfig": "trivia_config",
-        "triviaend": "end_trivia",
-        "unsetchannel": "unset_channel",
-        "update": "update_info",
-        "updatechange": "update_change",
-        "userconfig": "userconfig_command",
-        "wdim": "what_did_i_miss",
+    CATEGORIES = {
+        "📋 General": [
+            ("start",            "start"),
+            ("help",             "help_command"),
+            ("command",          "command_nav"),
+            ("about",            "about_command"),
+            ("wdim",             "what_did_i_miss"),
+            ("feedback",         "submit_feedback"),
+            ("ask",              "ask_bot"),
+            ("ai",               "ask_ai"),
+            ("manual",           "manual_command"),
+        ],
+        "👤 Personal": [
+            ("back",             "set_back"),
+            ("thanks",           "give_thanks"),
+            ("myquota",          "my_quota"),
+            ("mystar",           "my_star"),
+            ("leaderboardstar",  "leaderboard_star"),
+            ("mytask",           "mytask_command"),
+            ("away",             "away_command"),
+        ],
+        "📅 Events & Polls": [
+            ("eventpoll",        "eventpoll_command"),
+            ("listevent",        "listevent_command"),
+        ],
+        "📋 Tasks": [
+            ("task",             "task_command"),
+            ("grouptasks",       "group_tasks"),
+            ("canceltask",       "cancel_task"),
+        ],
+        "📚 Library": [
+            ("library",          "library_command"),
+        ],
+        "📢 Broadcast": [
+            ("broadcast",        "broadcast_command"),
+        ],
+        "🎮 Trivia": [
+            ("triviaconfig",     "trivia_config"),
+            ("forcetrivia",      "force_trivia"),
+            ("forcesupertrivia", "force_super_trivia"),
+            ("canceltrivia",     "cancel_trivia"),
+            ("endtrivia",        "end_trivia"),
+            ("triviaend",        "end_trivia"),
+            ("mypoint",          "my_point"),
+            ("leaderboardkp",    "leaderboard_kp"),
+            ("adminkp",          "admin_kp"),
+        ],
+        "⚙️ Admin Config": [
+            ("botconfig",        "bot_config"),
+            ("schedconfig",      "sched_config"),
+            ("setchannel",       "set_channel"),
+            ("unsetchannel",     "unset_channel"),
+            ("groupid",          "check_group_id"),
+            ("registergroup",    "register_group"),
+            ("userconfig",       "userconfig_command"),
+            ("birthdayconfig",   "birthday_config_command"),
+            ("admin",            "admin_command"),
+            ("attendance",       "attendance"),
+            ("forceback",        "force_back"),
+            ("feedbacklist",     "feedback_list"),
+            ("analyze_feedback", "analyze_feedback"),
+        ],
+        "🔐 Super Owner": [
+            ("update",           "update_info"),
+            ("pushupdate",       "push_update"),
+            ("updatechange",     "update_change"),
+            ("botstatus",        "bot_status"),
+            ("pause",            "pause_bot"),
+            ("restart",          "restart_bot"),
+            ("superreset",       "super_reset_req"),
+            ("allcommandtest",   "all_command_test"),
+        ],
     }
 
-    results = []
-    ok = fail = 0
+    lines = []
+    total_ok = total_fail = 0
 
-    for cmd, func_name in CMD_TO_FUNC.items():
-        module = module_registry.get(func_name)
-        if module is None:
-            results.append(f"🚫 /{cmd} — handler `{func_name}` not mapped to any module")
-            fail += 1
-        elif not hasattr(module, func_name):
-            results.append(f"❌ /{cmd} — `{func_name}` missing from `{module.__name__}`")
-            fail += 1
-        elif not callable(getattr(module, func_name)):
-            results.append(f"❌ /{cmd} — `{func_name}` exists but is not callable")
-            fail += 1
-        else:
-            results.append(f"✅ /{cmd}")
-            ok += 1
+    for cat, cmds in CATEGORIES.items():
+        cat_lines = []
+        for cmd, func_name in cmds:
+            module = module_registry.get(func_name)
+            if module is None:
+                cat_lines.append(f"  🚫 /{cmd} — `{func_name}` not in registry")
+                total_fail += 1
+            elif not hasattr(module, func_name):
+                cat_lines.append(f"  ❌ /{cmd} — `{func_name}` missing from `{module.__name__}`")
+                total_fail += 1
+            elif not callable(getattr(module, func_name)):
+                cat_lines.append(f"  ❌ /{cmd} — `{func_name}` not callable")
+                total_fail += 1
+            else:
+                cat_lines.append(f"  ✅ /{cmd}")
+                total_ok += 1
+        lines.append(f"\n*{cat}*")
+        lines.extend(cat_lines)
 
-    summary = (
+    header = (
         f"🧪 **DYNAMIC COMMAND HEALTH REPORT**\n"
         f"──────────────────────────────────────\n"
-        f"✅ OK: {ok}  |  ❌ Failed: {fail}  |  🗂️ Total: {ok + fail}\n\n"
-        + "\n".join(results)
+        f"✅ OK: {total_ok}  |  ❌ Failed: {total_fail}  |  🗂️ Total: {total_ok + total_fail}\n"
     )
 
     try:
@@ -1822,7 +1835,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.debug(f"Failed to delete status message: {e}")
 
-    await send_md(context, update.effective_user.id, summary)
+    await send_md(context, update.effective_user.id, header + "\n".join(lines))
 
 
 # ─────────────────────────────────────────────

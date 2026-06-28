@@ -282,7 +282,6 @@ def main():
     # 📚 LIBRARY
     # ─────────────────────────────────────────
     app.add_handler(CommandHandler("library", cmd_library.library_command))
-    app.add_handler(CommandHandler("assign",  cmd_task.task_command))  # alias for /task
 
     # ─────────────────────────────────────────
     # ⚡ TASKS & AWAY
