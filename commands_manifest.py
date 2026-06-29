@@ -125,6 +125,17 @@ COMMANDS = [
     # ════════════════════════════════════════
     # 📋 TASKS
     # ════════════════════════════════════════
+    {"name": "standup",  "emoji": "📋", "public": True,
+     "category": "📋 Tasks",
+     "desc": "Daily standup check-in and check-out management (inline DM hub)",
+     "explanation": "Set up scheduled daily check-in and check-out standups for your team. Members receive DM prompts at set times and submit via bot or Discord. Manager approves and receives an AI summary.",
+     "format": "/standup",
+     "subcommands": [
+         "➕ New Config → 5-step wizard: name, members, recurrence, check-in time, check-out time",
+         "📋 My Configs → list and manage all your standup schedules",
+         "⚙️ Manage → pause, resume, delete, edit members or timing",
+         "📅 My Standups Today → view your pending check-in / check-out for today",
+     ]},
     {"name": "task",      "emoji": "📌", "public": True, "category": "📋 Tasks",
      "desc": "Assign a task to team members (group or DM)",
      "explanation": "In a group: tap members to assign, type description, press Finish. In DM: step-by-step with group picker.",

@@ -1665,7 +1665,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     import cmd_system, cmd_user, cmd_trivia, cmd_admin as _self_module
     import cmd_command_nav, cmd_events, cmd_away, cmd_broadcast
-    import cmd_manual, cmd_library, cmd_task, cmd_adminconfig, cmd_birthday
+    import cmd_manual, cmd_library, cmd_task, cmd_adminconfig, cmd_birthday, cmd_standup
     try:
         import cmd_system_help
     except ImportError:
@@ -1690,6 +1690,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "library_command":         cmd_library,
         "task_command":            cmd_task,
         "mytask_command":          cmd_task,
+        "standup_command":         cmd_standup,
         "admin_command":           cmd_adminconfig,
         "userconfig_command":      cmd_adminconfig,
         "birthday_config_command": cmd_birthday,
@@ -1765,6 +1766,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 Tasks": [
             ("task",             "task_command"),
             ("mytask",           "mytask_command"),
+            ("standup",          "standup_command"),
             ("grouptasks",       "group_tasks"),
             ("canceltask",       "cancel_task"),
         ],
@@ -2800,50 +2802,115 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def process_schedules(context: ContextTypes.DEFAULT_TYPE):
-    """Cron: check and fire any scheduled announcements."""
+    """
+    Cron: check and fire any scheduled announcements (runs every 30s).
+    Frequencies: once | daily | weekday | weekly
+    run_time format:
+      once/daily/weekday/weekly → 'HH:MM'
+      scheduled_date (for once) → 'MM/DD/YYYY'
+    """
     pool = context.bot_data.get('db_pool')
     if not pool:
         return
-    now = datetime.datetime.now(WIB)
+    now     = datetime.datetime.now(WIB)
+    weekday = now.weekday()  # 0=Mon … 6=Sun
+
+    # Ensure last_run column exists (migration)
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS last_run "
+                "TIMESTAMP WITH TIME ZONE"
+            )
+    except Exception:
+        pass
+
     async with pool.acquire() as conn:
         schedules = await conn.fetch("SELECT * FROM scheduled_announcements")
-        for s in schedules:
-            should_run = False
-            f     = s['frequency']
-            t_str = s['run_time']
-            try:
-                if f == 'once':
-                    run_dt = WIB.localize(datetime.datetime.strptime(t_str, "%m/%d/%Y %H:%M"))
-                    if now >= run_dt and not s['last_run']:
-                        should_run = True
-                elif f == 'daily':
-                    h, m = map(int, t_str.split(':'))
-                    if now.hour == h and now.minute == m and (not s['last_run'] or s['last_run'].date() < now.date()):
-                        should_run = True
-                elif f == 'weekly':
-                    day, tm = t_str.split(' ')
-                    h, m = map(int, tm.split(':'))
-                    if (now.weekday() == int(day) and now.hour == h and now.minute == m and
-                            (not s['last_run'] or (now - s['last_run'].astimezone(WIB)).days >= 6)):
-                        should_run = True
-            except Exception:
-                continue
 
-            if should_run:
-                msg     = f"📢 **Scheduled Announcement**\n\n{s['message']}"
-                targets = [g['chat_id'] for g in await conn.fetch("SELECT chat_id FROM active_groups")] \
-                    if s['chat_id'] == 'all' else [int(s['chat_id'])]
-                if s['mention']:
-                    users = await conn.fetch("SELECT username FROM users WHERE username IS NOT NULL")
-                    msg  += "\n\n👥 " + " ".join([f"@{u['username']}" for u in users])
-                for t in targets:
-                    try:
-                        await send_md(context, t, msg)
-                    except Exception as e:
-                        logger.warning(f"Failed to push scheduled broadcast: {e}")
-                await conn.execute(
-                    "UPDATE scheduled_announcements SET last_run=$1 WHERE id=$2", now, s['id']
+    for s in schedules:
+        should_run = False
+        freq  = s['frequency']
+        t_str = (s['run_time'] or '').strip()
+
+        try:
+            # All recurring types store run_time as 'HH:MM'
+            h, m = map(int, t_str.split(':'))
+            time_match = (now.hour == h and now.minute == m)
+            last_run   = s.get('last_run')
+            ran_today  = (last_run and last_run.astimezone(WIB).date() == now.date())
+
+            if freq == 'once':
+                # For once: fire at the scheduled_at datetime
+                sched_at = s.get('scheduled_at')
+                if sched_at and not last_run:
+                    sched_wib = sched_at.astimezone(WIB)
+                    if now >= sched_wib:
+                        should_run = True
+
+            elif freq == 'daily':
+                if time_match and not ran_today:
+                    should_run = True
+
+            elif freq == 'weekday':
+                # Mon–Fri only (weekday 0–4)
+                if weekday <= 4 and time_match and not ran_today:
+                    should_run = True
+
+            elif freq == 'weekly':
+                # Fire every Monday at the set time
+                if weekday == 0 and time_match and not ran_today:
+                    should_run = True
+
+        except Exception as e:
+            logger.warning(f"Schedule #{s['id']} parse error: {e}")
+            continue
+
+        if not should_run:
+            continue
+
+        # Build message and targets
+        async with pool.acquire() as conn:
+            if s['chat_id'] == 'all':
+                groups = await conn.fetch(
+                    "SELECT chat_id FROM group_settings UNION "
+                    "SELECT chat_id FROM active_groups"
                 )
+                targets = list({g['chat_id'] for g in groups})
+            else:
+                try:
+                    targets = [int(s['chat_id'])]
+                except (ValueError, TypeError):
+                    continue
+
+            mention_line = ""
+            if s['mention']:
+                users = await conn.fetch(
+                    "SELECT username FROM users WHERE username IS NOT NULL"
+                )
+                mention_line = " ".join(f"@{u['username']}" for u in users)
+
+        raw_msg = s['message'] or ""
+        full_msg = (mention_line + "\n\n" + raw_msg) if mention_line else raw_msg
+
+        for t in targets:
+            try:
+                await context.bot.send_message(t, full_msg, parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"Broadcast #{s['id']} to {t} failed: {e}")
+
+        # Mark as run
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE scheduled_announcements SET last_run=$1 WHERE id=$2",
+                now, s['id']
+            )
+            # Delete once-schedules after firing
+            if freq == 'once':
+                await conn.execute(
+                    "DELETE FROM scheduled_announcements WHERE id=$1", s['id']
+                )
+        logger.info(f"Broadcast schedule #{s['id']} fired ({freq})")
 
 
 async def list_schedules(update: Update, context: ContextTypes.DEFAULT_TYPE):

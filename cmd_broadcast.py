@@ -248,6 +248,33 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif data == "bc_del_pick":
         await _show_del_pick(q, pool)
 
+    elif data.startswith("bc_edit_msg_"):
+        s_id = int(data[12:])
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT message FROM scheduled_announcements WHERE id=$1", s_id
+            )
+        if not row:
+            return await q.answer("Schedule not found.", show_alert=True)
+        context.user_data["bc_state"]    = f"await_edit_msg_{s_id}"
+        context.user_data["bc_edit_id"]  = s_id
+        old_msg = (row["message"] or "").strip()
+        await q.message.edit_text(
+            f"✏️ *Edit Message for Schedule #{s_id}*\n\n"
+            f"Current message:\n_{old_msg[:400]}_\n\n"
+            "Type the new message below\n"
+            "_(long-press the current message above to copy it as a starting point)_",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("❌ Cancel", callback_data="bc_list_0")
+            ]]),
+            parse_mode="Markdown"
+        )
+        from core import schedule_text_input_timeout
+        await schedule_text_input_timeout(
+            context, uid, "bc_state", f"await_edit_msg_{s_id}",
+            q.message.chat_id, q.message.message_id
+        )
+
     elif data.startswith("bc_delid_"):
         s_id = int(data[9:])
         async with pool.acquire() as conn:
@@ -439,7 +466,8 @@ async def _do_post_now(bot, pool, chat_id: str, message: str, q):
 async def _show_list(q, pool, page: int):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, chat_id, frequency, run_time, mention, message FROM scheduled_announcements ORDER BY id DESC"
+            "SELECT id, chat_id, frequency, run_time, mention, message, scheduled_at "
+            "FROM scheduled_announcements ORDER BY id DESC"
         )
 
     if not rows:
@@ -448,26 +476,42 @@ async def _show_list(q, pool, page: int):
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
 
-    PAGE = 5
+    PAGE = 3   # fewer per page so full message fits
     total = len(rows)
     pages = max(1, (total + PAGE - 1) // PAGE)
     page  = max(0, min(page, pages - 1))
     chunk = rows[page * PAGE: (page + 1) * PAGE]
 
     freq_labels = {
-        "once": "Once", "weekday": "Daily (Wkdays)",
-        "daily": "Daily", "weekly": "Weekly"
+        "once": "Once", "weekday": "Daily (Mon–Fri)",
+        "daily": "Daily (All Days)", "weekly": "Weekly (Mon)"
     }
 
-    lines = [f"📋 *Scheduled Broadcasts* — {page+1}/{pages}\n"]
+    lines = [f"📋 *Scheduled Broadcasts* ({total} total) — Page {page+1}/{pages}\n"]
     for r in chunk:
-        freq  = freq_labels.get(r["frequency"], r["frequency"])
-        prev  = (r["message"] or "")[:35]
-        tag   = "🔔" if r["mention"] else "🔕"
+        freq = freq_labels.get(r["frequency"], r["frequency"])
+        tag  = "🔔 Tag all" if r["mention"] else "🔕 No tag"
+
+        # First fire time
+        if r["frequency"] == "once" and r.get("scheduled_at"):
+            import datetime as _dt
+            from core import WIB as _WIB
+            first_str = r["scheduled_at"].astimezone(_WIB).strftime("%b %d %Y at %H:%M WIB")
+        else:
+            first_str = f"Daily at {r['run_time']} WIB"
+
+        # Full message (up to 300 chars to keep panel readable)
+        full_msg = (r["message"] or "").strip()
+        msg_display = full_msg[:300] + ("…" if len(full_msg) > 300 else "")
+
         lines.append(
-            f"🔹 `#{r['id']}` → `{r['chat_id']}`\n"
-            f"   {freq} @ {r['run_time']} WIB {tag}\n"
-            f"   _{prev}_"
+            f"─────────────────\n"
+            f"🔹 *Schedule #{r['id']}*\n"
+            f"📡 Target: `{r['chat_id']}`\n"
+            f"🔁 {freq}\n"
+            f"⏰ First run: {first_str}\n"
+            f"🔔 {tag}\n"
+            f"📝 Message:\n_{msg_display}_"
         )
 
     nav = []
@@ -476,7 +520,17 @@ async def _show_list(q, pool, page: int):
     if page < pages - 1:
         nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"bc_list_{page+1}"))
 
-    rows_kb = [nav] if nav else []
+    # Edit and Delete buttons for each schedule in view
+    action_rows = []
+    for r in chunk:
+        action_rows.append([
+            InlineKeyboardButton(f"✏️ Edit #{r['id']}",  callback_data=f"bc_edit_msg_{r['id']}"),
+            InlineKeyboardButton(f"🗑️ Delete #{r['id']}", callback_data=f"bc_delid_{r['id']}"),
+        ])
+
+    rows_kb = action_rows
+    if nav:
+        rows_kb.append(nav)
     rows_kb.append([InlineKeyboardButton("🏠 Home", callback_data="bc_home"),
                     InlineKeyboardButton("🚪 Close", callback_data="bc_close")])
 
@@ -627,6 +681,27 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
             await schedule_kb_timeout(context, uid, msg.message_id, uid)
             context.user_data["bc_panel_chat"] = uid
             context.user_data["bc_panel_msg"]  = msg.message_id
+        return True
+
+    # ── Edit existing schedule message ────────────────────────────────────
+    elif state.startswith("await_edit_msg_"):
+        s_id = int(state.split("_")[-1])
+        if not text:
+            await update.message.reply_text("❌ Message cannot be empty.")
+            return True
+        from core import cancel_text_input_timeout
+        cancel_text_input_timeout(context, uid, "bc_state")
+        context.user_data.pop("bc_state", None)
+        context.user_data.pop("bc_edit_id", None)
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE scheduled_announcements SET message=$1 WHERE id=$2",
+                text, s_id
+            )
+        await update.message.reply_text(
+            f"✅ *Schedule #{s_id} message updated!*\n\n_{text[:200]}_",
+            parse_mode="Markdown"
+        )
         return True
 
     # ── Message input ──────────────────────────────────────────────────────
