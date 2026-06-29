@@ -28,7 +28,7 @@ from telegram.ext import ContextTypes
 from core import (
     WIB, delete_cmd, is_bot_admin, is_super,
     schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership,
-    register_text_input_timeout, cancel_text_input_timeout,
+    schedule_text_input_timeout, cancel_text_input_timeout,
     log_action,
 )
 
@@ -320,7 +320,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Give this standup a *name*:\n_e.g. RAWWY Daily Standup_",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", "await_name",
             q.message.chat_id, q.message.message_id
         )
@@ -343,7 +343,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception:
             pass
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", "await_checkin_time",
             panel[0], panel[1]
         )
@@ -488,7 +488,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Type usernames comma-separated:\n`@alice, @bob, @carol`",
             reply_markup=_back_kb(f"sd_manage_{config_id}"), parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", "await_edit_members",
             q.message.chat_id, q.message.message_id
         )
@@ -505,7 +505,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`HH:MM , HH:MM`\n_e.g. `09:00 , 17:00`_",
             reply_markup=_back_kb(f"sd_manage_{config_id}"), parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", "await_edit_timing",
             q.message.chat_id, q.message.message_id
         )
@@ -609,7 +609,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]]),
             parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", f"await_blockers_{session_id}",
             q.message.chat_id, q.message.message_id
         )
@@ -627,7 +627,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]]),
             parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", f"await_extra_notes_{session_id}",
             q.message.chat_id, q.message.message_id
         )
@@ -652,7 +652,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]]),
             parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", f"await_tasks_{session_id}",
             q.message.chat_id, q.message.message_id
         )
@@ -706,7 +706,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]]),
                 parse_mode="Markdown"
             )
-            register_text_input_timeout(
+            schedule_text_input_timeout(
                 context, uid, "sd_state", f"await_checkout_tasks_{session_id}",
                 q.message.chat_id, q.message.message_id
             )
@@ -786,7 +786,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]]),
             parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", f"await_reject_note_{response_id}",
             q.message.chat_id, q.message.message_id
         )
@@ -843,7 +843,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             ),
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", "await_members", panel[0], panel[1]
         )
         return True
@@ -892,7 +892,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             ),
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", "await_checkout_time", panel[0], panel[1]
         )
         return True
@@ -1019,7 +1019,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]]),
             parse_mode="Markdown"
         )
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", f"await_checkin_notes_{session_id}",
             panel[0], panel[1]
         )
@@ -1090,7 +1090,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode="Markdown"
         )
         context.user_data[f"sd_blockers_{session_id}"] = blockers
-        register_text_input_timeout(
+        schedule_text_input_timeout(
             context, uid, "sd_state", f"await_extra_notes_{session_id}",
             panel[0], panel[1]
         )
