@@ -20,6 +20,7 @@ import cmd_away
 import cmd_task
 import cmd_birthday
 import cmd_broadcast
+import cmd_standup
 import cmd_adminconfig
 import cmd_manual
 
@@ -115,6 +116,10 @@ async def global_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if await cmd_adminconfig.handle_adminconfig_text(update, context):
         return
 
+    # Standup DM text flow
+    if await cmd_standup.handle_standup_text(update, context):
+        return
+
     # 6d. Auto-cancel away on group message
     await cmd_away.check_auto_cancel(update, context)
 
@@ -184,6 +189,7 @@ async def post_init_wrapper(application: Application):
                     pass
 
         logger.info("✅ Telegram command menus synced (public + admin + super scopes).")
+
     except Exception as e:
         logger.error(f"Failed to push command menu updates: {e}")
 
@@ -227,6 +233,19 @@ def main():
     persistence = PicklePersistence(filepath="data/bot_state.pickle")
 
     app = Application.builder().token(BOT_TOKEN).persistence(persistence).build()
+    # ── Standup cron: check every minute for due prompts ──────────────────────
+    async def _standup_checkin_job(ctx):
+        await cmd_standup.dispatch_standup_prompts(ctx, "checkin")
+
+    async def _standup_checkout_job(ctx):
+        await cmd_standup.dispatch_standup_prompts(ctx, "checkout")
+
+    app.job_queue.run_repeating(_standup_checkin_job,  interval=60, first=5,
+                                name="standup_checkin_cron")
+    app.job_queue.run_repeating(_standup_checkout_job, interval=60, first=10,
+                                name="standup_checkout_cron")
+    logger.info("✅ Standup cron jobs scheduled (every 60s).")
+
     app.post_init = post_init_wrapper
     app.post_stop = post_stop_wrapper
     app.add_error_handler(error_handler)
@@ -259,6 +278,7 @@ def main():
     app.add_handler(CommandHandler("away",       cmd_away.away_command))
     app.add_handler(CommandHandler("back",       safe_cmd(cmd_user, "set_back")))  # /back still manual
     app.add_handler(CommandHandler("broadcast",      cmd_broadcast.broadcast_command))
+    app.add_handler(CommandHandler("standup",        cmd_standup.standup_command))
     app.add_handler(CommandHandler("manual",         cmd_manual.manual_command))
     # /newsched /announce /editannounce /delannounce → merged into /broadcast
     app.add_handler(CommandHandler("admin",       cmd_adminconfig.admin_command))
@@ -365,6 +385,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cmd_task.mytask_callback,                pattern="^myt_"))
     app.add_handler(CallbackQueryHandler(cmd_birthday.birthday_callback,          pattern="^bd_"))
     app.add_handler(CallbackQueryHandler(cmd_broadcast.broadcast_callback,        pattern="^bc_"))
+    app.add_handler(CallbackQueryHandler(cmd_standup.standup_callback,            pattern="^sd_"))
     app.add_handler(CallbackQueryHandler(cmd_adminconfig.admin_callback,          pattern="^adm_"))
     app.add_handler(CallbackQueryHandler(cmd_adminconfig.userconfig_callback,     pattern="^uc_"))
     app.add_handler(CallbackQueryHandler(cmd_adminconfig.admin_callback,          pattern="^adm_uc_cancel"))

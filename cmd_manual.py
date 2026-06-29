@@ -92,6 +92,17 @@ MANUAL_SECTIONS = {
                  "Format: /library"),
             ]),
             ("📋 Tasks — Assign & Track Work", [
+                ("/standup",
+                 "Set up and manage daily standups for your team.\n"
+                 "Sub-menu options:\n"
+                 "  ➕ New Config → name, members, recurrence, check-in/out times\n"
+                 "  📋 My Configs → view and manage all your standup schedules\n"
+                 "  ⚙️ Manage → pause, resume, delete, edit members or timing\n"
+                 "  📅 My Standups Today → view pending prompts\n"
+                 "Members receive DM prompts at scheduled times and choose to reply via bot or Discord.\n"
+                 "Manager approves each submission and receives an AI summary when all members are done.\n"
+                 "Format: /standup"),
+
                 ("/task",
                  "Assign a task to one or more team members.\n"
                  "• In a group: tap member names to add/remove assignees. Type the task description in chat. Press Finish.\n"
@@ -220,6 +231,11 @@ MANUAL_SECTIONS = {
                  "الصيغة: /library"),
             ]),
             ("📋 المهام", [
+                ("/standup",
+                 "أنشئ وأدِر جلسات الوقوف اليومية للفريق.\n"
+                 "يتلقى الأعضاء رسائل خاصة في الأوقات المحددة لتسجيل الحضور والانصراف.\n"
+                 "الصيغة: /standup"),
+
                 ("/task",
                  "أسند مهمة لأعضاء الفريق.\n"
                  "في المجموعة: انقر على الأسماء لتحديدهم، اكتب الوصف، ثم اضغط إنهاء.\n"
@@ -322,6 +338,11 @@ MANUAL_SECTIONS = {
                  "Format: /library"),
             ]),
             ("📋 Tugas", [
+                ("/standup",
+                 "Buat dan kelola standup harian untuk tim.\n"
+                 "Anggota mendapat DM di waktu yang ditentukan untuk check-in dan check-out.\n"
+                 "Format: /standup"),
+
                 ("/task",
                  "Tugaskan pekerjaan ke anggota tim.\n"
                  "• Di grup: ketuk nama anggota, ketik deskripsi, tekan Selesai.\n"

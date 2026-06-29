@@ -242,6 +242,8 @@ async def init_db(app: Application):
 
         import cmd_trivia
         await cmd_trivia.ensure_trivia_database(app.bot_data['db_pool'])
+        import cmd_standup
+        await cmd_standup.ensure_standup_tables(app.bot_data['db_pool'])
         
     except Exception as e:
         logger.critical(f"❌ CRITICAL FAILURE: Could not establish initial database structures: {e}")
