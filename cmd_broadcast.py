@@ -492,11 +492,16 @@ async def _show_list(q, pool, page: int):
         freq = freq_labels.get(r["frequency"], r["frequency"])
         tag  = "🔔 Tag all" if r["mention"] else "🔕 No tag"
 
-        # First fire time
-        if r["frequency"] == "once" and r.get("scheduled_at"):
-            import datetime as _dt
+        # First fire time (asyncpg Record has no .get() — use bracket + try/except)
+        sched_at = None
+        try:
+            sched_at = r["scheduled_at"]
+        except (KeyError, IndexError):
+            sched_at = None
+
+        if r["frequency"] == "once" and sched_at:
             from core import WIB as _WIB
-            first_str = r["scheduled_at"].astimezone(_WIB).strftime("%b %d %Y at %H:%M WIB")
+            first_str = sched_at.astimezone(_WIB).strftime("%b %d %Y at %H:%M WIB")
         else:
             first_str = f"Daily at {r['run_time']} WIB"
 

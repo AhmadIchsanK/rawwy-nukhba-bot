@@ -2837,12 +2837,18 @@ async def process_schedules(context: ContextTypes.DEFAULT_TYPE):
             # All recurring types store run_time as 'HH:MM'
             h, m = map(int, t_str.split(':'))
             time_match = (now.hour == h and now.minute == m)
-            last_run   = s.get('last_run')
+            try:
+                last_run = s['last_run']
+            except (KeyError, IndexError):
+                last_run = None
             ran_today  = (last_run and last_run.astimezone(WIB).date() == now.date())
 
             if freq == 'once':
                 # For once: fire at the scheduled_at datetime
-                sched_at = s.get('scheduled_at')
+                try:
+                    sched_at = s['scheduled_at']
+                except (KeyError, IndexError):
+                    sched_at = None
                 if sched_at and not last_run:
                     sched_wib = sched_at.astimezone(WIB)
                     if now >= sched_wib:

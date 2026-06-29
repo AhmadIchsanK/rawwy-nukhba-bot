@@ -1135,7 +1135,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         if member_uid:
             stype = "Check-in" if sess["type"] == "checkin" else "Check-out"
             tasks_text = ""
-            if resp.get("tasks"):
+            if resp["tasks"]:
                 tasks_text = (
                     f"\n\n_Your previous response (for easy copy-paste):_\n"
                     f"{_fmt_tasks(json.loads(resp['tasks']))}"
@@ -1308,7 +1308,11 @@ async def _submit_checkout(source, context, pool, session_id: int, member: str,
 
 async def _check_all_done(context, pool, session_id: int, sess):
     """If all members approved, send AI summary to manager."""
-    members = json.loads(sess.get("members", "[]"))
+    try:
+        members_raw = sess["members"]
+    except (KeyError, IndexError):
+        members_raw = "[]"
+    members = json.loads(members_raw or "[]")
     if not members:
         return
 
