@@ -106,17 +106,23 @@ async def _ensure_version_table(pool):
         ''')
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS scheduled_announcements (
-                id SERIAL PRIMARY KEY,
-                chat_id TEXT,
-                frequency TEXT,
-                run_time TEXT,
-                mention BOOLEAN DEFAULT FALSE,
-                message TEXT,
-                created_by VARCHAR(100),
-                last_run TIMESTAMP WITH TIME ZONE,
-                scheduled_date TEXT
+                id           SERIAL PRIMARY KEY,
+                chat_id      TEXT,
+                frequency    VARCHAR(20) DEFAULT 'once',
+                run_time     VARCHAR(5),
+                mention      BOOLEAN DEFAULT FALSE,
+                message      TEXT,
+                created_by   VARCHAR(100),
+                scheduled_at TIMESTAMP WITH TIME ZONE
             )
         ''')
+        # Migration: guarantee every column this table has ever needed exists,
+        # regardless of which CREATE TABLE ran first historically on this DB.
+        await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE")
+        await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS last_run TIMESTAMP WITH TIME ZONE")
+        await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
+        await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS mention BOOLEAN DEFAULT FALSE")
+        await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS created_by VARCHAR(100)")
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS announcements (
                 id SERIAL PRIMARY KEY,

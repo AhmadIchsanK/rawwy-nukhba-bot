@@ -44,6 +44,7 @@ async def ensure_standup_tables(pool):
             CREATE TABLE IF NOT EXISTS standup_configs (
                 id           SERIAL PRIMARY KEY,
                 manager      VARCHAR(100) NOT NULL,
+                created_by   VARCHAR(100),
                 name         TEXT NOT NULL DEFAULT 'Daily Standup',
                 members      TEXT NOT NULL DEFAULT '[]',
                 recurrence   VARCHAR(20)  NOT NULL DEFAULT 'weekday',
@@ -53,6 +54,13 @@ async def ensure_standup_tables(pool):
                 created_at   TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
         """)
+        await conn.execute(
+            "ALTER TABLE standup_configs ADD COLUMN IF NOT EXISTS created_by VARCHAR(100)"
+        )
+        # Backfill: for existing rows, creator defaults to manager (best guess)
+        await conn.execute(
+            "UPDATE standup_configs SET created_by = manager WHERE created_by IS NULL"
+        )
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS standup_sessions (
                 id          SERIAL PRIMARY KEY,
@@ -310,19 +318,50 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # ── New config wizard: Step 1 — name ─────────────────────────────────────
+    # ── New config wizard: Step 1 — manager picker ────────────────────────────
     elif data == "sd_new":
-        context.user_data["sd_state"]  = "await_name"
-        context.user_data["sd_draft"]  = {"manager": username}
+        context.user_data["sd_state"]  = None
+        context.user_data["sd_draft"]  = {}
         context.user_data["sd_panel"]  = (q.message.chat_id, q.message.message_id)
-        prompt = await q.message.edit_text(
-            "➕ *New Standup Config — Step 1 of 5*\n\n"
+        await q.message.edit_text(
+            "➕ *New Standup Config — Step 1 of 6*\n\n"
+            "Who should receive standup approvals, missed-checkin alerts, "
+            "and AI summaries for this standup?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👤 Myself", callback_data="sd_mgr_self")],
+                [InlineKeyboardButton("👥 Someone else", callback_data="sd_mgr_other")],
+                [InlineKeyboardButton("🚪 Cancel", callback_data="sd_close")],
+            ]),
+            parse_mode="Markdown"
+        )
+
+    # ── Manager = self ──────────────────────────────────────────────────────────
+    elif data == "sd_mgr_self":
+        context.user_data["sd_draft"]["manager"] = username
+        context.user_data["sd_state"] = "await_name"
+        panel = context.user_data.get("sd_panel", (q.message.chat_id, q.message.message_id))
+        await q.message.edit_text(
+            f"➕ *New Standup Config — Step 2 of 6*\n\n"
+            f"Manager/Recipient: *@{username}* (you)\n\n"
             "Give this standup a *name*:\n_e.g. RAWWY Daily Standup_",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
         schedule_text_input_timeout(
-            context, uid, "sd_state", "await_name",
-            q.message.chat_id, q.message.message_id
+            context, uid, "sd_state", "await_name", panel[0], panel[1]
+        )
+
+    # ── Manager = someone else — ask for username ───────────────────────────────
+    elif data == "sd_mgr_other":
+        context.user_data["sd_state"] = "await_manager_username"
+        panel = context.user_data.get("sd_panel", (q.message.chat_id, q.message.message_id))
+        await q.message.edit_text(
+            "➕ *New Standup Config — Step 1 of 6*\n\n"
+            "Type the *username* of the person who should receive "
+            "standup approvals and summaries:\n`@username`",
+            reply_markup=_back_kb(), parse_mode="Markdown"
+        )
+        schedule_text_input_timeout(
+            context, uid, "sd_state", "await_manager_username", panel[0], panel[1]
         )
 
     # ── Recurrence picker (step 3) ────────────────────────────────────────────
@@ -335,7 +374,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.edit_message_text(
                 chat_id=panel[0], message_id=panel[1],
                 text=(
-                    f"➕ *New Standup Config — Step 4 of 5*\n\n"
+                    f"➕ *New Standup Config — Step 4 of 6*\n\n"
                     f"Recurrence: *{RECURRENCE_LABELS[rec]}*\n\n"
                     "Type the *check-in time* (WIB):\n`HH:MM`\n_e.g. `09:00`_"
                 ),
@@ -352,8 +391,8 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "sd_list":
         async with pool.acquire() as conn:
             configs = await conn.fetch(
-                "SELECT id, name, recurrence, checkin_time, checkout_time, status, members "
-                "FROM standup_configs WHERE LOWER(manager)=$1 ORDER BY id DESC",
+                "SELECT id, name, recurrence, checkin_time, checkout_time, status, members, manager "
+                "FROM standup_configs WHERE LOWER(created_by)=$1 ORDER BY id DESC",
                 username.lower()
             )
         if not configs:
@@ -368,6 +407,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st = "✅" if cfg["status"] == "active" else "⏸️"
             lines.append(
                 f"{st} *#{cfg['id']}* {cfg['name']}\n"
+                f"   👤 Manager: @{cfg['manager']}\n"
                 f"   {RECURRENCE_LABELS.get(cfg['recurrence'], cfg['recurrence'])} | "
                 f"In: {cfg['checkin_time']} · Out: {cfg['checkout_time']} WIB\n"
                 f"   👥 {len(members)} member{'s' if len(members) != 1 else ''}"
@@ -386,7 +426,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "sd_manage_pick":
         async with pool.acquire() as conn:
             configs = await conn.fetch(
-                "SELECT id, name, status FROM standup_configs WHERE LOWER(manager)=$1 ORDER BY id DESC",
+                "SELECT id, name, status FROM standup_configs WHERE LOWER(created_by)=$1 ORDER BY id DESC",
                 username.lower()
             )
         if not configs:
@@ -407,7 +447,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         config_id = int(data[10:])
         async with pool.acquire() as conn:
             cfg = await conn.fetchrow(
-                "SELECT * FROM standup_configs WHERE id=$1 AND LOWER(manager)=$2",
+                "SELECT * FROM standup_configs WHERE id=$1 AND LOWER(created_by)=$2",
                 config_id, username.lower()
             )
         if not cfg:
@@ -417,6 +457,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.message.edit_text(
             f"⚙️ *{cfg['name']}* (#{cfg['id']})\n\n"
             f"Status: {st}\n"
+            f"👤 Manager/Recipient: @{cfg['manager']}\n"
             f"Recurrence: {RECURRENCE_LABELS.get(cfg['recurrence'], cfg['recurrence'])}\n"
             f"Check-in: {cfg['checkin_time']} WIB\n"
             f"Check-out: {cfg['checkout_time']} WIB\n"
@@ -431,7 +472,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         config_id = int(data.split("_")[-1])
         async with pool.acquire() as conn:
             await conn.execute(
-                "UPDATE standup_configs SET status=$1 WHERE id=$2 AND LOWER(manager)=$3",
+                "UPDATE standup_configs SET status=$1 WHERE id=$2 AND LOWER(created_by)=$3",
                 action, config_id, username.lower()
             )
         lbl = "⏸️ Paused" if action == "paused" else "▶️ Resumed"
@@ -444,6 +485,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             st = "✅ Active" if cfg["status"] == "active" else "⏸️ Paused"
             await q.message.edit_text(
                 f"⚙️ *{cfg['name']}* (#{cfg['id']})\n\nStatus: {st}\n"
+                f"👤 Manager/Recipient: @{cfg['manager']}\n"
                 f"Recurrence: {RECURRENCE_LABELS.get(cfg['recurrence'], cfg['recurrence'])}\n"
                 f"Check-in: {cfg['checkin_time']} WIB · Check-out: {cfg['checkout_time']} WIB\n"
                 f"Members ({len(members)}): {', '.join('@'+m for m in members) or '_none_'}",
@@ -469,7 +511,7 @@ async def standup_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         config_id = int(data[17:])
         async with pool.acquire() as conn:
             await conn.execute(
-                "DELETE FROM standup_configs WHERE id=$1 AND LOWER(manager)=$2",
+                "DELETE FROM standup_configs WHERE id=$1 AND LOWER(created_by)=$2",
                 config_id, username.lower()
             )
         await q.message.edit_text(
@@ -822,11 +864,50 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
 
+    # ── Step 1 (alt): Manager username ───────────────────────────────────────
+    if state == "await_manager_username":
+        mgr = text.strip().lstrip("@").lower()
+        if not mgr or " " in mgr:
+            await _reshow(
+                "➕ *New Standup Config — Step 1 of 6*\n\n"
+                "Type the *username* of the person who should receive "
+                "standup approvals and summaries:\n`@username`",
+                _back_kb(), "Invalid username. Type a single username, e.g. `@alice`"
+            )
+            return True
+        manager_uid = await _get_user_id(pool, mgr)
+        if not manager_uid:
+            await _reshow(
+                "➕ *New Standup Config — Step 1 of 6*\n\n"
+                "Type the *username* of the person who should receive "
+                "standup approvals and summaries:\n`@username`",
+                _back_kb(),
+                f"@{mgr} hasn't started a chat with the bot yet. "
+                f"Ask them to run /start first, then try again."
+            )
+            return True
+        cancel_text_input_timeout(context, uid, "sd_state")
+        context.user_data["sd_draft"]["manager"] = mgr
+        context.user_data["sd_state"] = "await_name"
+        await context.bot.edit_message_text(
+            chat_id=panel[0], message_id=panel[1],
+            text=(
+                f"➕ *New Standup Config — Step 2 of 6*\n\n"
+                f"Manager/Recipient: *@{mgr}*\n\n"
+                "Give this standup a *name*:\n_e.g. RAWWY Daily Standup_"
+            ),
+            reply_markup=_back_kb(), parse_mode="Markdown"
+        )
+        schedule_text_input_timeout(
+            context, uid, "sd_state", "await_name", panel[0], panel[1]
+        )
+        return True
+
     # ── Step 1: Name ──────────────────────────────────────────────────────────
     if state == "await_name":
         if not text:
             await _reshow(
-                "➕ *New Standup Config — Step 1 of 5*\n\nGive this standup a *name*:",
+                "➕ *New Standup Config — Step 2 of 6*\n\nGive this standup a *name*:",
                 _back_kb(), "Name cannot be empty."
             )
             return True
@@ -836,7 +917,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.edit_message_text(
             chat_id=panel[0], message_id=panel[1],
             text=(
-                f"➕ *New Standup Config — Step 2 of 5*\n\n"
+                f"➕ *New Standup Config — Step 3 of 6*\n\n"
                 f"Name: *{text}*\n\n"
                 "Type the *member usernames* (comma-separated):\n"
                 "`@alice, @bob, @carol`"
@@ -854,7 +935,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
                    for m in text.replace(",", " ").split() if m.strip()]
         if not members:
             await _reshow(
-                "➕ *Step 2 of 5*\n\nType member usernames (comma-separated):",
+                "➕ *Step 3 of 6*\n\nType member usernames (comma-separated):",
                 _back_kb(), "Please enter at least one member username."
             )
             return True
@@ -864,7 +945,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.edit_message_text(
             chat_id=panel[0], message_id=panel[1],
             text=(
-                f"➕ *New Standup Config — Step 3 of 5*\n\n"
+                f"➕ *New Standup Config — Step 4 of 6*\n\n"
                 f"Members: {', '.join('@'+m for m in members)}\n\n"
                 "Choose the *recurrence*:"
             ),
@@ -876,7 +957,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif state == "await_checkin_time":
         if not re.match(r"^\d{1,2}:\d{2}$", text):
             await _reshow(
-                "➕ *Step 4 of 5*\n\nType the *check-in time* (WIB):\n`HH:MM`",
+                "➕ *Step 5 of 6*\n\nType the *check-in time* (WIB):\n`HH:MM`",
                 _back_kb(), "Invalid time format. Use HH:MM, e.g. `09:00`"
             )
             return True
@@ -886,7 +967,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         await context.bot.edit_message_text(
             chat_id=panel[0], message_id=panel[1],
             text=(
-                f"➕ *New Standup Config — Step 5 of 5*\n\n"
+                f"➕ *New Standup Config — Step 6 of 6*\n\n"
                 f"Check-in: *{text} WIB*\n\n"
                 "Type the *check-out time* (WIB):\n`HH:MM`"
             ),
@@ -901,7 +982,7 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif state == "await_checkout_time":
         if not re.match(r"^\d{1,2}:\d{2}$", text):
             await _reshow(
-                "➕ *Step 5 of 5*\n\nType the *check-out time* (WIB):\n`HH:MM`",
+                "➕ *Step 6 of 6*\n\nType the *check-out time* (WIB):\n`HH:MM`",
                 _back_kb(), "Invalid time format. Use HH:MM, e.g. `17:00`"
             )
             return True
@@ -912,9 +993,10 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
         async with pool.acquire() as conn:
             config_id = await conn.fetchval(
                 "INSERT INTO standup_configs "
-                "(manager, name, members, recurrence, checkin_time, checkout_time, status) "
-                "VALUES ($1,$2,$3,$4,$5,$6,'active') RETURNING id",
+                "(manager, created_by, name, members, recurrence, checkin_time, checkout_time, status) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,'active') RETURNING id",
                 draft.get("manager", username),
+                username,
                 draft.get("name", "Standup"),
                 json.dumps(draft.get("members", [])),
                 draft.get("recurrence", "weekday"),
@@ -928,11 +1010,12 @@ async def handle_standup_text(update: Update, context: ContextTypes.DEFAULT_TYPE
             text=(
                 f"✅ *Standup Config #{config_id} Created!*\n\n"
                 f"📛 Name: {draft['name']}\n"
+                f"👤 Manager/Recipient: @{draft.get('manager', username)}\n"
                 f"👥 Members: {', '.join('@'+m for m in draft.get('members', []))}\n"
                 f"🔁 Recurrence: {RECURRENCE_LABELS.get(draft['recurrence'], draft['recurrence'])}\n"
                 f"🌅 Check-in: {draft['checkin_time']} WIB\n"
                 f"🌇 Check-out: {draft['checkout_time']} WIB\n\n"
-                "_The bot will DM members at the scheduled times._"
+                "_The bot will DM members at the scheduled times, and approvals/summaries will go to the manager above._"
             ),
             reply_markup=_back_kb(), parse_mode="Markdown"
         )

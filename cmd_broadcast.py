@@ -463,87 +463,119 @@ async def _do_post_now(bot, pool, chat_id: str, message: str, q):
 # LIST & DELETE SCHEDULES
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _esc_md(text: str) -> str:
+    """Escape Telegram Markdown special chars so user-typed messages never break parse_mode."""
+    if not text:
+        return ""
+    for ch in ["_", "*", "`", "["]:
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 async def _show_list(q, pool, page: int):
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, chat_id, frequency, run_time, mention, message, scheduled_at "
-            "FROM scheduled_announcements ORDER BY id DESC"
+    """
+    Show paginated scheduled broadcasts with full message, first-run time,
+    and Edit/Delete buttons. Defensive against schema drift and bad Markdown.
+    """
+    try:
+        async with pool.acquire() as conn:
+            # Self-healing migration — guarantees columns exist regardless of
+            # which CREATE TABLE statement created this table historically.
+            try:
+                await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE")
+                await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS mention BOOLEAN DEFAULT FALSE")
+                await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS last_run TIMESTAMP WITH TIME ZONE")
+            except Exception as mig_err:
+                logger.warning(f"Broadcast list migration check failed (non-fatal): {mig_err}")
+
+            raw_rows = await conn.fetch(
+                "SELECT id, chat_id, frequency, run_time, mention, message, scheduled_at "
+                "FROM scheduled_announcements ORDER BY id DESC"
+            )
+
+        # Convert every Record to a plain dict immediately — eliminates any
+        # chance of Record-vs-dict attribute mistakes further down.
+        rows = [dict(r) for r in raw_rows]
+
+        if not rows:
+            return await q.message.edit_text(
+                "📋 *Scheduled Broadcasts*\n\n_No schedules set up yet._",
+                reply_markup=_back_kb(), parse_mode="Markdown"
+            )
+
+        PAGE  = 3
+        total = len(rows)
+        pages = max(1, (total + PAGE - 1) // PAGE)
+        page  = max(0, min(page, pages - 1))
+        chunk = rows[page * PAGE: (page + 1) * PAGE]
+
+        freq_labels = {
+            "once": "Once", "weekday": "Daily (Mon\u2013Fri)",
+            "daily": "Daily (All Days)", "weekly": "Weekly (Mon)"
+        }
+
+        from core import WIB as _WIB
+
+        lines = [f"📋 *Scheduled Broadcasts* ({total} total) — Page {page+1}/{pages}\n"]
+        for r in chunk:
+            freq = freq_labels.get(r.get("frequency"), r.get("frequency") or "Once")
+            tag  = "🔔 Tag all" if r.get("mention") else "🔕 No tag"
+
+            sched_at = r.get("scheduled_at")
+            if r.get("frequency") == "once" and sched_at:
+                first_str = sched_at.astimezone(_WIB).strftime("%b %d %Y at %H:%M WIB")
+            else:
+                first_str = f"Daily at {r.get('run_time') or '--:--'} WIB"
+
+            full_msg     = (r.get("message") or "").strip()
+            msg_display  = full_msg[:300] + ("…" if len(full_msg) > 300 else "")
+            msg_display  = await _esc_md(msg_display)
+
+            lines.append(
+                f"─────────────────\n"
+                f"🔹 *Schedule #{r.get('id')}*\n"
+                f"📡 Target: `{r.get('chat_id')}`\n"
+                f"🔁 {freq}\n"
+                f"⏰ First run: {first_str}\n"
+                f"🔔 {tag}\n"
+                f"📝 Message:\n_{msg_display}_"
+            )
+
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"bc_list_{page-1}"))
+        if page < pages - 1:
+            nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"bc_list_{page+1}"))
+
+        action_rows = []
+        for r in chunk:
+            action_rows.append([
+                InlineKeyboardButton(f"✏️ Edit #{r.get('id')}",  callback_data=f"bc_edit_msg_{r.get('id')}"),
+                InlineKeyboardButton(f"🗑️ Delete #{r.get('id')}", callback_data=f"bc_delid_{r.get('id')}"),
+            ])
+
+        rows_kb = action_rows
+        if nav:
+            rows_kb.append(nav)
+        rows_kb.append([InlineKeyboardButton("🏠 Home", callback_data="bc_home"),
+                        InlineKeyboardButton("🚪 Close", callback_data="bc_close")])
+
+        await q.message.edit_text(
+            "\n".join(lines),
+            reply_markup=InlineKeyboardMarkup(rows_kb),
+            parse_mode="Markdown"
         )
 
-    if not rows:
-        return await q.message.edit_text(
-            "📋 *Scheduled Broadcasts*\n\n_No schedules set up yet._",
-            reply_markup=_back_kb(), parse_mode="Markdown"
-        )
-
-    PAGE = 3   # fewer per page so full message fits
-    total = len(rows)
-    pages = max(1, (total + PAGE - 1) // PAGE)
-    page  = max(0, min(page, pages - 1))
-    chunk = rows[page * PAGE: (page + 1) * PAGE]
-
-    freq_labels = {
-        "once": "Once", "weekday": "Daily (Mon–Fri)",
-        "daily": "Daily (All Days)", "weekly": "Weekly (Mon)"
-    }
-
-    lines = [f"📋 *Scheduled Broadcasts* ({total} total) — Page {page+1}/{pages}\n"]
-    for r in chunk:
-        freq = freq_labels.get(r["frequency"], r["frequency"])
-        tag  = "🔔 Tag all" if r["mention"] else "🔕 No tag"
-
-        # First fire time (asyncpg Record has no .get() — use bracket + try/except)
-        sched_at = None
+    except Exception as e:
+        logger.error(f"_show_list crashed: {e}", exc_info=True)
         try:
-            sched_at = r["scheduled_at"]
-        except (KeyError, IndexError):
-            sched_at = None
-
-        if r["frequency"] == "once" and sched_at:
-            from core import WIB as _WIB
-            first_str = sched_at.astimezone(_WIB).strftime("%b %d %Y at %H:%M WIB")
-        else:
-            first_str = f"Daily at {r['run_time']} WIB"
-
-        # Full message (up to 300 chars to keep panel readable)
-        full_msg = (r["message"] or "").strip()
-        msg_display = full_msg[:300] + ("…" if len(full_msg) > 300 else "")
-
-        lines.append(
-            f"─────────────────\n"
-            f"🔹 *Schedule #{r['id']}*\n"
-            f"📡 Target: `{r['chat_id']}`\n"
-            f"🔁 {freq}\n"
-            f"⏰ First run: {first_str}\n"
-            f"🔔 {tag}\n"
-            f"📝 Message:\n_{msg_display}_"
-        )
-
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("◀️ Prev", callback_data=f"bc_list_{page-1}"))
-    if page < pages - 1:
-        nav.append(InlineKeyboardButton("Next ▶️", callback_data=f"bc_list_{page+1}"))
-
-    # Edit and Delete buttons for each schedule in view
-    action_rows = []
-    for r in chunk:
-        action_rows.append([
-            InlineKeyboardButton(f"✏️ Edit #{r['id']}",  callback_data=f"bc_edit_msg_{r['id']}"),
-            InlineKeyboardButton(f"🗑️ Delete #{r['id']}", callback_data=f"bc_delid_{r['id']}"),
-        ])
-
-    rows_kb = action_rows
-    if nav:
-        rows_kb.append(nav)
-    rows_kb.append([InlineKeyboardButton("🏠 Home", callback_data="bc_home"),
-                    InlineKeyboardButton("🚪 Close", callback_data="bc_close")])
-
-    await q.message.edit_text(
-        "\n".join(lines),
-        reply_markup=InlineKeyboardMarkup(rows_kb),
-        parse_mode="Markdown"
-    )
+            await q.message.edit_text(
+                "⚠️ Couldn't load the schedule list right now. Please try again.\n"
+                "If this keeps happening, let the admin know via /feedback.",
+                reply_markup=_back_kb()
+            )
+        except Exception:
+            pass
 
 
 async def _show_del_pick(q, pool):

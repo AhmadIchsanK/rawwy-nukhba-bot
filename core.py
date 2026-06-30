@@ -225,6 +225,12 @@ async def init_db(app: Application):
                     scheduled_at TIMESTAMP WITH TIME ZONE
                 )
             ''')
+            # Migration: guarantee every column ever used by any module exists
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMP WITH TIME ZONE")
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS last_run TIMESTAMP WITH TIME ZONE")
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS mention BOOLEAN DEFAULT FALSE")
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS created_by VARCHAR(100)")
             # ── TASK ASSIGNEES ────────────────────────────────────────────────
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS task_assignees (
