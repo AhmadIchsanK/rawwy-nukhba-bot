@@ -1362,7 +1362,6 @@ async def update_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         msg = await context.bot.send_message(uid, text, reply_markup=kb, parse_mode="Markdown")
-        from core import schedule_kb_timeout, KEYBOARD_TIMEOUT
         await schedule_kb_timeout(context, uid, msg.message_id, uid)
         context.user_data['uc_state']     = 'await_updatechange'
         context.user_data['uc_panel_chat'] = uid

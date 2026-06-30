@@ -25,7 +25,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 
 from core import (
-    delete_cmd, is_bot_admin,
+    WIB, delete_cmd, is_bot_admin,
     schedule_kb_timeout, cancel_kb_timeout, check_kb_ownership, log_action,
     schedule_text_input_timeout, cancel_text_input_timeout,
 )
@@ -269,7 +269,6 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
             ]]),
             parse_mode="Markdown"
         )
-        from core import schedule_text_input_timeout
         await schedule_text_input_timeout(
             context, uid, "bc_state", f"await_edit_msg_{s_id}",
             q.message.chat_id, q.message.message_id
@@ -514,8 +513,6 @@ async def _show_list(q, pool, page: int):
             "daily": "Daily (All Days)", "weekly": "Weekly (Mon)"
         }
 
-        from core import WIB as _WIB
-
         lines = [f"📋 *Scheduled Broadcasts* ({total} total) — Page {page+1}/{pages}\n"]
         for r in chunk:
             freq = freq_labels.get(r.get("frequency"), r.get("frequency") or "Once")
@@ -523,7 +520,7 @@ async def _show_list(q, pool, page: int):
 
             sched_at = r.get("scheduled_at")
             if r.get("frequency") == "once" and sched_at:
-                first_str = sched_at.astimezone(_WIB).strftime("%b %d %Y at %H:%M WIB")
+                first_str = sched_at.astimezone(WIB).strftime("%b %d %Y at %H:%M WIB")
             else:
                 first_str = f"Daily at {r.get('run_time') or '--:--'} WIB"
 
@@ -681,7 +678,6 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
     # ── Scheduled datetime input ───────────────────────────────────────────
     elif state == "await_sched_datetime":
         try:
-            from core import WIB
             dt = WIB.localize(datetime.datetime.strptime(text, "%m/%d/%Y %H:%M"))
             if dt < datetime.datetime.now(WIB):
                 raise ValueError("past")
@@ -726,7 +722,6 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
         if not text:
             await update.message.reply_text("❌ Message cannot be empty.")
             return True
-        from core import cancel_text_input_timeout
         cancel_text_input_timeout(context, uid, "bc_state")
         context.user_data.pop("bc_state", None)
         context.user_data.pop("bc_edit_id", None)
