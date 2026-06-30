@@ -3,6 +3,7 @@ import logging
 import json
 import re
 import asyncio
+import difflib
 from openai import OpenAI as GroqClient
 from google import genai  # fallback only
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -758,13 +759,38 @@ async def get_used_questions(pool, theme: str, limit: int = 50) -> list:
     return [r["question"] for r in rows]
 
 
+def is_question_duplicate(candidate: str, used_qs: list, threshold: float = 0.80) -> bool:
+    """
+    Hard validation: checks the freshly generated question against the
+    used-question history using fuzzy text similarity. The AI's prompt-level
+    'don't repeat' instruction is a soft constraint that smaller/faster models
+    often ignore, so this catches near-identical questions even when the
+    wording differs slightly (e.g. "What is the capital of France?" vs
+    "What's the capital city of France?").
+    """
+    candidate_norm = candidate.strip().lower()
+    for used in used_qs:
+        used_norm = used.strip().lower()
+        if candidate_norm == used_norm:
+            return True
+        ratio = difflib.SequenceMatcher(None, candidate_norm, used_norm).ratio()
+        if ratio >= threshold:
+            return True
+    return False
+
+
 async def record_used_question(pool, question: str, theme: str):
-    """Store a question so it won't be repeated."""
+    """Store a question so it won't be repeated. Idempotent — skips if already recorded."""
     async with pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO trivia_used_questions (question, theme, used_at) VALUES ($1, $2, NOW())",
-            question, theme
+        existing = await conn.fetchval(
+            "SELECT 1 FROM trivia_used_questions WHERE theme=$1 AND question=$2 LIMIT 1",
+            theme, question
         )
+        if not existing:
+            await conn.execute(
+                "INSERT INTO trivia_used_questions (question, theme, used_at) VALUES ($1, $2, NOW())",
+                question, theme
+            )
         # Keep table lean — only keep last 200 questions per theme
         await conn.execute(
             "DELETE FROM trivia_used_questions WHERE id IN ("
@@ -786,6 +812,93 @@ async def advance_theme(pool):
         # the queue entry is kept. Nothing extra needed here since
         # get_next_theme already records on selection.
         pass
+
+
+async def _call_ai_for_question(prompt: str):
+    """
+    Low-level AI call: tries Groq (primary) then Gemini (fallback).
+    Returns parsed dict with question/options/correct_index/explanation,
+    or raises an exception if all attempts fail.
+    """
+    if not GROQ_API_KEY and not GEMINI_API_KEY:
+        raise RuntimeError("No AI API key configured.")
+
+    primary_error = None
+
+    # --- Groq primary (Llama) ---
+    groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+    if GROQ_API_KEY:
+        for model_name in groq_models:
+            delay = 5
+            for attempt in range(1, 4):
+                try:
+                    groq_client = GroqClient(
+                        api_key=GROQ_API_KEY,
+                        base_url="https://api.groq.com/openai/v1"
+                    )
+                    resp = await asyncio.to_thread(
+                        groq_client.chat.completions.create,
+                        model=model_name,
+                        messages=[{"role": "user", "content": prompt}],
+                        max_tokens=500,
+                    )
+                    raw = resp.choices[0].message.content.strip()
+                    raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+                    raw = re.sub(r'\s*`{3}$', '', raw)
+                    parsed = json.loads(raw.strip())
+                    assert 'question' in parsed and 'options' in parsed
+                    assert 'correct_index' in parsed and 'explanation' in parsed
+                    assert len(parsed['options']) >= 2
+                    return parsed
+                except Exception as e:
+                    if primary_error is None:
+                        primary_error = e
+                    err_str = str(e)
+                    is_retryable = (
+                        "429" in err_str or "rate_limit" in err_str.lower() or
+                        "503" in err_str or "unavailable" in err_str.lower()
+                    )
+                    if is_retryable and attempt < 3:
+                        await asyncio.sleep(delay)
+                        delay *= 2
+                        continue
+                    break
+
+    # --- Gemini fallback ---
+    if GEMINI_API_KEY:
+        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        for model_name in GEMINI_MODELS:
+            delay = 5
+            for attempt in range(1, 3):
+                try:
+                    resp = await asyncio.to_thread(
+                        gemini_client.models.generate_content,
+                        model=model_name,
+                        contents=prompt
+                    )
+                    raw = resp.text.strip()
+                    raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+                    raw = re.sub(r'\s*`{3}$', '', raw)
+                    parsed = json.loads(raw.strip())
+                    assert 'question' in parsed and 'options' in parsed
+                    assert 'correct_index' in parsed and 'explanation' in parsed
+                    assert len(parsed['options']) >= 2
+                    return parsed
+                except Exception as e:
+                    if primary_error is None:
+                        primary_error = e
+                    err_str = str(e)
+                    if "404" in err_str or "NOT_FOUND" in err_str:
+                        break
+                    if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
+                            "503" in err_str or "UNAVAILABLE" in err_str):
+                        if attempt < 2:
+                            await asyncio.sleep(delay)
+                            delay *= 2
+                            continue
+                    break
+
+    raise RuntimeError(f"All AI providers failed. Last error: {primary_error}")
 
 
 async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
@@ -810,119 +923,67 @@ async def deploy_trivia(bot, chat_id: int, is_super_round: bool, pool):
     else:
         theme = configured_theme
 
-    # ── Load recently used questions for this theme ─────────────────────────
-    used_qs = await get_used_questions(pool, theme, limit=50)
-    used_block = ""
-    if used_qs:
-        # Show the last 10 questions to avoid in the prompt (keep prompt compact)
-        recent = used_qs[:10]
-        used_block = (
-            f" IMPORTANT: Do NOT use any of these recently used questions: "
-            + ", ".join(f'"{q[:60]}"' for q in recent)
-            + ". Generate a completely different question."
-        )
-
     num_options = 6 if is_super_round else opts
 
-    prompt = (
-        f"Generate 1 multiple choice trivia question. Theme: {theme}."
-        f"{used_block} "
-        f"Provide exactly {num_options} answer options. "
-        f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
-        f"NO code blocks. Just the JSON: "
-        f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}'
-    )
-
-    if not GROQ_API_KEY and not GEMINI_API_KEY:
-        logger.error("No AI API key configured (GROQ_API_KEY or GEMINI_API_KEY).")
-        return
-
+    # ── Hard-dedup retry loop: generate, validate against history, retry up to 3x ──
+    MAX_ATTEMPTS = 3
     data = None
-    primary_error = None
+    for attempt_num in range(1, MAX_ATTEMPTS + 1):
+        # Fetch fresh used-question list every attempt so a just-recorded
+        # question is always reflected in the exclusion list.
+        used_qs = await get_used_questions(pool, theme, limit=50)
 
-    # --- Groq primary (Llama) ---
-    groq_models = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
-    if GROQ_API_KEY:
-        for model_name in groq_models:
-            delay = 5
-            for attempt in range(1, 4):
-                try:
-                    groq_client = GroqClient(
-                        api_key=GROQ_API_KEY,
-                        base_url="https://api.groq.com/openai/v1"
-                    )
-                    resp = await asyncio.to_thread(
-                        groq_client.chat.completions.create,
-                        model=model_name,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=500,
-                    )
-                    raw = resp.choices[0].message.content.strip()
-                    raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
-                    raw = re.sub(r'\s*`{3}$', '', raw)
-                    parsed_data = json.loads(raw.strip())
-                    assert 'question' in parsed_data and 'options' in parsed_data
-                    assert 'correct_index' in parsed_data and 'explanation' in parsed_data
-                    assert len(parsed_data['options']) >= 2
-                    data = parsed_data
-                    break
-                except Exception as e:
-                    if primary_error is None:
-                        primary_error = e
-                    err_str = str(e)
-                    is_retryable = (
-                        "429" in err_str or "rate_limit" in err_str.lower() or
-                        "503" in err_str or "unavailable" in err_str.lower()
-                    )
-                    if is_retryable and attempt < 3:
-                        await asyncio.sleep(delay)
-                        delay *= 2
-                        continue
-                    break
-            if data:
-                break
+        # Build exclusion block for the prompt — use up to 15 recent questions
+        recent   = used_qs[:15]
+        used_block = ""
+        if recent:
+            used_block = (
+                f" CRITICAL: You MUST NOT reuse any of these already-used questions: "
+                + "; ".join(f'"{q[:70]}"' for q in recent)
+                + f". Attempt {attempt_num}/{MAX_ATTEMPTS} — choose a completely different question."
+            )
 
-    # --- Gemini fallback ---
-    if not data and GEMINI_API_KEY:
-        gemini_client = genai.Client(api_key=GEMINI_API_KEY)
-        for model_name in GEMINI_MODELS:
-            delay = 5
-            for attempt in range(1, 3):
+        prompt = (
+            f"Generate 1 multiple choice trivia question. Theme: {theme}."
+            f"{used_block} "
+            f"Provide exactly {num_options} answer options. "
+            f"IMPORTANT: Return ONLY a raw JSON object with NO markdown formatting, "
+            f"NO code blocks. Just the JSON: "
+            f'{{"question":"...","options":["..."],"correct_index":0,"explanation":"..."}}' 
+        )
+
+        try:
+            candidate = await _call_ai_for_question(prompt)
+        except Exception as ai_err:
+            logger.error(f"Trivia AI generation failed (attempt {attempt_num}): {ai_err}")
+            if attempt_num == MAX_ATTEMPTS:
                 try:
-                    resp = await asyncio.to_thread(
-                        gemini_client.models.generate_content,
-                        model=model_name,
-                        contents=prompt
-                    )
-                    raw = resp.text.strip()
-                    raw = re.sub(r'^`{3}(?:json)?\s*', '', raw, flags=re.IGNORECASE)
-                    raw = re.sub(r'\s*`{3}$', '', raw)
-                    parsed_data = json.loads(raw.strip())
-                    assert 'question' in parsed_data and 'options' in parsed_data
-                    assert 'correct_index' in parsed_data and 'explanation' in parsed_data
-                    assert len(parsed_data['options']) >= 2
-                    data = parsed_data
-                    break
-                except Exception as e:
-                    if primary_error is None:
-                        primary_error = e
-                    err_str = str(e)
-                    if "404" in err_str or "NOT_FOUND" in err_str:
-                        break
-                    if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or
-                            "503" in err_str or "UNAVAILABLE" in err_str):
-                        if attempt < 2:
-                            await asyncio.sleep(delay)
-                            delay *= 2
-                            continue
-                    break
-            if data:
-                break
+                    await bot.send_message(chat_id, "⚠️ Trivia generation failed (AI error). Please try again with /forcetrivia")
+                except Exception:
+                    pass
+                return
+            await asyncio.sleep(3)
+            continue
+
+        # ── Hard validation: reject if too similar to a previously used question ──
+        candidate_q = candidate.get("question", "")
+        if used_qs and is_question_duplicate(candidate_q, used_qs):
+            logger.warning(
+                f"Trivia dedup: attempt {attempt_num} generated a duplicate question "
+                f"(theme={theme}). Retrying..."
+            )
+            if attempt_num < MAX_ATTEMPTS:
+                await asyncio.sleep(2)
+                continue
+            else:
+                logger.warning("Trivia dedup: max attempts reached, using last generated question anyway.")
+
+        data = candidate
+        break
 
     if not data:
-        logger.error(f"Trivia AI generation failed: {primary_error}")
         try:
-            await bot.send_message(chat_id, f"⚠️ Trivia generation failed (AI error). Please try again with /forcetrivia")
+            await bot.send_message(chat_id, "⚠️ Trivia generation failed. Please try /forcetrivia again.")
         except Exception:
             pass
         return

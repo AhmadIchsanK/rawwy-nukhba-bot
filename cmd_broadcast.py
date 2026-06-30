@@ -91,21 +91,42 @@ def _confirm_kb() -> InlineKeyboardMarkup:
     ]])
 
 
+def _weekday_kb() -> InlineKeyboardMarkup:
+    days = [("Monday","0"),("Tuesday","1"),("Wednesday","2"),("Thursday","3"),
+            ("Friday","4"),("Saturday","5"),("Sunday","6")]
+    rows = [[InlineKeyboardButton(f"📅 {label}", callback_data=f"bc_wday_{val}")] for label, val in days]
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data="bc_home"),
+                 InlineKeyboardButton("🚪 Close", callback_data="bc_close")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _draft_summary(d: dict) -> str:
     freq_labels = {
-        "once": "Once", "weekday": "Daily (Weekdays)",
+        "once": "Once", "weekday": "Daily (Weekdays Mon–Fri)",
         "daily": "Daily (All Days)", "weekly": "Weekly"
     }
     tag_label = "Yes 🔔" if d.get("tag_all") else "No 🔕"
-    sched     = d.get("scheduled_at")
-    sched_str = sched.strftime("%m/%d/%Y %H:%M WIB") if sched else "Post immediately"
     freq      = freq_labels.get(d.get("frequency", "once"), "Once")
     msg_prev  = (d.get("message", "")[:60] + "…") if len(d.get("message","")) > 60 else (d.get("message") or "_Not set_")
+
+    if d.get("frequency") == "once":
+        sched = d.get("scheduled_at")
+        sched_str = sched.strftime("%m/%d/%Y %H:%M WIB") if sched else "_Not set_"
+    elif d.get("frequency") == "weekly":
+        days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        wd   = d.get("weekday")
+        day_name = days[wd] if wd is not None else "_Not set_"
+        run_time = d.get("run_time", "_Not set_")
+        sched_str = f"Every {day_name} at {run_time} WIB"
+    else:  # daily / weekday
+        run_time = d.get("run_time", "_Not set_")
+        sched_str = f"Every day at {run_time} WIB" if d.get("frequency") == "daily" else f"Weekdays (Mon–Fri) at {run_time} WIB"
+
     return (
         f"📢 *Broadcast Draft*\n\n"
         f"📡 Target: `{d.get('chat_id', 'all')}`\n"
         f"🔁 Frequency: `{freq}`\n"
-        f"⏰ When: `{sched_str}`\n"
+        f"⏰ When: {sched_str}\n"
         f"🔔 Tag All: `{tag_label}`\n"
         f"📝 Message:\n_{msg_prev}_"
     )
@@ -216,6 +237,12 @@ async def broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         await schedule_text_input_timeout(context, q.from_user.id, "bc_state", base + "_custom_id", q.message.chat_id, q.message.message_id)
 
+    # ── Weekday selection (for weekly frequency) ────────────────────────────────
+    elif data.startswith("bc_wday_"):
+        wd = int(data[8:])
+        _get_draft(context)["weekday"] = wd
+        await _next_step(q, context)
+
     # ── Frequency ────────────────────────────────────────────────────────────
     elif data.startswith("bc_freq_"):
         freq = data[8:]
@@ -318,7 +345,7 @@ async def _next_step(q, context):
         )
         await schedule_text_input_timeout(context, uid, "bc_state", "await_message", q.message.chat_id, q.message.message_id)
 
-    # Schedule flow: target → frequency → datetime → tag → message → confirm
+    # Schedule flow: target → frequency → [weekday] → time → tag → message → confirm
     elif state == "sched_target":
         context.user_data["bc_state"] = "sched_freq"
         await q.message.edit_text(
@@ -326,18 +353,53 @@ async def _next_step(q, context):
             reply_markup=_recurrence_kb(), parse_mode="Markdown"
         )
     elif state == "sched_freq":
-        context.user_data["bc_state"]     = "await_sched_datetime"
+        freq = draft.get("frequency", "once")
+        if freq == "once":
+            context.user_data["bc_state"]     = "await_sched_datetime"
+            context.user_data["bc_panel_chat"] = q.message.chat_id
+            context.user_data["bc_panel_msg"]  = q.message.message_id
+            await q.message.edit_text(
+                "📅 *Schedule Broadcast — Step 3 of 5*\n\n"
+                "Type the date and time:\n`MM/DD/YYYY HH:MM`\n\n"
+                "_e.g._ `07/01/2026 09:00`\n"
+                "⏰ _Times out in 120 seconds._",
+                reply_markup=_back_kb(), parse_mode="Markdown"
+            )
+            await schedule_text_input_timeout(context, uid, "bc_state", "await_sched_datetime", q.message.chat_id, q.message.message_id)
+        elif freq == "weekly":
+            context.user_data["bc_state"] = "sched_weekday"
+            await q.message.edit_text(
+                "📅 *Schedule Broadcast — Step 3 of 5*\n\nWhich day of the week?",
+                reply_markup=_weekday_kb(), parse_mode="Markdown"
+            )
+        else:  # daily / weekday — only need a time, no date
+            context.user_data["bc_state"]     = "await_sched_time"
+            context.user_data["bc_panel_chat"] = q.message.chat_id
+            context.user_data["bc_panel_msg"]  = q.message.message_id
+            label = "every day" if freq == "daily" else "every weekday (Mon–Fri)"
+            await q.message.edit_text(
+                f"📅 *Schedule Broadcast — Step 3 of 5*\n\n"
+                f"This will run {label}. Type the time:\n`HH:MM` (WIB, 24-hour)\n\n"
+                "_e.g._ `09:00`\n"
+                "⏰ _Times out in 120 seconds._",
+                reply_markup=_back_kb(), parse_mode="Markdown"
+            )
+            await schedule_text_input_timeout(context, uid, "bc_state", "await_sched_time", q.message.chat_id, q.message.message_id)
+    elif state == "sched_weekday":
+        context.user_data["bc_state"]     = "await_sched_time"
         context.user_data["bc_panel_chat"] = q.message.chat_id
         context.user_data["bc_panel_msg"]  = q.message.message_id
+        days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        day_name = days[draft.get("weekday", 0)]
         await q.message.edit_text(
-            "📅 *Schedule Broadcast — Step 3 of 5*\n\n"
-            "Type the date and time:\n`MM/DD/YYYY HH:MM`\n\n"
-            "_e.g._ `07/01/2026 09:00`\n"
+            f"📅 *Schedule Broadcast — Step 3 of 5*\n\n"
+            f"This will run every *{day_name}*. Type the time:\n`HH:MM` (WIB, 24-hour)\n\n"
+            "_e.g._ `15:00`\n"
             "⏰ _Times out in 120 seconds._",
             reply_markup=_back_kb(), parse_mode="Markdown"
         )
-        await schedule_text_input_timeout(context, uid, "bc_state", "await_sched_datetime", q.message.chat_id, q.message.message_id)
-    elif state == "sched_datetime":
+        await schedule_text_input_timeout(context, uid, "bc_state", "await_sched_time", q.message.chat_id, q.message.message_id)
+    elif state == "sched_datetime" or state == "sched_time":
         context.user_data["bc_state"] = "sched_tag"
         await q.message.edit_text(
             "📅 *Schedule Broadcast — Step 4 of 5*\n\nTag all group members?",
@@ -362,9 +424,13 @@ async def _do_confirm(q, context, pool, username: str):
     msg     = draft["message"]
     tag     = draft.get("tag_all", False)
     chat_id = draft.get("chat_id", "all")
-    sched   = draft.get("scheduled_at")
     freq    = draft.get("frequency", "once")
     uid     = q.from_user.id
+
+    # "Post Now" always has frequency == "once" AND no scheduled_at/run_time set.
+    # A scheduled broadcast (once with date+time, or recurring with just time)
+    # always has either scheduled_at (once) or run_time (recurring) populated.
+    is_scheduled = bool(draft.get("scheduled_at") or draft.get("run_time"))
 
     if tag:
         # Tag all non-bot registered members
@@ -380,7 +446,7 @@ async def _do_confirm(q, context, pool, username: str):
         mentions = " ".join(f"@{r['username']}" for r in members if r["username"])
         msg = (mentions + "\n\n" + msg) if mentions else msg
 
-    if sched is None:
+    if not is_scheduled:
         # Post immediately
         await _do_post_now(context.bot, pool, chat_id, msg, q)
         await log_action(pool, uid, uid, "Broadcast", "Posted Now", f"target={chat_id}")
@@ -392,37 +458,55 @@ async def _do_confirm(q, context, pool, username: str):
         except Exception:
             pass
         await context.bot.send_message(q.from_user.id, "✅ *Broadcast sent!*", parse_mode="Markdown")
+        return
+
+    # ── Save schedule ────────────────────────────────────────────────────────
+    weekday = draft.get("weekday")  # only set for freq == "weekly"
+
+    if freq == "once":
+        sched     = draft["scheduled_at"]
+        run_time  = sched.strftime("%H:%M")
+        run_date  = sched.strftime("%Y-%m-%d")
+        when_str  = sched.strftime("%m/%d/%Y %H:%M WIB")
     else:
-        # Save schedule
-        run_time = sched.strftime("%H:%M")
-        run_date = sched.strftime("%Y-%m-%d")
-        async with pool.acquire() as conn:
-            # Ensure scheduled_date column exists (added in v1.3)
-            try:
-                await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
-            except Exception:
-                pass
-            s_id = await conn.fetchval(
-                "INSERT INTO scheduled_announcements (chat_id, frequency, run_time, mention, message, created_by, scheduled_date) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id",
-                chat_id, freq, run_time, tag, draft["message"], username, run_date
-            )
-        await log_action(pool, uid, uid, "Broadcast", "Scheduled", f"#{s_id} target={chat_id} freq={freq}")
-        context.user_data.pop("bc_draft", None)
-        context.user_data.pop("bc_state", None)
-        cancel_kb_timeout(context, q.message.chat_id, q.message.message_id)
+        run_time  = draft["run_time"]
+        run_date  = None
+        days = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
+        if freq == "weekly":
+            when_str = f"Every {days[weekday]} at {run_time} WIB"
+        elif freq == "daily":
+            when_str = f"Every day at {run_time} WIB"
+        else:  # weekday
+            when_str = f"Every weekday (Mon–Fri) at {run_time} WIB"
+
+    async with pool.acquire() as conn:
+        # Ensure columns exist (added in v1.3 / v1.4)
         try:
-            await q.message.delete()
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS weekday INT")
         except Exception:
             pass
-        await context.bot.send_message(
-            q.from_user.id,
-            f"✅ *Broadcast scheduled!*\n\n"
-            f"🔑 Schedule ID: `#{s_id}`\n"
-            f"⏰ {sched.strftime('%m/%d/%Y %H:%M WIB')}\n"
-            f"🔁 {freq}",
-            parse_mode="Markdown"
+        s_id = await conn.fetchval(
+            "INSERT INTO scheduled_announcements (chat_id, frequency, run_time, mention, message, created_by, scheduled_date, weekday) "
+            "VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
+            chat_id, freq, run_time, tag, draft["message"], username, run_date, weekday
         )
+    await log_action(pool, uid, uid, "Broadcast", "Scheduled", f"#{s_id} target={chat_id} freq={freq}")
+    context.user_data.pop("bc_draft", None)
+    context.user_data.pop("bc_state", None)
+    cancel_kb_timeout(context, q.message.chat_id, q.message.message_id)
+    try:
+        await q.message.delete()
+    except Exception:
+        pass
+    await context.bot.send_message(
+        q.from_user.id,
+        f"✅ *Broadcast scheduled!*\n\n"
+        f"🔑 Schedule ID: `#{s_id}`\n"
+        f"⏰ {when_str}\n"
+        f"🔁 {freq}",
+        parse_mode="Markdown"
+    )
 
 
 async def _do_post_now(bot, pool, chat_id: str, message: str, q):
@@ -488,7 +572,7 @@ async def _show_list(q, pool, page: int):
                 logger.warning(f"Broadcast list migration check failed (non-fatal): {mig_err}")
 
             raw_rows = await conn.fetch(
-                "SELECT id, chat_id, frequency, run_time, mention, message, scheduled_at "
+                "SELECT id, chat_id, frequency, run_time, mention, message, scheduled_at, weekday "
                 "FROM scheduled_announcements ORDER BY id DESC"
             )
 
@@ -510,8 +594,9 @@ async def _show_list(q, pool, page: int):
 
         freq_labels = {
             "once": "Once", "weekday": "Daily (Mon\u2013Fri)",
-            "daily": "Daily (All Days)", "weekly": "Weekly (Mon)"
+            "daily": "Daily (All Days)", "weekly": "Weekly"
         }
+        DAY_NAMES = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"]
 
         lines = [f"📋 *Scheduled Broadcasts* ({total} total) — Page {page+1}/{pages}\n"]
         for r in chunk:
@@ -521,8 +606,14 @@ async def _show_list(q, pool, page: int):
             sched_at = r.get("scheduled_at")
             if r.get("frequency") == "once" and sched_at:
                 first_str = sched_at.astimezone(WIB).strftime("%b %d %Y at %H:%M WIB")
+            elif r.get("frequency") == "weekly":
+                wd = r.get("weekday")
+                day_name = DAY_NAMES[wd] if wd is not None else "Monday"
+                first_str = f"Every {day_name} at {r.get('run_time') or '--:--'} WIB"
+            elif r.get("frequency") == "weekday":
+                first_str = f"Every weekday (Mon–Fri) at {r.get('run_time') or '--:--'} WIB"
             else:
-                first_str = f"Daily at {r.get('run_time') or '--:--'} WIB"
+                first_str = f"Every day at {r.get('run_time') or '--:--'} WIB"
 
             full_msg     = (r.get("message") or "").strip()
             msg_display  = full_msg[:300] + ("…" if len(full_msg) > 300 else "")
@@ -675,7 +766,47 @@ async def handle_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
             context.user_data["bc_panel_msg"]  = msg.message_id
         return True
 
-    # ── Scheduled datetime input ───────────────────────────────────────────
+    # ── Scheduled time-only input (recurring: daily/weekday/weekly) ─────────
+    elif state == "await_sched_time":
+        if not re.match(r'^\d{1,2}:\d{2}$', text):
+            await _invalid(
+                "Invalid time format.\nUse `HH:MM` (24-hour WIB) — e.g. `15:00`",
+                "📅 *Schedule Broadcast — Step 3 of 5*\n\nType the time:\n`HH:MM` (WIB)\n\n⏰ _Times out in 120 seconds._",
+            )
+            return True
+        h, m = map(int, text.split(":"))
+        if not (0 <= h <= 23 and 0 <= m <= 59):
+            await _invalid(
+                "Invalid time. Hours 00–23, minutes 00–59.",
+                "📅 *Schedule Broadcast — Step 3 of 5*\n\nType the time:\n`HH:MM` (WIB)\n\n⏰ _Times out in 120 seconds._",
+            )
+            return True
+        cancel_text_input_timeout(context, uid, "bc_state")
+        draft["run_time"] = f"{h:02d}:{m:02d}"
+        context.user_data["bc_state"] = "sched_time"
+        context.user_data["bc_draft"]  = draft
+        panel_chat = context.user_data.get("bc_panel_chat", uid)
+        panel_msg  = context.user_data.get("bc_panel_msg")
+        if panel_msg:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=panel_chat, message_id=panel_msg,
+                    text="📅 *Schedule Broadcast — Step 4 of 5*\n\nTag all group members?",
+                    reply_markup=_tag_kb(), parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+        else:
+            msg = await update.message.reply_text(
+                "📅 *Schedule Broadcast — Step 4 of 5*\n\nTag all group members?",
+                reply_markup=_tag_kb(), parse_mode="Markdown"
+            )
+            await schedule_kb_timeout(context, uid, msg.message_id, uid)
+            context.user_data["bc_panel_chat"] = uid
+            context.user_data["bc_panel_msg"]  = msg.message_id
+        return True
+
+    # ── Scheduled datetime input (once only) ───────────────────────────────
     elif state == "await_sched_datetime":
         try:
             dt = WIB.localize(datetime.datetime.strptime(text, "%m/%d/%Y %H:%M"))

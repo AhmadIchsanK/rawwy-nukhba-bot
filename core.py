@@ -231,6 +231,7 @@ async def init_db(app: Application):
             await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
             await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS mention BOOLEAN DEFAULT FALSE")
             await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS created_by VARCHAR(100)")
+            await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS weekday INT")
             # ── TASK ASSIGNEES ────────────────────────────────────────────────
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS task_assignees (
@@ -246,11 +247,17 @@ async def init_db(app: Application):
             await conn.execute('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS total_assignees INT DEFAULT 1')
             await conn.execute('ALTER TABLE tasks ADD COLUMN IF NOT EXISTS completed_count INT DEFAULT 0')
 
+            # v1.4 cleanup — /standup feature removed, drop its orphaned tables
+            try:
+                await conn.execute('DROP TABLE IF EXISTS standup_submissions CASCADE')
+                await conn.execute('DROP TABLE IF EXISTS standup_prompts CASCADE')
+                await conn.execute('DROP TABLE IF EXISTS standup_sessions CASCADE')
+            except Exception as cleanup_err:
+                logger.warning(f"Standup table cleanup skipped (non-fatal): {cleanup_err}")
+
         import cmd_trivia
         await cmd_trivia.ensure_trivia_database(app.bot_data['db_pool'])
-        import cmd_standup
-        await cmd_standup.ensure_standup_tables(app.bot_data['db_pool'])
-        
+
     except Exception as e:
         logger.critical(f"❌ CRITICAL FAILURE: Could not establish initial database structures: {e}")
         sys.exit(1)

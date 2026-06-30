@@ -93,6 +93,28 @@ async def _ensure_version_table(pool):
             "📢 /broadcast schedule flow is now fully fixed — tag and confirm work reliably",
             __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 6, 26))
         )
+        # ── v1.4 ──────────────────────────────────────────────────────────────
+        count = await conn.fetchval("SELECT COUNT(*) FROM bot_version WHERE version='1.4'")
+        if not count:
+            await conn.execute(
+                "INSERT INTO bot_version (version, changelog, updated_at) VALUES ($1, $2, $3)",
+                "1.4",
+                "🗓️ /broadcast weekly schedule now asks for a day picker — no more wrong day bugs\n"
+                "📅 Recurring broadcasts no longer ask for a date — just pick the day and time\n"
+                "🔁 Trivia questions now hard-validate against your recent history — no more repeats\n"
+                "🔍 Trivia dedup uses fuzzy matching so near-identical questions are also blocked\n"
+                "⚙️ Schedule #7 auto-corrected to Weekly Friday 15:00 WIB",
+                __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 7, 1))
+            )
+        await conn.execute(
+            "UPDATE bot_version SET changelog=$1, updated_at=$2 WHERE version='1.4'",
+            "🗓️ /broadcast weekly schedule now asks for a day picker — no more wrong day bugs\n"
+            "📅 Recurring broadcasts no longer ask for a date — just pick the day and time\n"
+            "🔁 Trivia questions now hard-validate against your recent history — no more repeats\n"
+            "🔍 Trivia dedup uses fuzzy matching so near-identical questions are also blocked\n"
+            "⚙️ Schedule #7 auto-corrected to Weekly Friday 15:00 WIB",
+            __import__('pytz').timezone('Asia/Jakarta').localize(__import__('datetime').datetime(2026, 7, 1))
+        )
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bot_admins (
                 username VARCHAR(100) PRIMARY KEY
@@ -123,6 +145,20 @@ async def _ensure_version_table(pool):
         await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS scheduled_date TEXT")
         await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS mention BOOLEAN DEFAULT FALSE")
         await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS created_by VARCHAR(100)")
+        await conn.execute("ALTER TABLE scheduled_announcements ADD COLUMN IF NOT EXISTS weekday INT")
+
+        # v1.4 one-time data fix — Schedule #7 was misconfigured as "Daily" starting
+        # Monday instead of "Weekly on Friday at 15:00". Correct it if it still
+        # matches the old broken values, then this is a no-op on future boots.
+        try:
+            row7 = await conn.fetchrow("SELECT * FROM scheduled_announcements WHERE id=7")
+            if row7 and row7["frequency"] in ("daily", "weekday") and row7.get("weekday") is None:
+                await conn.execute(
+                    "UPDATE scheduled_announcements SET frequency='weekly', run_time='15:00', weekday=4 WHERE id=7"
+                )
+                logger.info("✅ v1.4 fix applied: Schedule #7 corrected to Weekly on Friday 15:00 WIB.")
+        except Exception as fix_err:
+            logger.warning(f"Schedule #7 fix skipped (non-fatal): {fix_err}")
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS announcements (
                 id SERIAL PRIMARY KEY,
@@ -1226,7 +1262,7 @@ async def update_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # Show all versions up to and including 1.3
-    MAX_VERSION = (1, 3)
+    MAX_VERSION = (1, 4)
     def _ver_tuple(v):
         try:
             parts = str(v).split('.')
@@ -1670,7 +1706,7 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     import cmd_system, cmd_user, cmd_trivia, cmd_admin as _self_module
     import cmd_command_nav, cmd_events, cmd_away, cmd_broadcast
-    import cmd_manual, cmd_library, cmd_task, cmd_adminconfig, cmd_birthday, cmd_standup
+    import cmd_manual, cmd_library, cmd_task, cmd_adminconfig, cmd_birthday
     try:
         import cmd_system_help
     except ImportError:
@@ -1695,7 +1731,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "library_command":         cmd_library,
         "task_command":            cmd_task,
         "mytask_command":          cmd_task,
-        "standup_command":         cmd_standup,
         "admin_command":           cmd_adminconfig,
         "userconfig_command":      cmd_adminconfig,
         "birthday_config_command": cmd_birthday,
@@ -1771,7 +1806,6 @@ async def all_command_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 Tasks": [
             ("task",             "task_command"),
             ("mytask",           "mytask_command"),
-            ("standup",          "standup_command"),
             ("grouptasks",       "group_tasks"),
             ("canceltask",       "cancel_task"),
         ],
@@ -2869,8 +2903,9 @@ async def process_schedules(context: ContextTypes.DEFAULT_TYPE):
                     should_run = True
 
             elif freq == 'weekly':
-                # Fire every Monday at the set time
-                if weekday == 0 and time_match and not ran_today:
+                # Fire on the specific stored weekday (0=Mon … 6=Sun); default Monday if unset
+                target_weekday = s['weekday'] if s['weekday'] is not None else 0
+                if weekday == target_weekday and time_match and not ran_today:
                     should_run = True
 
         except Exception as e:

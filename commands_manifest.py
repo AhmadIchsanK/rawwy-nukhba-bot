@@ -125,17 +125,6 @@ COMMANDS = [
     # ════════════════════════════════════════
     # 📋 TASKS
     # ════════════════════════════════════════
-    {"name": "standup",  "emoji": "📋", "public": True,
-     "category": "📋 Tasks",
-     "desc": "Daily standup check-in and check-out management (inline DM hub)",
-     "explanation": "Set up scheduled daily check-in and check-out standups for your team. Members receive DM prompts at set times and submit via bot or Discord. Manager approves and receives an AI summary.",
-     "format": "/standup",
-     "subcommands": [
-         "➕ New Config → 5-step wizard: name, members, recurrence, check-in time, check-out time",
-         "📋 My Configs → list and manage all your standup schedules",
-         "⚙️ Manage → pause, resume, delete, edit members or timing",
-         "📅 My Standups Today → view your pending check-in / check-out for today",
-     ]},
     {"name": "task",      "emoji": "📌", "public": True, "category": "📋 Tasks",
      "desc": "Assign a task to team members (group or DM)",
      "explanation": "In a group: tap members to assign, type description, press Finish. In DM: step-by-step with group picker.",
@@ -200,11 +189,11 @@ COMMANDS = [
     # ════════════════════════════════════════
     {"name": "broadcast",      "emoji": "📢", "public": False, "admin": True, "category": "🔐 Admin Config",
      "desc": "Post or schedule team broadcasts (inline hub in DM)",
-     "explanation": "Post now or schedule with recurrence. Choose group target, tag members, and set message inline.",
+     "explanation": "Post now or schedule with recurrence. Choose group target, tag members, and set message inline. Weekly schedules ask for a day-of-week picker; recurring schedules only ask for a time (no date needed).",
      "format": "/broadcast",
      "subcommands": [
          "📤 Post Now → target → tag all? → message → confirm",
-         "📅 Schedule → target → recurrence (once/daily/weekday/weekly) → date/time → tag → message → confirm",
+         "📅 Schedule → target → recurrence (once/daily/weekday/weekly) → day (if weekly) → time → tag → message → confirm",
          "📋 List Schedules → paginated list with delete buttons",
          "🗑️ Delete Schedule → tap to remove",
      ]},

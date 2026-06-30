@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 MANUAL_SECTIONS = {
     "en": {
         "title":    "RAWWY Nukhba Manager — User Manual",
-        "version":  "v1.3",
+        "version":  "v1.4",
         "subtitle": "Complete command guide for all team members",
         "tip":      "Tip: Long-press any command format shown here to copy it, then paste in the group chat.",
         "sections": [
@@ -92,17 +92,6 @@ MANUAL_SECTIONS = {
                  "Format: /library"),
             ]),
             ("📋 Tasks — Assign & Track Work", [
-                ("/standup",
-                 "Set up and manage daily standups for your team.\n"
-                 "Sub-menu options:\n"
-                 "  ➕ New Config → name, members, recurrence, check-in/out times\n"
-                 "  📋 My Configs → view and manage all your standup schedules\n"
-                 "  ⚙️ Manage → pause, resume, delete, edit members or timing\n"
-                 "  📅 My Standups Today → view pending prompts\n"
-                 "Members receive DM prompts at scheduled times and choose to reply via bot or Discord.\n"
-                 "Manager approves each submission and receives an AI summary when all members are done.\n"
-                 "Format: /standup"),
-
                 ("/task",
                  "Assign a task to one or more team members.\n"
                  "• In a group: tap member names to add/remove assignees. Type the task description in chat. Press Finish.\n"
@@ -175,7 +164,7 @@ MANUAL_SECTIONS = {
     },
     "ar": {
         "title":    "دليل مستخدم بوت Nukhba Manager",
-        "version":  "v1.3",
+        "version":  "v1.4",
         "subtitle": "دليل شامل لجميع أوامر المستخدم",
         "tip":      "نصيحة: اضغط مطولاً على صيغة الأمر لنسخها ثم الصقها في المجموعة.",
         "sections": [
@@ -231,11 +220,6 @@ MANUAL_SECTIONS = {
                  "الصيغة: /library"),
             ]),
             ("📋 المهام", [
-                ("/standup",
-                 "أنشئ وأدِر جلسات الوقوف اليومية للفريق.\n"
-                 "يتلقى الأعضاء رسائل خاصة في الأوقات المحددة لتسجيل الحضور والانصراف.\n"
-                 "الصيغة: /standup"),
-
                 ("/task",
                  "أسند مهمة لأعضاء الفريق.\n"
                  "في المجموعة: انقر على الأسماء لتحديدهم، اكتب الوصف، ثم اضغط إنهاء.\n"
@@ -282,7 +266,7 @@ MANUAL_SECTIONS = {
     },
     "id": {
         "title":    "Panduan Pengguna Nukhba Manager Bot",
-        "version":  "v1.3",
+        "version":  "v1.4",
         "subtitle": "Panduan lengkap semua perintah pengguna",
         "tip":      "Tips: Tekan lama format perintah untuk menyalinnya, lalu tempel di grup.",
         "sections": [
@@ -338,11 +322,6 @@ MANUAL_SECTIONS = {
                  "Format: /library"),
             ]),
             ("📋 Tugas", [
-                ("/standup",
-                 "Buat dan kelola standup harian untuk tim.\n"
-                 "Anggota mendapat DM di waktu yang ditentukan untuk check-in dan check-out.\n"
-                 "Format: /standup"),
-
                 ("/task",
                  "Tugaskan pekerjaan ke anggota tim.\n"
                  "• Di grup: ketuk nama anggota, ketik deskripsi, tekan Selesai.\n"
@@ -469,7 +448,7 @@ def _build_pdf() -> bytes:
     # ── Cover block ───────────────────────────────────────────────────────────
     story.append(Spacer(1, 8*mm))
     story.append(Paragraph("🤖 RAWWY Nukhba Manager Bot", s_doc_title))
-    story.append(Paragraph("User Manual · v1.3", s_version))
+    story.append(Paragraph("User Manual · v1.4", s_version))
     story.append(Paragraph("English  ·  العربية  ·  Bahasa Indonesia", s_subtitle))
     story.append(divider)
     story.append(Spacer(1, 4*mm))
@@ -581,7 +560,7 @@ async def manual_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             filename=filename,
             caption=(
                 "📖 *Nukhba Manager — User Manual*\n"
-                f"Version 1.3 · {datetime.datetime.now(WIB).strftime('%B %Y')}\n\n"
+                f"Version 1.4 · {datetime.datetime.now(WIB).strftime('%B %Y')}\n\n"
                 "3 languages: 🇬🇧 English · 🇸🇦 Arabic · 🇮🇩 Indonesian\n\n"
                 "_Use /command for interactive command browsing with full usage details._"
             ),
